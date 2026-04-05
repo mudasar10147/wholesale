@@ -29,8 +29,21 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
+## Phase 0 — GitHub and Vercel
+
+This repo is meant to live in its **own** GitHub repository (not the parent `Code/` folder).
+
+1. **GitHub:** install [GitHub CLI](https://cli.github.com/) (`brew install gh`), then from this directory:
+
+   ```bash
+   gh auth login
+   gh repo create <your-repo-name> --source=. --public --remote=origin --push
+   ```
+
+   Use any unused repo name, or create an empty repo on GitHub and run `git remote add origin …` then `git push -u origin main`.
+
+2. **Vercel:** in the [Vercel dashboard](https://vercel.com/new), **Import** the GitHub repo. Framework: Next.js (auto-detected). Deploy and open the production URL.
+
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+After the repo is on GitHub, the [Vercel import flow](https://vercel.com/new) is the standard way to get a live URL. See [Next.js deployment](https://nextjs.org/docs/app/building-your-application/deploying) for details.
