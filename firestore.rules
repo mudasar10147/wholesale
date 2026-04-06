@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Phase 1 smoke test (optional)
+    match /phase1_smoke/{docId} {
+      allow read, write: if true;
+    }
+    // MVP collections — development only; tighten before production (see docs/FIREBASE_RULES.md)
+    match /products/{docId} {
+      allow read, write: if true;
+    }
+    match /sales/{docId} {
+      allow read, write: if true;
+    }
+    match /expenses/{docId} {
+      allow read, write: if true;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

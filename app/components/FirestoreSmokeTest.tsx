@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
+import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { cn } from "@/lib/utils";
 
 type Status = "loading" | "ok" | "error";
 
@@ -27,7 +29,7 @@ export function FirestoreSmokeTest() {
       } catch (e) {
         if (!cancelled) {
           setStatus("error");
-          setMessage(e instanceof Error ? e.message : "Unknown error");
+          setMessage(getFirestoreUserMessage(e));
         }
       }
     }
@@ -39,17 +41,31 @@ export function FirestoreSmokeTest() {
   }, []);
 
   return (
-    <div className="mt-8 max-w-lg text-left text-sm text-zinc-600 dark:text-zinc-400">
-      <p className="font-medium text-zinc-800 dark:text-zinc-200">
-        Firestore (Phase 1)
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Firestore
+        </span>
+        <span
+          className={cn(
+            "rounded-full px-2 py-0.5 text-[11px] font-medium",
+            status === "loading" && "bg-surface-hover text-muted-foreground",
+            status === "ok" && "bg-success-muted text-success",
+            status === "error" && "bg-destructive-muted text-destructive",
+          )}
+        >
+          {status === "loading" ? "Checking" : status === "ok" ? "Connected" : "Error"}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {status === "loading" ? (
+          "Testing connection…"
+        ) : status === "ok" ? (
+          <span className="font-mono text-[13px] text-foreground">{message}</span>
+        ) : (
+          <span className="text-destructive">{message}</span>
+        )}
       </p>
-      {status === "loading" ? (
-        <p>Testing connection…</p>
-      ) : status === "ok" ? (
-        <p className="text-green-700 dark:text-green-400">{message}</p>
-      ) : (
-        <p className="text-red-700 dark:text-red-400">{message}</p>
-      )}
     </div>
   );
 }

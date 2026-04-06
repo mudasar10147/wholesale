@@ -76,6 +76,8 @@ Click **Publish** after editing.
 
 If you used **test mode** when creating the database, rules may already allow temporary open access—still plan to move to explicit rules (or Auth-based rules) before production.
 
+For **Phase 2** collections (`products`, `sales`, `expenses`), use the combined dev rules in [FIREBASE_RULES.md](FIREBASE_RULES.md) and publish those instead of the Phase 1–only block above when you start writing real data.
+
 ---
 
 ## 5. Vercel
@@ -100,5 +102,5 @@ In the Vercel project: **Settings** → **Environment Variables** → add the sa
 |--------|----------------|
 | No **Build** menu | Use the **direct Firestore URL** in section 2 with your project ID. |
 | Only see **Datastore** or Google Cloud | Use **Firebase** console links above, not only Google Cloud Console (Firestore is there too but paths differ). |
-| **permission-denied** in the app | Rules (section 4) not published, or wrong project in `.env.local`. |
+| **permission-denied** on localhost or production | Firestore rules are **per Firebase project**, not per URL. Publish the **full MVP rules** in [FIREBASE_RULES.md](FIREBASE_RULES.md) (or copy [`firestore.rules`](../firestore.rules) from the repo root)—Phase 1–only rules allow `phase1_smoke` only and **deny** `products` / `sales` / `expenses`. Also confirm `NEXT_PUBLIC_FIREBASE_PROJECT_ID` in `.env.local` matches the project where you published rules. |
 | Cannot find **Web** app | **Project settings** → scroll to **Your apps** → **Add app** → **`</>`**. |
