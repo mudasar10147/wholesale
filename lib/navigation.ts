@@ -5,6 +5,8 @@ export const navItems = [
   { href: "/products", label: "Products" },
   { href: "/sales", label: "Sales" },
   { href: "/expenses", label: "Expenses" },
+  { href: "/customers", label: "Customers" },
+  { href: "/reports/fifo", label: "FIFO Reports" },
 ] as const;
 
 export function isNavActive(pathname: string, href: string): boolean {

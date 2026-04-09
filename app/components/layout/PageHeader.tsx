@@ -17,9 +17,6 @@ export function PageHeader({ title, description, action, className }: PageHeader
       )}
     >
       <div className="min-w-0 space-y-1">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">
-          Wholesale
-        </p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-[1.75rem] md:leading-tight">
           {title}
         </h1>

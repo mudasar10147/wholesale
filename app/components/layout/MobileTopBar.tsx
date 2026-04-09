@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 
 type MobileTopBarProps = {
@@ -16,12 +17,16 @@ export function MobileTopBar({ menuOpen, onMenuClick, menuContentId }: MobileTop
     >
       <Link
         href="/"
-        className="min-w-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-        aria-label="Wholesale home"
+        className="flex min-w-0 items-center outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        aria-label="Home"
       >
-        <span className="block truncate text-base font-semibold tracking-tight text-foreground">
-          Wholesale
-        </span>
+        <Image
+          src="/wholesale_logo.png"
+          alt="Wholesale"
+          width={96}
+          height={32}
+          className="h-8 w-auto shrink-0 object-contain"
+        />
       </Link>
       <button
         type="button"

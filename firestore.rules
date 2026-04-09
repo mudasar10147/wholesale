@@ -1,19 +1,374 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+    function hasOnlyKeys(data, keys) {
+      return data.keys().hasOnly(keys);
+    }
+    function hasOptionalOnly(data, optionalKeys) {
+      return data.keys().hasOnly(optionalKeys);
+    }
+    function validCustomerBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['name', 'phone', 'email', 'address', 'is_active', 'created_at', 'updated_at', 'archived_at']
+      )
+      && data.name is string
+      && data.name.size() >= 2
+      && data.name.size() <= 120
+      && (!('phone' in data) || (data.phone is string && data.phone.size() <= 25))
+      && (!('email' in data) || (data.email is string && data.email.size() <= 120))
+      && (!('address' in data) || (data.address is string && data.address.size() <= 300))
+      && data.is_active is bool
+      && data.created_at is timestamp
+      && data.updated_at is timestamp
+      && (!('archived_at' in data) || data.archived_at is timestamp);
+    }
+    function validInvoiceBase(data) {
+      return hasOnlyKeys(
+        data,
+        [
+          'customer_id',
+          'order_id',
+          'status',
+          'payment_status',
+          'paid_amount',
+          'stock_reversal_applied',
+          'item_ids',
+          'subtotal_amount',
+          'discount_amount',
+          'delivery_charge',
+          'total_amount',
+          'posted_subtotal_amount',
+          'posted_discount_amount',
+          'posted_delivery_charge',
+          'posted_total_amount',
+          'posted_cogs_amount',
+          'notes',
+          'posted_at',
+          'voided_at',
+          'created_at',
+          'updated_at'
+        ]
+      )
+      && data.customer_id is string
+      && data.customer_id.size() > 0
+      && data.order_id is string
+      && data.order_id.size() >= 6
+      && data.order_id.size() <= 40
+      && data.status in ['draft', 'posted', 'void']
+      && data.payment_status in ['unpaid', 'partial', 'paid']
+      && data.paid_amount is number
+      && data.paid_amount >= 0
+      && data.stock_reversal_applied is bool
+      && data.item_ids is list
+      && data.item_ids.size() > 0
+      && data.subtotal_amount is number
+      && data.discount_amount is number
+      && data.delivery_charge is number
+      && data.total_amount is number
+      && data.subtotal_amount >= 0
+      && data.discount_amount >= 0
+      && data.delivery_charge >= 0
+      && data.total_amount >= 0
+      && data.paid_amount <= data.total_amount
+      && data.total_amount == (data.subtotal_amount - data.discount_amount + data.delivery_charge)
+      && (!('posted_subtotal_amount' in data) || (data.posted_subtotal_amount is number && data.posted_subtotal_amount >= 0))
+      && (!('posted_discount_amount' in data) || (data.posted_discount_amount is number && data.posted_discount_amount >= 0))
+      && (!('posted_delivery_charge' in data) || (data.posted_delivery_charge is number && data.posted_delivery_charge >= 0))
+      && (!('posted_total_amount' in data) || (data.posted_total_amount is number && data.posted_total_amount >= 0))
+      && (!('posted_cogs_amount' in data) || (data.posted_cogs_amount is number && data.posted_cogs_amount >= 0))
+      && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+      && (!('posted_at' in data) || data.posted_at is timestamp)
+      && (!('voided_at' in data) || data.voided_at is timestamp)
+      && data.created_at is timestamp
+      && data.updated_at is timestamp;
+    }
+    function validInvoiceItemBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['invoice_id', 'order_id', 'customer_id', 'product_id', 'quantity', 'unit_price', 'line_discount', 'line_delivery_charge', 'line_total', 'created_at', 'updated_at']
+      )
+      && data.invoice_id is string
+      && data.invoice_id.size() > 0
+      && data.order_id is string
+      && data.order_id.size() >= 6
+      && data.order_id.size() <= 40
+      && data.customer_id is string
+      && data.customer_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.unit_price is number
+      && data.unit_price >= 0
+      && data.line_discount is number
+      && data.line_discount >= 0
+      && data.line_delivery_charge is number
+      && data.line_delivery_charge >= 0
+      && data.line_total is number
+      && data.line_total >= 0
+      && data.line_total == ((data.quantity * data.unit_price) - data.line_discount + data.line_delivery_charge)
+      && data.created_at is timestamp
+      && data.updated_at is timestamp;
+    }
+    function validStockLotBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['product_id', 'unit_cost', 'qty_in', 'qty_remaining', 'source', 'reference_id', 'received_at', 'created_at', 'updated_at']
+      )
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.unit_cost is number
+      && data.unit_cost >= 0
+      && data.qty_in is int
+      && data.qty_in > 0
+      && data.qty_remaining is int
+      && data.qty_remaining >= 0
+      && data.qty_remaining <= data.qty_in
+      && data.source in ['stock_in', 'opening_balance', 'adjustment']
+      && (!('reference_id' in data) || (data.reference_id is string && data.reference_id.size() > 0))
+      && data.received_at is timestamp
+      && data.created_at is timestamp
+      && data.updated_at is timestamp;
+    }
+    function validLotConsumptionBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['invoice_id', 'order_id', 'invoice_item_id', 'product_id', 'lot_id', 'quantity', 'unit_cost', 'cogs_amount', 'created_at', 'reversed_at']
+      )
+      && data.invoice_id is string
+      && data.invoice_id.size() > 0
+      && data.order_id is string
+      && data.order_id.size() >= 6
+      && data.order_id.size() <= 40
+      && data.invoice_item_id is string
+      && data.invoice_item_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.lot_id is string
+      && data.lot_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.unit_cost is number
+      && data.unit_cost >= 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && data.cogs_amount == (data.quantity * data.unit_cost)
+      && data.created_at is timestamp
+      && (!('reversed_at' in data) || data.reversed_at is timestamp);
+    }
+    function validInvoiceItemCogsBase(data) {
+      return hasOnlyKeys(
+        data,
+        [
+          'invoice_id',
+          'order_id',
+          'customer_id',
+          'invoice_item_id',
+          'product_id',
+          'quantity',
+          'unit_sale_price',
+          'unit_cost_snapshot',
+          'line_subtotal',
+          'line_discount',
+          'line_delivery_charge',
+          'cogs_amount',
+          'line_total',
+          'created_at'
+        ]
+      )
+      && data.invoice_id is string
+      && data.invoice_id.size() > 0
+      && data.order_id is string
+      && data.order_id.size() >= 6
+      && data.order_id.size() <= 40
+      && data.customer_id is string
+      && data.customer_id.size() > 0
+      && data.invoice_item_id is string
+      && data.invoice_item_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.unit_sale_price is number
+      && data.unit_sale_price >= 0
+      && data.unit_cost_snapshot is number
+      && data.unit_cost_snapshot >= 0
+      && data.line_subtotal is number
+      && data.line_subtotal >= 0
+      && data.line_discount is number
+      && data.line_discount >= 0
+      && data.line_delivery_charge is number
+      && data.line_delivery_charge >= 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && data.line_total is number
+      && data.line_total >= 0
+      && data.line_subtotal == ((data.quantity * data.unit_sale_price) - data.line_discount)
+      && data.line_total == (data.line_subtotal + data.line_delivery_charge)
+      && data.cogs_amount == (data.quantity * data.unit_cost_snapshot)
+      && data.created_at is timestamp;
+    }
+
     // Phase 1 smoke test (optional)
     match /phase1_smoke/{docId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
-    // MVP collections — development only; tighten before production (see docs/FIREBASE_RULES.md)
+    // MVP collections — admin only (see docs/FIREBASE_RULES.md)
     match /products/{docId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
     match /sales/{docId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
     }
     match /expenses/{docId} {
-      allow read, write: if true;
+      allow read, write: if isAdmin();
+    }
+    match /customers/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validCustomerBase(request.resource.data) && request.resource.data.is_active == true;
+      allow update: if isAdmin() && validCustomerBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at;
+      allow delete: if false;
+    }
+    match /invoices/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validInvoiceBase(request.resource.data)
+        && request.resource.data.order_id == docId
+        && request.resource.data.status == 'draft'
+        && request.resource.data.payment_status == 'unpaid'
+        && request.resource.data.paid_amount == 0
+        && request.resource.data.stock_reversal_applied == false
+        && exists(/databases/$(database)/documents/customers/$(request.resource.data.customer_id));
+      allow update: if isAdmin() && validInvoiceBase(request.resource.data)
+        && request.resource.data.order_id == resource.data.order_id
+        && request.resource.data.created_at == resource.data.created_at
+        && (
+          request.resource.data.item_ids == resource.data.item_ids
+          || (resource.data.status == 'draft' && request.resource.data.status == 'draft')
+        )
+        && (
+          (
+            resource.data.status == 'draft'
+            && request.resource.data.status == 'draft'
+            && request.resource.data.posted_at == resource.data.posted_at
+            && request.resource.data.voided_at == resource.data.voided_at
+            && request.resource.data.stock_reversal_applied == false
+          )
+          || (
+            resource.data.status == 'draft'
+            && request.resource.data.status == 'posted'
+            && request.resource.data.posted_at is timestamp
+            && request.resource.data.voided_at == resource.data.voided_at
+            && request.resource.data.posted_subtotal_amount == resource.data.subtotal_amount
+            && request.resource.data.posted_discount_amount == resource.data.discount_amount
+            && request.resource.data.posted_delivery_charge == resource.data.delivery_charge
+            && request.resource.data.posted_total_amount == resource.data.total_amount
+            && request.resource.data.posted_cogs_amount is number
+            && request.resource.data.posted_cogs_amount >= 0
+            && request.resource.data.stock_reversal_applied == false
+          )
+          || (
+            resource.data.status == 'draft'
+            && request.resource.data.status == 'void'
+            && request.resource.data.stock_reversal_applied == false
+            && request.resource.data.voided_at is timestamp
+            && request.resource.data.posted_at == resource.data.posted_at
+            && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
+            && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
+            && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
+            && request.resource.data.posted_total_amount == resource.data.posted_total_amount
+            && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
+          )
+          || (
+            resource.data.status == 'posted'
+            && request.resource.data.status == 'posted'
+            && request.resource.data.stock_reversal_applied == false
+            && request.resource.data.voided_at == resource.data.voided_at
+            && request.resource.data.posted_at == resource.data.posted_at
+            && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
+            && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
+            && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
+            && request.resource.data.posted_total_amount == resource.data.posted_total_amount
+            && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
+          )
+          || (
+            resource.data.status == 'posted'
+            && request.resource.data.status == 'void'
+            && request.resource.data.stock_reversal_applied == true
+            && request.resource.data.voided_at is timestamp
+            && request.resource.data.posted_at == resource.data.posted_at
+            && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
+            && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
+            && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
+            && request.resource.data.posted_total_amount == resource.data.posted_total_amount
+            && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
+          )
+        );
+      allow delete: if isAdmin() && resource.data.status == 'draft' && resource.data.stock_reversal_applied == false;
+    }
+    // Note: draft invoice + line items are created in one transaction. Rules cannot see
+    // uncommitted writes, so exists(get) on the parent invoice would always fail — validate shape + product only.
+    match /invoice_items/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validInvoiceItemBase(request.resource.data)
+        && exists(/databases/$(database)/documents/products/$(request.resource.data.product_id));
+      allow update: if false;
+      allow delete: if isAdmin() && resource.data.invoice_id is string
+        && resource.data.invoice_id.size() > 0
+        && exists(/databases/$(database)/documents/invoices/$(resource.data.invoice_id))
+        && get(/databases/$(database)/documents/invoices/$(resource.data.invoice_id)).data.status == 'draft';
+    }
+    match /stock_lots/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validStockLotBase(request.resource.data)
+        && exists(/databases/$(database)/documents/products/$(request.resource.data.product_id));
+      allow update: if isAdmin() && validStockLotBase(request.resource.data)
+        && request.resource.data.product_id == resource.data.product_id
+        && request.resource.data.qty_in == resource.data.qty_in
+        && request.resource.data.source == resource.data.source
+        && request.resource.data.received_at == resource.data.received_at
+        && request.resource.data.created_at == resource.data.created_at;
+      allow delete: if false;
+    }
+    // Posting can create an opening_balance lot and consumptions in the same transaction; exists(lot) would fail.
+    match /lot_consumptions/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validLotConsumptionBase(request.resource.data)
+        && exists(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id))
+        && exists(/databases/$(database)/documents/invoice_items/$(request.resource.data.invoice_item_id))
+        && !('reversed_at' in request.resource.data);
+      allow update: if isAdmin() && validLotConsumptionBase(request.resource.data)
+        && request.resource.data.invoice_id == resource.data.invoice_id
+        && request.resource.data.order_id == resource.data.order_id
+        && request.resource.data.invoice_item_id == resource.data.invoice_item_id
+        && request.resource.data.product_id == resource.data.product_id
+        && request.resource.data.lot_id == resource.data.lot_id
+        && request.resource.data.quantity == resource.data.quantity
+        && request.resource.data.unit_cost == resource.data.unit_cost
+        && request.resource.data.cogs_amount == resource.data.cogs_amount
+        && request.resource.data.created_at == resource.data.created_at
+        && !('reversed_at' in resource.data)
+        && request.resource.data.reversed_at is timestamp;
+      allow delete: if false;
+    }
+    match /invoice_item_cogs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
+        && request.resource.data.invoice_item_id == docId
+        && exists(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id))
+        && exists(/databases/$(database)/documents/invoice_items/$(request.resource.data.invoice_item_id))
+        && request.resource.data.order_id
+          == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.order_id
+        && request.resource.data.customer_id
+          == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.customer_id;
+      allow update, delete: if false;
     }
     match /{document=**} {
       allow read, write: if false;

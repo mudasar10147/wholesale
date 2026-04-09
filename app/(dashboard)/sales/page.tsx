@@ -1,5 +1,5 @@
-import { AddSaleForm } from "@/app/components/sales/AddSaleForm";
-import { SalesList } from "@/app/components/sales/SalesList";
+import { AddInvoiceForm } from "@/app/components/invoices/AddInvoiceForm";
+import { InvoiceDraftList } from "@/app/components/invoices/InvoiceDraftList";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import {
   Card,
@@ -14,31 +14,34 @@ export default function SalesPage() {
     <div className="space-y-10">
       <PageHeader
         title="Sales"
-        description="Record a sale: choose a product and quantity. Stock is reduced automatically using each product's sale price."
+        description="Create draft invoices, then post them to finalize sales and decrement stock from invoice items."
       />
 
       <Card>
         <CardHeader>
-          <CardTitle>Add sale</CardTitle>
+          <CardTitle>Create draft invoice</CardTitle>
           <CardDescription>
-            Sale total uses the product&apos;s current sale price × quantity. Insufficient stock is
-            blocked.
+            Attach products as invoice items with quantity, unit sale price, discount, delivery
+            allocation, and automatic line total calculations.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <AddSaleForm />
+          <AddInvoiceForm />
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>Recent sales</CardTitle>
-          <CardDescription>Latest 50 sales, newest first.</CardDescription>
+          <CardTitle>Invoice lifecycle</CardTitle>
+          <CardDescription>
+            Manage draft, posted, and void states. Voiding posted invoices restores stock safely.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <SalesList />
+          <InvoiceDraftList />
         </CardContent>
       </Card>
+
     </div>
   );
 }

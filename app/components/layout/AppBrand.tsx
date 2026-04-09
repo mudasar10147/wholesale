@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 const focusRing =
@@ -10,8 +11,15 @@ export function AppBrand() {
       <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary">
         Operations
       </span>
-      <span className="mt-2 block border-l-2 border-primary pl-2 text-lg font-bold tracking-tight text-foreground">
-        Wholesale
+      <span className="mt-2 block border-l-2 border-primary pl-2">
+        <Image
+          src="/wholesale_logo.png"
+          alt="Wholesale"
+          width={160}
+          height={48}
+          className="h-12 max-h-12 w-auto object-contain"
+          priority
+        />
       </span>
     </Link>
   );

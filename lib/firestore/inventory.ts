@@ -1,11 +1,14 @@
 import {
+  collection,
   doc,
+  getDocs,
   increment,
   runTransaction,
-  updateDoc,
+  serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
 /**
  * Increase stock atomically (stock in).
@@ -19,7 +22,31 @@ export async function stockIn(
     throw new Error("Quantity must be a positive whole number.");
   }
   const ref = doc(db, COLLECTIONS.products, productId);
-  await updateDoc(ref, { stock_quantity: increment(quantity) });
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      throw new Error("Product not found.");
+    }
+    const product = snap.data() as ProductDoc | undefined;
+    const unitCost = typeof product?.cost_price === "number" ? product.cost_price : 0;
+
+    tx.update(ref, { stock_quantity: increment(quantity) });
+    const lotRef = doc(collection(db, COLLECTIONS.stockLots));
+    tx.set(lotRef, {
+      product_id: productId,
+      unit_cost: unitCost,
+      qty_in: quantity,
+      qty_remaining: quantity,
+      source: "stock_in",
+      received_at: serverTimestamp(),
+      created_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+    } satisfies Omit<StockLotDoc, "received_at" | "created_at" | "updated_at"> & {
+      received_at: unknown;
+      created_at: unknown;
+      updated_at: unknown;
+    });
+  });
 }
 
 /**
@@ -34,6 +61,15 @@ export async function stockOut(
     throw new Error("Quantity must be a positive whole number.");
   }
   const ref = doc(db, COLLECTIONS.products, productId);
+  const lotCandidatesSnap = await getDocs(collection(db, COLLECTIONS.stockLots));
+  const lotCandidateIds: string[] = [];
+  lotCandidatesSnap.forEach((d) => {
+    const data = d.data() as Partial<StockLotDoc>;
+    if (data.product_id === productId) {
+      lotCandidateIds.push(d.id);
+    }
+  });
+
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists) {
@@ -49,5 +85,34 @@ export async function stockOut(
       throw new Error("Not enough stock.");
     }
     transaction.update(ref, { stock_quantity: increment(-quantity) });
+
+    // Consume FIFO lots for manual stock-out to keep lot balances aligned.
+    const lots: Array<{ id: string; data: StockLotDoc }> = [];
+    for (const lotId of lotCandidateIds) {
+      const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
+      const lotSnap = await transaction.get(lotRef);
+      if (!lotSnap.exists()) continue;
+      const lotData = lotSnap.data() as StockLotDoc;
+      if (lotData.product_id === productId) {
+        lots.push({ id: lotId, data: lotData });
+      }
+    }
+    lots.sort((a, b) => a.data.received_at.toMillis() - b.data.received_at.toMillis());
+
+    let remaining = quantity;
+    for (const lot of lots) {
+      if (remaining <= 0) break;
+      const available = typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0;
+      if (available <= 0) continue;
+      const take = Math.min(available, remaining);
+      remaining -= take;
+      transaction.update(doc(db, COLLECTIONS.stockLots, lot.id), {
+        qty_remaining: available - take,
+        updated_at: serverTimestamp(),
+      });
+    }
+    if (remaining > 0) {
+      throw new Error("Stock lots are out of sync. Please restock this product.");
+    }
   });
 }

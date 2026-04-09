@@ -1,4 +1,5 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
 import { getFirestore, type Firestore } from "firebase/firestore";
 
 // Use static process.env.NEXT_PUBLIC_* access only. Next.js inlines these for the
@@ -45,4 +46,13 @@ export function getFirebaseApp(): FirebaseApp {
 
 export function getDb(): Firestore {
   return getFirestore(getFirebaseApp());
+}
+
+let authSingleton: Auth | null = null;
+
+export function getAuthClient(): Auth {
+  if (!authSingleton) {
+    authSingleton = getAuth(getFirebaseApp());
+  }
+  return authSingleton;
 }

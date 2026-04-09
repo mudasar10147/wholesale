@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "firebase": "^12.11.0",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
     "next": "16.2.2",
     "react": "19.2.4",
     "react-dom": "19.2.4"
@@ -21,6 +23,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "firebase-admin": "^13.7.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
