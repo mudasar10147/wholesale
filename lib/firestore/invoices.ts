@@ -24,6 +24,7 @@ import {
   normalizeOrderId,
 } from "@/lib/validation/contracts";
 import { getAuthClient } from "@/lib/firebase";
+import { logFirestoreAuthForDebug, logFirestoreError } from "@/lib/firebase/firestoreDebug";
 
 /** Two-decimal money to align with Firestore rules float checks. */
 function roundMoney2(n: number): number {
@@ -272,6 +273,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   if (auth.currentUser) {
     await auth.currentUser.getIdToken(true);
   }
+  await logFirestoreAuthForDebug("postInvoice (before transaction)");
 
   const preloadedLotsByProduct = new Map<string, string[]>();
   const lotsSnap = await getDocs(collection(db, COLLECTIONS.stockLots));
@@ -285,7 +287,8 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   });
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
-  await runTransaction(db, async (tx) => {
+  try {
+    await runTransaction(db, async (tx) => {
     const invoiceSnap = await tx.get(invoiceRef);
     if (!invoiceSnap.exists()) {
       throw new Error("Invoice not found.");
@@ -479,7 +482,9 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         });
       }
 
-      const avgUnitCost = qty > 0 ? roundMoney2(cogsAmount / qty) : 0;
+      // Must match Firestore rule `approxMoneyEq(cogs_amount, quantity * unit_cost_snapshot)`.
+      // Do not use roundMoney2 here: qty * round(cogs/qty) can differ from cogs by > $0.05 on large lines.
+      const avgUnitCost = qty > 0 ? cogsAmount / qty : 0;
       const lineSubtotal = roundMoney2(item.unit_price * qty - item.line_discount);
       const saleRef = doc(collection(db, COLLECTIONS.sales));
       tx.set(saleRef, {
@@ -530,6 +535,10 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       updated_at: serverTimestamp(),
     });
   });
+  } catch (e) {
+    logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
+    throw e;
+  }
 }
 
 export async function voidInvoice(db: Firestore, invoiceId: string): Promise<void> {
@@ -542,6 +551,7 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   if (auth.currentUser) {
     await auth.currentUser.getIdToken(true);
   }
+  await logFirestoreAuthForDebug("voidInvoice (before transaction)");
 
   const preloadedConsumptionIds: string[] = [];
   const consumptionAllSnap = await getDocs(collection(db, COLLECTIONS.lotConsumptions));
@@ -553,7 +563,8 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   });
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
-  await runTransaction(db, async (tx) => {
+  try {
+    await runTransaction(db, async (tx) => {
     const invoiceSnap = await tx.get(invoiceRef);
     if (!invoiceSnap.exists()) {
       throw new Error("Invoice not found.");
@@ -667,4 +678,8 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
       updated_at: serverTimestamp(),
     });
   });
+  } catch (e) {
+    logFirestoreError("voidInvoice: transaction failed (Firestore rules — see console)", e);
+    throw e;
+  }
 }

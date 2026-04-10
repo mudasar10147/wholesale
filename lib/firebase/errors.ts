@@ -7,12 +7,13 @@ export function getFirestoreUserMessage(error: unknown): string {
   if (error instanceof FirebaseError) {
     switch (error.code) {
       case "permission-denied": {
-        const hint =
-          "Sign in as an admin (custom claim admin=true), deploy firestore.rules to this project, and ensure invoice line math matches stored totals.";
-        if (error.message && error.message.length > 0 && error.message.length < 400) {
-          return `${error.message} ${hint}`;
-        }
-        return `Firestore permission denied. ${hint}`;
+        return (
+          `${error.message} ` +
+          "This usually means Firestore security rules rejected the operation—not necessarily a missing admin claim. " +
+          "If your token already has admin=true, check: deployed rules match this project (firebase deploy --only firestore:rules), " +
+          "and that the write passes rule validation (e.g. invoice post money/shape checks, stock lot document fields). " +
+          "If Auth shows \"offline\" for token or accounts:lookup, fix network/blockers first so requests use a fresh token."
+        );
       }
       case "unavailable":
         return "Service temporarily unavailable. Try again in a moment.";

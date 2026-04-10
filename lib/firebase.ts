@@ -1,6 +1,6 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
-import { getFirestore, type Firestore } from "firebase/firestore";
+import { getFirestore, initializeFirestore, type Firestore } from "firebase/firestore";
 
 // Use static process.env.NEXT_PUBLIC_* access only. Next.js inlines these for the
 // client bundle; dynamic access like process.env[name] stays undefined in the browser.
@@ -44,8 +44,25 @@ export function getFirebaseApp(): FirebaseApp {
   return createFirebaseApp();
 }
 
+let firestoreSingleton: Firestore | null = null;
+
+/**
+ * Prefer long-polling auto-detect so Safari / strict browsers are less likely to fail
+ * Firestore Listen/WebChannel ("access control checks" on the Listen URL).
+ */
 export function getDb(): Firestore {
-  return getFirestore(getFirebaseApp());
+  if (firestoreSingleton) {
+    return firestoreSingleton;
+  }
+  const app = getFirebaseApp();
+  try {
+    firestoreSingleton = initializeFirestore(app, {
+      experimentalAutoDetectLongPolling: true,
+    });
+  } catch {
+    firestoreSingleton = getFirestore(app);
+  }
+  return firestoreSingleton;
 }
 
 let authSingleton: Auth | null = null;

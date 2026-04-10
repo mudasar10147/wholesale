@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { collection, doc, getDoc, onSnapshot, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
+import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
@@ -227,6 +228,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     try {
       await fn();
     } catch (err) {
+      logFirestoreError(`invoice action: ${label}`, err);
       setActionError(getFirestoreUserMessage(err));
     } finally {
       setWorking(null);

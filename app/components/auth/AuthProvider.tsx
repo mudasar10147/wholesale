@@ -12,6 +12,11 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+/** Matches Firestore rules `isAdmin()` (boolean or string). */
+function isAdminClaim(claims: Record<string, unknown>): boolean {
+  return claims.admin === true || claims.admin === "true";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -20,18 +25,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const auth = getAuthClient();
     const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
       if (u) {
+        // Keep loading true until ID token claims are known — avoids a frame where
+        // user is set but isAdmin is still false (false "not admin" flash on login).
+        setLoading(true);
+        setUser(u);
         try {
           const token = await u.getIdTokenResult(true);
-          setIsAdmin(token.claims.admin === true);
+          setIsAdmin(isAdminClaim(token.claims as Record<string, unknown>));
         } catch {
           setIsAdmin(false);
         }
+        setLoading(false);
       } else {
+        setUser(null);
         setIsAdmin(false);
+        setLoading(false);
       }
-      setLoading(false);
     });
     return () => unsub();
   }, []);

@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useId, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
+import { AdminClaimStatusBar } from "@/app/components/layout/AdminClaimStatusBar";
 import { MobileNavDrawer } from "@/app/components/layout/MobileNavDrawer";
 import { MobileTopBar } from "@/app/components/layout/MobileTopBar";
 import { Sidebar } from "@/app/components/layout/Sidebar";
@@ -25,6 +26,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
     <div className="flex min-h-screen bg-transparent">
       <Sidebar />
       <div className="relative flex min-h-screen min-w-0 flex-1 flex-col shadow-[var(--shadow-sidebar)]">
+        <AdminClaimStatusBar />
         <MobileTopBar
           menuOpen={mobileNavOpen}
           onMenuClick={() => setMobileNavOpen((open) => !open)}

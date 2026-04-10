@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { collection, onSnapshot, orderBy, query, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
+import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
@@ -65,6 +66,7 @@ export function InvoiceDraftList() {
     try {
       await postInvoice(getDb(), row.id);
     } catch (err) {
+      logFirestoreError("InvoiceDraftList handlePost", err);
       setActionError(getFirestoreUserMessage(err));
     } finally {
       setWorkingId(null);
@@ -79,6 +81,7 @@ export function InvoiceDraftList() {
     try {
       await voidInvoice(getDb(), row.id);
     } catch (err) {
+      logFirestoreError("InvoiceDraftList handleVoid", err);
       setActionError(getFirestoreUserMessage(err));
     } finally {
       setWorkingId(null);
@@ -100,6 +103,7 @@ export function InvoiceDraftList() {
     try {
       await deleteDraftInvoice(getDb(), row.id);
     } catch (err) {
+      logFirestoreError("InvoiceDraftList handleDeleteDraft", err);
       setActionError(getFirestoreUserMessage(err));
     } finally {
       setWorkingId(null);

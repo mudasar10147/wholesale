@@ -40,7 +40,7 @@ export function LoginForm() {
     setSubmitting(true);
     try {
       await signInWithEmailAndPassword(getAuthClient(), email.trim(), password);
-      router.replace(next);
+      // Redirect only via useEffect when claims are loaded (avoids racing ahead of isAdmin).
     } catch (err) {
       setError(getAuthUserMessage(err));
     } finally {
