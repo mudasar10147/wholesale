@@ -23,6 +23,7 @@ import {
   assertValidOrderId,
   normalizeOrderId,
 } from "@/lib/validation/contracts";
+import { getAuthClient } from "@/lib/firebase";
 
 /** Two-decimal money to align with Firestore rules float checks. */
 function roundMoney2(n: number): number {
@@ -265,6 +266,11 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
     throw new Error("Invoice ID is required.");
+  }
+
+  const auth = getAuthClient();
+  if (auth.currentUser) {
+    await auth.currentUser.getIdToken(true);
   }
 
   const preloadedLotsByProduct = new Map<string, string[]>();
@@ -530,6 +536,11 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
     throw new Error("Invoice ID is required.");
+  }
+
+  const auth = getAuthClient();
+  if (auth.currentUser) {
+    await auth.currentUser.getIdToken(true);
   }
 
   const preloadedConsumptionIds: string[] = [];

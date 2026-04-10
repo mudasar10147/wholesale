@@ -5,7 +5,10 @@ service cloud.firestore {
       return request.auth != null;
     }
     function isAdmin() {
-      return isSignedIn() && request.auth.token.admin == true;
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        request.auth.token.admin == 'true'
+      );
     }
     function hasOnlyKeys(data, keys) {
       return data.keys().hasOnly(keys);
@@ -37,34 +40,9 @@ service cloud.firestore {
       && data.updated_at is timestamp
       && (!('archived_at' in data) || data.archived_at is timestamp);
     }
+    // No hasOnlyKeys: extra fields from legacy/console data must not block updates.
     function validInvoiceBase(data) {
-      return hasOnlyKeys(
-        data,
-        [
-          'customer_id',
-          'order_id',
-          'status',
-          'payment_status',
-          'paid_amount',
-          'stock_reversal_applied',
-          'item_ids',
-          'subtotal_amount',
-          'discount_amount',
-          'delivery_charge',
-          'total_amount',
-          'posted_subtotal_amount',
-          'posted_discount_amount',
-          'posted_delivery_charge',
-          'posted_total_amount',
-          'posted_cogs_amount',
-          'notes',
-          'posted_at',
-          'voided_at',
-          'created_at',
-          'updated_at'
-        ]
-      )
-      && data.customer_id is string
+      return data.customer_id is string
       && data.customer_id.size() > 0
       && data.order_id is string
       && data.order_id.size() >= 6
@@ -95,8 +73,8 @@ service cloud.firestore {
       && (!('posted_total_amount' in data) || (data.posted_total_amount is number && data.posted_total_amount >= 0))
       && (!('posted_cogs_amount' in data) || (data.posted_cogs_amount is number && data.posted_cogs_amount >= 0))
       && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
-      && (!('posted_at' in data) || data.posted_at is timestamp)
-      && (!('voided_at' in data) || data.voided_at is timestamp)
+      && (!('posted_at' in data) || data.posted_at == null || data.posted_at is timestamp)
+      && (!('voided_at' in data) || data.voided_at == null || data.voided_at is timestamp)
       && data.created_at is timestamp
       && data.updated_at is timestamp;
     }
