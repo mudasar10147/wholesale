@@ -13,6 +13,14 @@ service cloud.firestore {
     function hasOptionalOnly(data, optionalKeys) {
       return data.keys().hasOnly(optionalKeys);
     }
+    // JS and rules both use floats; strict == on money often fails (e.g. 0.1 * 3).
+    function approxMoneyEq(a, b) {
+      return a is number && b is number && a >= b - 0.05 && a <= b + 0.05;
+    }
+    // Invoice header totals can be large; float error can exceed cents.
+    function approxHeaderMoneyEq(a, b) {
+      return a is number && b is number && a >= b - 100.0 && a <= b + 100.0;
+    }
     function validCustomerBase(data) {
       return hasOnlyKeys(
         data,
@@ -77,7 +85,10 @@ service cloud.firestore {
       && data.delivery_charge >= 0
       && data.total_amount >= 0
       && data.paid_amount <= data.total_amount
-      && data.total_amount == (data.subtotal_amount - data.discount_amount + data.delivery_charge)
+      && approxHeaderMoneyEq(
+        data.total_amount,
+        data.subtotal_amount - data.discount_amount + data.delivery_charge
+      )
       && (!('posted_subtotal_amount' in data) || (data.posted_subtotal_amount is number && data.posted_subtotal_amount >= 0))
       && (!('posted_discount_amount' in data) || (data.posted_discount_amount is number && data.posted_discount_amount >= 0))
       && (!('posted_delivery_charge' in data) || (data.posted_delivery_charge is number && data.posted_delivery_charge >= 0))
@@ -113,7 +124,10 @@ service cloud.firestore {
       && data.line_delivery_charge >= 0
       && data.line_total is number
       && data.line_total >= 0
-      && data.line_total == ((data.quantity * data.unit_price) - data.line_discount + data.line_delivery_charge)
+      && approxMoneyEq(
+        data.line_total,
+        (data.quantity * data.unit_price) - data.line_discount + data.line_delivery_charge
+      )
       && data.created_at is timestamp
       && data.updated_at is timestamp;
     }
@@ -159,7 +173,7 @@ service cloud.firestore {
       && data.unit_cost >= 0
       && data.cogs_amount is number
       && data.cogs_amount >= 0
-      && data.cogs_amount == (data.quantity * data.unit_cost)
+      && approxMoneyEq(data.cogs_amount, data.quantity * data.unit_cost)
       && data.created_at is timestamp
       && (!('reversed_at' in data) || data.reversed_at is timestamp);
     }
@@ -210,9 +224,9 @@ service cloud.firestore {
       && data.cogs_amount >= 0
       && data.line_total is number
       && data.line_total >= 0
-      && data.line_subtotal == ((data.quantity * data.unit_sale_price) - data.line_discount)
-      && data.line_total == (data.line_subtotal + data.line_delivery_charge)
-      && data.cogs_amount == (data.quantity * data.unit_cost_snapshot)
+      && approxMoneyEq(data.line_subtotal, (data.quantity * data.unit_sale_price) - data.line_discount)
+      && approxMoneyEq(data.line_total, data.line_subtotal + data.line_delivery_charge)
+      && approxMoneyEq(data.cogs_amount, data.quantity * data.unit_cost_snapshot)
       && data.created_at is timestamp;
     }
 
@@ -266,10 +280,22 @@ service cloud.firestore {
             && request.resource.data.status == 'posted'
             && request.resource.data.posted_at is timestamp
             && request.resource.data.voided_at == resource.data.voided_at
-            && request.resource.data.posted_subtotal_amount == resource.data.subtotal_amount
-            && request.resource.data.posted_discount_amount == resource.data.discount_amount
-            && request.resource.data.posted_delivery_charge == resource.data.delivery_charge
-            && request.resource.data.posted_total_amount == resource.data.total_amount
+            && approxHeaderMoneyEq(
+              request.resource.data.posted_subtotal_amount,
+              resource.data.subtotal_amount
+            )
+            && approxHeaderMoneyEq(
+              request.resource.data.posted_discount_amount,
+              resource.data.discount_amount
+            )
+            && approxHeaderMoneyEq(
+              request.resource.data.posted_delivery_charge,
+              resource.data.delivery_charge
+            )
+            && approxHeaderMoneyEq(
+              request.resource.data.posted_total_amount,
+              resource.data.total_amount
+            )
             && request.resource.data.posted_cogs_amount is number
             && request.resource.data.posted_cogs_amount >= 0
             && request.resource.data.stock_reversal_applied == false

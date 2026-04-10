@@ -24,6 +24,12 @@ import {
   normalizeOrderId,
 } from "@/lib/validation/contracts";
 
+/** Two-decimal money to align with Firestore rules float checks. */
+function roundMoney2(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
 export type CreateInvoiceInput = {
   customer_id: string;
   order_id: string;
@@ -431,7 +437,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         need -= take;
         lot.data.qty_remaining = available - take;
         const unitCost = typeof lot.data.unit_cost === "number" ? lot.data.unit_cost : 0;
-        const chunkCogs = unitCost * take;
+        const chunkCogs = roundMoney2(unitCost * take);
         cogsAmount += chunkCogs;
         consumptionRows.push({
           invoice_id: trimmedId,
@@ -450,6 +456,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
           `FIFO lots are insufficient for ${product?.name ?? item.product_id} (missing: ${need}).`,
         );
       }
+      cogsAmount = roundMoney2(cogsAmount);
       postedCogs += cogsAmount;
 
       for (const lot of productLots) {
@@ -466,8 +473,8 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         });
       }
 
-      const avgUnitCost = qty > 0 ? cogsAmount / qty : 0;
-      const lineSubtotal = (item.unit_price * qty) - item.line_discount;
+      const avgUnitCost = qty > 0 ? roundMoney2(cogsAmount / qty) : 0;
+      const lineSubtotal = roundMoney2(item.unit_price * qty - item.line_discount);
       const saleRef = doc(collection(db, COLLECTIONS.sales));
       tx.set(saleRef, {
         invoice_id: trimmedId,
@@ -512,7 +519,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       posted_discount_amount: invoice.discount_amount,
       posted_delivery_charge: invoice.delivery_charge,
       posted_total_amount: invoice.total_amount,
-      posted_cogs_amount: postedCogs,
+      posted_cogs_amount: roundMoney2(postedCogs),
       posted_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     });

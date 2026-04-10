@@ -6,8 +6,14 @@ import { FirebaseError } from "firebase/app";
 export function getFirestoreUserMessage(error: unknown): string {
   if (error instanceof FirebaseError) {
     switch (error.code) {
-      case "permission-denied":
-        return "You don't have permission to perform this action. Check Firestore rules.";
+      case "permission-denied": {
+        const hint =
+          "Sign in as an admin (custom claim admin=true), deploy firestore.rules to this project, and ensure invoice line math matches stored totals.";
+        if (error.message && error.message.length > 0 && error.message.length < 400) {
+          return `${error.message} ${hint}`;
+        }
+        return `Firestore permission denied. ${hint}`;
+      }
       case "unavailable":
         return "Service temporarily unavailable. Try again in a moment.";
       case "failed-precondition":
