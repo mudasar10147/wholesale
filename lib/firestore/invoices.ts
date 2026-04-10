@@ -312,9 +312,12 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       neededByProduct.set(productId, (neededByProduct.get(productId) ?? 0) + qty);
     }
 
+    // All Firestore reads must finish before any writes in a transaction.
+    const productIds = Array.from(neededByProduct.keys());
     const productById = new Map<string, ProductDoc>();
-    const lotsByProductId = new Map<string, Array<{ id: string; data: StockLotDoc }>>();
-    for (const [productId, qtyNeeded] of neededByProduct) {
+    const stockSnapshot = new Map<string, number>();
+
+    for (const productId of productIds) {
       const productRef = doc(db, COLLECTIONS.products, productId);
       const productSnap = await tx.get(productRef);
       if (!productSnap.exists()) {
@@ -322,17 +325,27 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       }
       const product = productSnap.data() as ProductDoc | undefined;
       const currentStock = typeof product?.stock_quantity === "number" ? product.stock_quantity : 0;
+      const qtyNeeded = neededByProduct.get(productId) ?? 0;
       if (currentStock < qtyNeeded) {
         throw new Error(
           `Not enough stock for ${product?.name ?? productId} (needed: ${qtyNeeded}, available: ${currentStock}).`,
         );
       }
-      tx.update(productRef, {
-        stock_quantity: currentStock - qtyNeeded,
-      });
       if (product) {
         productById.set(productId, product);
       }
+      stockSnapshot.set(productId, currentStock);
+    }
+
+    const lotsByProductId = new Map<string, Array<{ id: string; data: StockLotDoc }>>();
+    const pendingOpeningLots: Array<{
+      ref: ReturnType<typeof doc>;
+      payload: Record<string, unknown>;
+    }> = [];
+
+    for (const productId of productIds) {
+      const product = productById.get(productId);
+      const currentStock = stockSnapshot.get(productId) ?? 0;
 
       const lots: Array<{ id: string; data: StockLotDoc }> = [];
       const lotIds = preloadedLotsByProduct.get(productId) ?? [];
@@ -352,16 +365,19 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         // Backfill legacy stock into FIFO system once so old products remain postable.
         const openingRef = doc(collection(db, COLLECTIONS.stockLots));
         const openingCost = typeof product?.cost_price === "number" ? product.cost_price : 0;
-        tx.set(openingRef, {
-          product_id: productId,
-          unit_cost: openingCost,
-          qty_in: gap,
-          qty_remaining: gap,
-          source: "opening_balance",
-          reference_id: productId,
-          received_at: product?.created_at ?? serverTimestamp(),
-          created_at: serverTimestamp(),
-          updated_at: serverTimestamp(),
+        pendingOpeningLots.push({
+          ref: openingRef,
+          payload: {
+            product_id: productId,
+            unit_cost: openingCost,
+            qty_in: gap,
+            qty_remaining: gap,
+            source: "opening_balance",
+            reference_id: productId,
+            received_at: product?.created_at ?? serverTimestamp(),
+            created_at: serverTimestamp(),
+            updated_at: serverTimestamp(),
+          },
         });
         lots.push({
           id: openingRef.id,
@@ -372,7 +388,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
             qty_remaining: gap,
             source: "opening_balance",
             reference_id: productId,
-            // This field is only used for sorting inside this transaction.
             received_at: product?.created_at ?? ({} as StockLotDoc["received_at"]),
             created_at: {} as StockLotDoc["created_at"],
             updated_at: {} as StockLotDoc["updated_at"],
@@ -386,6 +401,17 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         return at - bt;
       });
       lotsByProductId.set(productId, lots);
+    }
+
+    for (const o of pendingOpeningLots) {
+      tx.set(o.ref, o.payload);
+    }
+    for (const productId of productIds) {
+      const currentStock = stockSnapshot.get(productId) ?? 0;
+      const qtyNeeded = neededByProduct.get(productId) ?? 0;
+      tx.update(doc(db, COLLECTIONS.products, productId), {
+        stock_quantity: currentStock - qtyNeeded,
+      });
     }
 
     let postedCogs = 0;
