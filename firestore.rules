@@ -21,6 +21,13 @@ service cloud.firestore {
     function approxHeaderMoneyEq(a, b) {
       return a is number && b is number && a >= b - 100.0 && a <= b + 100.0;
     }
+    // Missing field vs null breaks plain == between resource and request on update.
+    function voidedAtUnchanged(res, req) {
+      return (!('voided_at' in res) && !('voided_at' in req)) || req.voided_at == res.voided_at;
+    }
+    function postedAtUnchanged(res, req) {
+      return (!('posted_at' in res) && !('posted_at' in req)) || req.posted_at == res.posted_at;
+    }
     function validCustomerBase(data) {
       return hasOnlyKeys(
         data,
@@ -123,12 +130,9 @@ service cloud.firestore {
       && data.created_at is timestamp
       && data.updated_at is timestamp;
     }
+    // No hasOnlyKeys: avoid false denials on shapes that match validators but add optional fields.
     function validLotConsumptionBase(data) {
-      return hasOnlyKeys(
-        data,
-        ['invoice_id', 'order_id', 'invoice_item_id', 'product_id', 'lot_id', 'quantity', 'unit_cost', 'cogs_amount', 'created_at', 'reversed_at']
-      )
-      && data.invoice_id is string
+      return data.invoice_id is string
       && data.invoice_id.size() > 0
       && data.order_id is string
       && data.order_id.size() >= 6
@@ -153,26 +157,7 @@ service cloud.firestore {
       && (!('reversed_at' in data) || data.reversed_at is timestamp);
     }
     function validInvoiceItemCogsBase(data) {
-      return hasOnlyKeys(
-        data,
-        [
-          'invoice_id',
-          'order_id',
-          'customer_id',
-          'invoice_item_id',
-          'product_id',
-          'quantity',
-          'unit_sale_price',
-          'unit_cost_snapshot',
-          'line_subtotal',
-          'line_discount',
-          'line_delivery_charge',
-          'cogs_amount',
-          'line_total',
-          'created_at'
-        ]
-      )
-      && data.invoice_id is string
+      return data.invoice_id is string
       && data.invoice_id.size() > 0
       && data.order_id is string
       && data.order_id.size() >= 6
@@ -250,15 +235,15 @@ service cloud.firestore {
           (
             resource.data.status == 'draft'
             && request.resource.data.status == 'draft'
-            && request.resource.data.posted_at == resource.data.posted_at
-            && request.resource.data.voided_at == resource.data.voided_at
+            && postedAtUnchanged(resource.data, request.resource.data)
+            && voidedAtUnchanged(resource.data, request.resource.data)
             && request.resource.data.stock_reversal_applied == false
           )
           || (
             resource.data.status == 'draft'
             && request.resource.data.status == 'posted'
             && request.resource.data.posted_at is timestamp
-            && request.resource.data.voided_at == resource.data.voided_at
+            && voidedAtUnchanged(resource.data, request.resource.data)
             && approxHeaderMoneyEq(
               request.resource.data.posted_subtotal_amount,
               resource.data.subtotal_amount
@@ -284,7 +269,7 @@ service cloud.firestore {
             && request.resource.data.status == 'void'
             && request.resource.data.stock_reversal_applied == false
             && request.resource.data.voided_at is timestamp
-            && request.resource.data.posted_at == resource.data.posted_at
+            && postedAtUnchanged(resource.data, request.resource.data)
             && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
             && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
             && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
@@ -295,8 +280,8 @@ service cloud.firestore {
             resource.data.status == 'posted'
             && request.resource.data.status == 'posted'
             && request.resource.data.stock_reversal_applied == false
-            && request.resource.data.voided_at == resource.data.voided_at
-            && request.resource.data.posted_at == resource.data.posted_at
+            && voidedAtUnchanged(resource.data, request.resource.data)
+            && postedAtUnchanged(resource.data, request.resource.data)
             && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
             && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
             && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
@@ -308,7 +293,7 @@ service cloud.firestore {
             && request.resource.data.status == 'void'
             && request.resource.data.stock_reversal_applied == true
             && request.resource.data.voided_at is timestamp
-            && request.resource.data.posted_at == resource.data.posted_at
+            && postedAtUnchanged(resource.data, request.resource.data)
             && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
             && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
             && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge

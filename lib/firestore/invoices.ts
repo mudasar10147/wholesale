@@ -2,6 +2,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   getDocs,
   runTransaction,
   serverTimestamp,
@@ -275,6 +276,22 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   }
   await logFirestoreAuthForDebug("postInvoice (before transaction)");
 
+  const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
+  const preCheck = await getDoc(invoiceRef);
+  if (!preCheck.exists()) {
+    throw new Error("Invoice not found.");
+  }
+  const preInvoice = preCheck.data() as InvoiceDoc | undefined;
+  if (preInvoice?.status === "posted") {
+    return;
+  }
+  if (preInvoice?.status === "void") {
+    throw new Error("Cannot post a void invoice.");
+  }
+  if (preInvoice?.status !== "draft") {
+    throw new Error(`Only draft invoices can be posted (current status: ${String(preInvoice?.status)}).`);
+  }
+
   const preloadedLotsByProduct = new Map<string, string[]>();
   const lotsSnap = await getDocs(collection(db, COLLECTIONS.stockLots));
   lotsSnap.forEach((docSnap) => {
@@ -286,7 +303,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     preloadedLotsByProduct.set(productId, list);
   });
 
-  const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
   try {
     await runTransaction(db, async (tx) => {
     const invoiceSnap = await tx.get(invoiceRef);
@@ -294,8 +310,14 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       throw new Error("Invoice not found.");
     }
     const invoice = invoiceSnap.data() as InvoiceDoc | undefined;
+    // Another writer may have posted this invoice during our pre-check vs commit; treat as success.
+    if (invoice?.status === "posted") {
+      return;
+    }
     if (!invoice || invoice.status !== "draft") {
-      throw new Error("Only draft invoices can be posted.");
+      throw new Error(
+        `Only draft invoices can be posted (current status: ${invoice?.status ?? "missing"}).`,
+      );
     }
     if (invoice.stock_reversal_applied) {
       throw new Error("Invoice stock state is invalid. Cannot post this invoice.");
