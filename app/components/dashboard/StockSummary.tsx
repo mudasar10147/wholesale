@@ -1,5 +1,6 @@
 import type { StockSummaryData } from "@/lib/inventory/stockSummary";
 import { LOW_STOCK_THRESHOLD } from "@/lib/inventory/stockSummary";
+import { formatMoney } from "@/app/components/dashboard/ProfitBreakdownCard";
 import {
   Card,
   CardContent,
@@ -43,18 +44,19 @@ export function StockSummary({ data, loading }: StockSummaryProps) {
     );
   }
 
-  const { productCount, totalUnits, lowStockItems } = data;
+  const { productCount, totalUnits, totalValueAtCost, lowStockItems } = data;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Stock summary</CardTitle>
         <CardDescription>
-          Total SKUs and units. Low stock is ≤ {LOW_STOCK_THRESHOLD} units.
+          Total SKUs and units. Inventory value uses current product cost × units on hand (same basis as
+          dashboard COGS). Low stock is ≤ {LOW_STOCK_THRESHOLD} units.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <div className="rounded-lg border border-border bg-surface-muted px-4 py-3">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
               Products
@@ -69,6 +71,17 @@ export function StockSummary({ data, loading }: StockSummaryProps) {
             </p>
             <p className="mt-1 tabular-nums text-xl font-semibold text-foreground">
               {totalUnits.toLocaleString()}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-surface-muted px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Total inventory value
+            </p>
+            <p className="mt-1 tabular-nums text-xl font-semibold text-foreground">
+              {formatMoney(totalValueAtCost)}
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              At current product cost × stock on hand.
             </p>
           </div>
         </div>

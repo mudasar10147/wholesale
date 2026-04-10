@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   collection,
   onSnapshot,
@@ -11,8 +11,13 @@ import {
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { updateProductDetails } from "@/lib/firestore/products";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { StockAdjustControls } from "@/app/components/products/StockAdjustControls";
+import { Button } from "@/app/components/ui/Button";
+import { InlineAlert } from "@/app/components/ui/InlineAlert";
+import { Input } from "@/app/components/ui/Input";
+import { Label } from "@/app/components/ui/Label";
 import { cn } from "@/lib/utils";
 
 type Row = ProductDoc & { id: string };
@@ -29,10 +34,103 @@ function formatDate(ts: Timestamp) {
   }
 }
 
+function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void }) {
+  const [name, setName] = useState(row.name);
+  const [category, setCategory] = useState(row.category ?? "");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onDismiss();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onDismiss]);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError("Name is required.");
+      return;
+    }
+    setPending(true);
+    try {
+      await updateProductDetails(getDb(), row.id, { name: trimmed, category });
+      onDismiss();
+    } catch (err) {
+      setError(getFirestoreUserMessage(err));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="presentation"
+      onClick={onDismiss}
+    >
+      <div
+        role="dialog"
+        aria-modal
+        aria-labelledby="edit-product-title"
+        className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="edit-product-title" className="text-lg font-semibold text-foreground">
+          Edit product
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">Name and category only.</p>
+        <form onSubmit={onSubmit} className="mt-4 space-y-4" noValidate>
+          <div className="space-y-2">
+            <Label htmlFor="edit-product-name">Name</Label>
+            <Input
+              id="edit-product-name"
+              autoComplete="off"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={200}
+              required
+              aria-invalid={error === "Name is required."}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-product-category">Category (optional)</Label>
+            <Input
+              id="edit-product-category"
+              autoComplete="off"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="e.g. Grains"
+            />
+          </div>
+          {error ? (
+            <InlineAlert variant="error" className="text-sm">
+              {error}
+            </InlineAlert>
+          ) : null}
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Button type="submit" disabled={pending}>
+              {pending ? "Saving…" : "Save"}
+            </Button>
+            <Button type="button" variant="outline" disabled={pending} onClick={onDismiss}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export function ProductList() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editingRow, setEditingRow] = useState<Row | null>(null);
 
   useEffect(() => {
     const db = getDb();
@@ -84,43 +182,63 @@ export function ProductList() {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full min-w-[960px] border-collapse text-left text-sm">
-        <thead>
-          <tr className="border-b border-border bg-surface-muted">
-            <th className="px-4 py-3 font-semibold text-foreground">Name</th>
-            <th className="px-4 py-3 font-semibold text-foreground">Category</th>
-            <th className="px-4 py-3 font-semibold text-foreground">Cost</th>
-            <th className="px-4 py-3 font-semibold text-foreground">Sale</th>
-            <th className="px-4 py-3 font-semibold text-foreground">Stock</th>
-            <th className="px-4 py-3 font-semibold text-foreground">Inventory</th>
-            <th className="px-4 py-3 font-semibold text-foreground">Added</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, i) => (
-            <tr
-              key={row.id}
-              className={cn(
-                "border-b border-border last:border-b-0",
-                i % 2 === 1 ? "bg-surface-muted/50" : "bg-surface",
-              )}
-            >
-              <td className="px-4 py-3 font-medium text-foreground">{row.name}</td>
-              <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
-              <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.cost_price)}</td>
-              <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.sale_price)}</td>
-              <td className="px-4 py-3 tabular-nums text-foreground">
-                {row.stock_quantity.toLocaleString()}
-              </td>
-              <td className="px-4 py-3 align-top">
-                <StockAdjustControls productId={row.id} currentStock={row.stock_quantity} />
-              </td>
-              <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
+    <>
+      {editingRow ? (
+        <EditProductModal key={editingRow.id} row={editingRow} onDismiss={() => setEditingRow(null)} />
+      ) : null}
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+          <thead>
+            <tr className="border-b border-border bg-surface-muted">
+              <th className="px-4 py-3 font-semibold text-foreground">Name</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Category</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Cost</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Sale</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Stock</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Inventory</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Actions</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Added</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr
+                key={row.id}
+                className={cn(
+                  "border-b border-border last:border-b-0",
+                  i % 2 === 1 ? "bg-surface-muted/50" : "bg-surface",
+                )}
+              >
+                <td className="px-4 py-3 font-medium text-foreground">{row.name}</td>
+                <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
+                <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.cost_price)}</td>
+                <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.sale_price)}</td>
+                <td className="px-4 py-3 tabular-nums text-foreground">
+                  {row.stock_quantity.toLocaleString()}
+                </td>
+                <td className="px-4 py-3 align-top">
+                  <StockAdjustControls
+                    productId={row.id}
+                    currentStock={row.stock_quantity}
+                    defaultUnitCost={row.cost_price}
+                  />
+                </td>
+                <td className="px-4 py-3 align-top">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 px-3 py-1.5 text-xs"
+                    onClick={() => setEditingRow(row)}
+                  >
+                    Edit
+                  </Button>
+                </td>
+                <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

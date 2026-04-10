@@ -1,26 +1,47 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { stockIn, stockOut } from "@/lib/firestore/inventory";
-import { parsePositiveIntStrict, validateQuantityAgainstStock } from "@/lib/validation/numbers";
+import {
+  parseNonNegativeDecimal,
+  parsePositiveIntStrict,
+  validateQuantityAgainstStock,
+} from "@/lib/validation/numbers";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
+import { Label } from "@/app/components/ui/Label";
 import { cn } from "@/lib/utils";
 
 type StockAdjustControlsProps = {
   productId: string;
   currentStock: number;
+  /** Shown as default for the unit cost field; updates when the product row updates. */
+  defaultUnitCost: number;
 };
 
-export function StockAdjustControls({ productId, currentStock }: StockAdjustControlsProps) {
+function defaultCostInputString(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "0";
+  return String(n);
+}
+
+export function StockAdjustControls({
+  productId,
+  currentStock,
+  defaultUnitCost,
+}: StockAdjustControlsProps) {
   const [qty, setQty] = useState("1");
+  const [unitCost, setUnitCost] = useState(() => defaultCostInputString(defaultUnitCost));
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const alertId = `stock-adjust-alert-${productId}`;
+
+  useEffect(() => {
+    setUnitCost(defaultCostInputString(defaultUnitCost));
+  }, [productId, defaultUnitCost]);
 
   const parsedQty = useMemo(() => parsePositiveIntStrict(qty), [qty]);
   const stockOutDisabled =
@@ -35,9 +56,14 @@ export function StockAdjustControls({ productId, currentStock }: StockAdjustCont
       setError(parsed.message ?? "Enter a positive whole number.");
       return;
     }
+    const cost = parseNonNegativeDecimal(unitCost);
+    if (!cost.ok) {
+      setError(cost.message ?? "Invalid unit cost.");
+      return;
+    }
     setPending("in");
     try {
-      await stockIn(getDb(), productId, parsed.value);
+      await stockIn(getDb(), productId, parsed.value, cost.value);
     } catch (e) {
       setError(getFirestoreUserMessage(e));
     } finally {
@@ -67,20 +93,43 @@ export function StockAdjustControls({ productId, currentStock }: StockAdjustCont
     }
   }
 
+  const qtyId = `stock-qty-${productId}`;
+  const costId = `stock-unit-cost-${productId}`;
+
   return (
-    <div className="flex min-w-[200px] flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          className="h-9 w-[4.5rem] px-2 py-1.5 text-sm"
-          inputMode="numeric"
-          min={1}
-          step={1}
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          aria-label="Quantity to adjust"
-          aria-invalid={!!error}
-          aria-describedby={error ? alertId : undefined}
-        />
+    <div className="flex min-w-[220px] max-w-[280px] flex-col gap-2">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <Label htmlFor={qtyId} className="text-xs text-muted-foreground">
+            Qty
+          </Label>
+          <Input
+            id={qtyId}
+            className="h-9 w-[4.5rem] px-2 py-1.5 text-sm"
+            inputMode="numeric"
+            min={1}
+            step={1}
+            value={qty}
+            onChange={(e) => setQty(e.target.value)}
+            aria-invalid={!!error}
+            aria-describedby={error ? alertId : undefined}
+          />
+        </div>
+        <div className="flex min-w-0 flex-col gap-1">
+          <Label htmlFor={costId} className="text-xs text-muted-foreground">
+            Unit cost
+          </Label>
+          <Input
+            id={costId}
+            className="h-9 w-[5.5rem] px-2 py-1.5 text-sm tabular-nums"
+            inputMode="decimal"
+            min={0}
+            step="any"
+            value={unitCost}
+            onChange={(e) => setUnitCost(e.target.value)}
+            aria-label="Purchase unit cost for stock in"
+          />
+        </div>
         <Button
           type="button"
           variant="primary"
@@ -103,8 +152,11 @@ export function StockAdjustControls({ productId, currentStock }: StockAdjustCont
           {pending === "out" ? "…" : "Stock out"}
         </Button>
       </div>
+      <p className="text-[10px] leading-snug text-muted-foreground">
+        Stock in uses this receipt&apos;s cost for FIFO. The product&apos;s default cost updates to match.
+      </p>
       {error ? (
-        <InlineAlert variant="error" id={alertId} className="max-w-[220px] text-xs">
+        <InlineAlert variant="error" id={alertId} className="max-w-[260px] text-xs">
           {error}
         </InlineAlert>
       ) : null}

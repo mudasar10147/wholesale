@@ -14,6 +14,8 @@ export type LowStockItem = {
 export type StockSummaryData = {
   productCount: number;
   totalUnits: number;
+  /** Sum of stock_quantity × cost_price per product (current product costs). */
+  totalValueAtCost: number;
   lowStockItems: LowStockItem[];
 };
 
@@ -23,12 +25,15 @@ export type StockSummaryData = {
 export async function loadStockSummary(db: Firestore): Promise<StockSummaryData> {
   const snap = await getDocs(collection(db, COLLECTIONS.products));
   let totalUnits = 0;
+  let totalValueAtCost = 0;
   const low: LowStockItem[] = [];
 
   snap.forEach((docSnap) => {
     const d = docSnap.data() as ProductDoc;
     const qty = typeof d.stock_quantity === "number" ? d.stock_quantity : 0;
+    const cost = typeof d.cost_price === "number" ? d.cost_price : 0;
     totalUnits += qty;
+    totalValueAtCost += qty * cost;
     if (qty <= LOW_STOCK_THRESHOLD) {
       low.push({
         id: docSnap.id,
@@ -43,6 +48,7 @@ export async function loadStockSummary(db: Firestore): Promise<StockSummaryData>
   return {
     productCount: snap.size,
     totalUnits,
+    totalValueAtCost,
     lowStockItems: low,
   };
 }

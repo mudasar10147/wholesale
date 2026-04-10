@@ -10,13 +10,28 @@ import {
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
+function resolveStockInUnitCost(
+  product: ProductDoc | undefined,
+  unitCost?: number,
+): number {
+  if (unitCost !== undefined) {
+    if (typeof unitCost !== "number" || !Number.isFinite(unitCost) || unitCost < 0) {
+      throw new Error("Unit cost must be zero or greater.");
+    }
+    return unitCost;
+  }
+  return typeof product?.cost_price === "number" ? product.cost_price : 0;
+}
+
 /**
  * Increase stock atomically (stock in).
+ * @param unitCost - Cost per unit for this receipt; omitted or undefined uses the product's current cost_price.
  */
 export async function stockIn(
   db: Firestore,
   productId: string,
   quantity: number,
+  unitCost?: number,
 ): Promise<void> {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
@@ -28,13 +43,16 @@ export async function stockIn(
       throw new Error("Product not found.");
     }
     const product = snap.data() as ProductDoc | undefined;
-    const unitCost = typeof product?.cost_price === "number" ? product.cost_price : 0;
+    const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
 
-    tx.update(ref, { stock_quantity: increment(quantity) });
+    tx.update(ref, {
+      stock_quantity: increment(quantity),
+      cost_price: resolvedUnitCost,
+    });
     const lotRef = doc(collection(db, COLLECTIONS.stockLots));
     tx.set(lotRef, {
       product_id: productId,
-      unit_cost: unitCost,
+      unit_cost: resolvedUnitCost,
       qty_in: quantity,
       qty_remaining: quantity,
       source: "stock_in",
