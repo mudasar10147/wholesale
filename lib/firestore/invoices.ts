@@ -421,7 +421,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       const productLots = lotsByProductId.get(item.product_id) ?? [];
       let need = qty;
       let cogsAmount = 0;
-      const consumptionRows: LotConsumptionDoc[] = [];
+      const consumptionRows: Array<Omit<LotConsumptionDoc, "created_at" | "reversed_at">> = [];
 
       for (const lot of productLots) {
         if (need <= 0) break;
@@ -442,8 +442,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
           quantity: take,
           unit_cost: unitCost,
           cogs_amount: chunkCogs,
-          created_at: {} as LotConsumptionDoc["created_at"],
-          reversed_at: undefined,
         });
       }
       if (need > 0) {
