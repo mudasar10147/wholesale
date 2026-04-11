@@ -317,8 +317,9 @@ service cloud.firestore {
     }
     match /stock_lots/{docId} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && validStockLotBase(request.resource.data)
-        && exists(/databases/$(database)/documents/products/$(request.resource.data.product_id));
+      // Omit exists(product): admin-only create; avoids one exists() per opening_balance lot during invoice post
+      // (transactions are limited to 20 cross-document rule reads total).
+      allow create: if isAdmin() && validStockLotBase(request.resource.data);
       allow update: if isAdmin() && validStockLotBase(request.resource.data)
         && request.resource.data.product_id == resource.data.product_id
         && request.resource.data.qty_in == resource.data.qty_in
@@ -328,11 +329,11 @@ service cloud.firestore {
       allow delete: if false;
     }
     // Posting can create an opening_balance lot and consumptions in the same transaction; exists(lot) would fail.
+    // Use one get(invoice) + item_ids membership instead of two exists() — transactions share a 20 get/exists budget.
     match /lot_consumptions/{docId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && validLotConsumptionBase(request.resource.data)
-        && exists(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id))
-        && exists(/databases/$(database)/documents/invoice_items/$(request.resource.data.invoice_item_id))
+        && request.resource.data.invoice_item_id in get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.item_ids
         && !('reversed_at' in request.resource.data);
       allow update: if isAdmin() && validLotConsumptionBase(request.resource.data)
         && request.resource.data.invoice_id == resource.data.invoice_id
@@ -348,12 +349,12 @@ service cloud.firestore {
         && request.resource.data.reversed_at is timestamp;
       allow delete: if false;
     }
+    // One logical read of invoices/{id} (cached across duplicate get paths) + item_ids check — saves exists() budget.
     match /invoice_item_cogs/{docId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
         && request.resource.data.invoice_item_id == docId
-        && exists(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id))
-        && exists(/databases/$(database)/documents/invoice_items/$(request.resource.data.invoice_item_id))
+        && request.resource.data.invoice_item_id in get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.item_ids
         && request.resource.data.order_id
           == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.order_id
         && request.resource.data.customer_id

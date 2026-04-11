@@ -1,3 +1,4 @@
+import { FirebaseError } from "firebase/app";
 import {
   collection,
   deleteField,
@@ -6,6 +7,7 @@ import {
   getDocs,
   runTransaction,
   serverTimestamp,
+  writeBatch,
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
@@ -42,6 +44,45 @@ export type CreateInvoiceInput = {
   lines: InvoiceCalcLineInput[];
 };
 
+/** Firestore allows at most ~500 document reads+writes per transaction. */
+const FIRESTORE_TXN_DOC_CAP = 500;
+
+/**
+ * Load customer + products outside a transaction, matching previous server checks.
+ * Drafts do not reserve stock; posting still enforces real stock/FIFO.
+ */
+async function preflightValidateDraftInvoiceLines(
+  db: Firestore,
+  customerId: string,
+  lines: InvoiceCalcLineInput[],
+): Promise<void> {
+  const customerRef = doc(db, COLLECTIONS.customers, customerId);
+  const customerSnap = await getDoc(customerRef);
+  if (!customerSnap.exists()) throw new Error("Customer not found.");
+  const customer = customerSnap.data() as CustomerDoc | undefined;
+  if (!customer || !customer.is_active) throw new Error("Customer is not active.");
+
+  const uniqueProductIds = Array.from(new Set(lines.map((line) => line.product_id.trim())));
+  const productMap = new Map<string, ProductDoc>();
+  await Promise.all(
+    uniqueProductIds.map(async (productId) => {
+      const productRef = doc(db, COLLECTIONS.products, productId);
+      const productSnap = await getDoc(productRef);
+      if (!productSnap.exists()) throw new Error("One or more products no longer exist.");
+      productMap.set(productId, productSnap.data() as ProductDoc);
+    }),
+  );
+
+  for (const line of lines) {
+    const product = productMap.get(line.product_id.trim());
+    if (!product) throw new Error("Invalid product in invoice line.");
+    const stock = typeof product.stock_quantity === "number" ? product.stock_quantity : 0;
+    if (line.quantity > stock) {
+      throw new Error(`Not enough stock for ${product.name} (available: ${stock}).`);
+    }
+  }
+}
+
 export async function createDraftInvoice(
   db: Firestore,
   input: CreateInvoiceInput,
@@ -53,10 +94,17 @@ export async function createDraftInvoice(
   assertValidCreateInvoiceInput(input);
   assertValidOrderId(orderId);
 
-  const uniqueProductIds = Array.from(new Set(input.lines.map((line) => line.product_id.trim())));
+  await preflightValidateDraftInvoiceLines(db, customerId, input.lines);
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, orderId);
   const itemRefs = input.lines.map(() => doc(collection(db, COLLECTIONS.invoiceItems)));
+
+  const txOpsEstimate = 3 + input.lines.length;
+  if (txOpsEstimate > FIRESTORE_TXN_DOC_CAP) {
+    throw new Error(
+      `This invoice has too many lines to save at once (max ${FIRESTORE_TXN_DOC_CAP - 3} lines). Split into multiple invoices.`,
+    );
+  }
 
   await runTransaction(db, async (tx) => {
     const customerRef = doc(db, COLLECTIONS.customers, customerId);
@@ -68,23 +116,6 @@ export async function createDraftInvoice(
     const orderSnap = await tx.get(invoiceRef);
     if (orderSnap.exists()) {
       throw new Error("Order ID already used. Choose another.");
-    }
-
-    const productMap = new Map<string, ProductDoc>();
-    for (const productId of uniqueProductIds) {
-      const productRef = doc(db, COLLECTIONS.products, productId);
-      const productSnap = await tx.get(productRef);
-      if (!productSnap.exists()) throw new Error("One or more products no longer exist.");
-      productMap.set(productId, productSnap.data() as ProductDoc);
-    }
-
-    for (const line of input.lines) {
-      const product = productMap.get(line.product_id.trim());
-      if (!product) throw new Error("Invalid product in invoice line.");
-      const stock = typeof product.stock_quantity === "number" ? product.stock_quantity : 0;
-      if (line.quantity > stock) {
-        throw new Error(`Not enough stock for ${product.name} (available: ${stock}).`);
-      }
     }
 
     const calc = calculateInvoiceSummary({
@@ -178,10 +209,101 @@ export async function updateDraftInvoice(
     throw new Error("Order ID cannot be changed.");
   }
 
-  const uniqueProductIds = Array.from(new Set(input.lines.map((line) => line.product_id.trim())));
+  await preflightValidateDraftInvoiceLines(db, customerId, input.lines);
+
+  if (3 + input.lines.length > FIRESTORE_TXN_DOC_CAP) {
+    throw new Error(
+      `This invoice has too many lines to save at once (max ${FIRESTORE_TXN_DOC_CAP - 3} lines). Split into multiple invoices.`,
+    );
+  }
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
   const itemRefs = input.lines.map(() => doc(collection(db, COLLECTIONS.invoiceItems)));
+
+  const preSnap = await getDoc(invoiceRef);
+  if (!preSnap.exists()) {
+    throw new Error("Invoice not found.");
+  }
+  const preExisting = preSnap.data() as InvoiceDoc | undefined;
+  if (!preExisting) {
+    throw new Error("Invoice not found.");
+  }
+  if (preExisting.status !== "draft") {
+    throw new Error("Only draft invoices can be edited.");
+  }
+
+  const oldItemIds = Array.isArray(preExisting.item_ids) ? preExisting.item_ids.filter(Boolean) : [];
+  const opEstimateSingleTxn = 3 + oldItemIds.length + input.lines.length;
+
+  if (opEstimateSingleTxn > FIRESTORE_TXN_DOC_CAP) {
+    for (let i = 0; i < oldItemIds.length; i += FIRESTORE_TXN_DOC_CAP) {
+      const chunk = oldItemIds.slice(i, i + FIRESTORE_TXN_DOC_CAP);
+      const batch = writeBatch(db);
+      for (const itemId of chunk) {
+        batch.delete(doc(db, COLLECTIONS.invoiceItems, itemId));
+      }
+      await batch.commit();
+    }
+
+    await runTransaction(db, async (tx) => {
+      const invoiceSnap = await tx.get(invoiceRef);
+      if (!invoiceSnap.exists()) {
+        throw new Error("Invoice not found.");
+      }
+      const existing = invoiceSnap.data() as InvoiceDoc | undefined;
+      if (!existing) {
+        throw new Error("Invoice not found.");
+      }
+      if (existing.status !== "draft") {
+        throw new Error("Only draft invoices can be edited.");
+      }
+
+      const customerRef = doc(db, COLLECTIONS.customers, customerId);
+      const customerSnap = await tx.get(customerRef);
+      if (!customerSnap.exists()) throw new Error("Customer not found.");
+      const customer = customerSnap.data() as CustomerDoc | undefined;
+      if (!customer || !customer.is_active) throw new Error("Customer is not active.");
+
+      const calc = calculateInvoiceSummary({
+        lines: input.lines,
+        delivery_charge: input.delivery_charge,
+        discount_amount: input.discount_amount,
+      });
+
+      tx.update(invoiceRef, {
+        customer_id: customerId,
+        order_id: trimmedId,
+        status: "draft",
+        payment_status: "unpaid",
+        paid_amount: 0,
+        stock_reversal_applied: false,
+        item_ids: itemRefs.map((ref) => ref.id),
+        subtotal_amount: calc.subtotal_amount,
+        discount_amount: calc.discount_amount,
+        delivery_charge: calc.delivery_charge,
+        total_amount: calc.total_amount,
+        ...(notes ? { notes } : { notes: deleteField() }),
+        updated_at: serverTimestamp(),
+      });
+
+      calc.lines.forEach((line, idx) => {
+        tx.set(itemRefs[idx]!, {
+          invoice_id: invoiceRef.id,
+          order_id: trimmedId,
+          customer_id: customerId,
+          product_id: line.product_id,
+          quantity: line.quantity,
+          unit_price: line.unit_price,
+          line_discount: line.line_discount,
+          line_delivery_charge: line.line_delivery_charge,
+          line_total: line.line_total,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
+        });
+      });
+    });
+    return;
+  }
 
   await runTransaction(db, async (tx) => {
     const invoiceSnap = await tx.get(invoiceRef);
@@ -202,25 +324,8 @@ export async function updateDraftInvoice(
     const customer = customerSnap.data() as CustomerDoc | undefined;
     if (!customer || !customer.is_active) throw new Error("Customer is not active.");
 
-    const productMap = new Map<string, ProductDoc>();
-    for (const productId of uniqueProductIds) {
-      const productRef = doc(db, COLLECTIONS.products, productId);
-      const productSnap = await tx.get(productRef);
-      if (!productSnap.exists()) throw new Error("One or more products no longer exist.");
-      productMap.set(productId, productSnap.data() as ProductDoc);
-    }
-
-    for (const line of input.lines) {
-      const product = productMap.get(line.product_id.trim());
-      if (!product) throw new Error("Invalid product in invoice line.");
-      const stock = typeof product.stock_quantity === "number" ? product.stock_quantity : 0;
-      if (line.quantity > stock) {
-        throw new Error(`Not enough stock for ${product.name} (available: ${stock}).`);
-      }
-    }
-
-    const oldItemIds = Array.isArray(existing.item_ids) ? existing.item_ids.filter(Boolean) : [];
-    for (const itemId of oldItemIds) {
+    const txnOldIds = Array.isArray(existing.item_ids) ? existing.item_ids.filter(Boolean) : [];
+    for (const itemId of txnOldIds) {
       tx.delete(doc(db, COLLECTIONS.invoiceItems, itemId));
     }
 
@@ -302,6 +407,48 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     list.push(docSnap.id);
     preloadedLotsByProduct.set(productId, list);
   });
+
+  const itemIdsForEstimate = Array.isArray(preInvoice.item_ids) ? preInvoice.item_ids.filter(Boolean) : [];
+  if (itemIdsForEstimate.length === 0) {
+    throw new Error("Invoice has no items to post.");
+  }
+
+  const itemSnapsEarly = await Promise.all(
+    itemIdsForEstimate.map((id) => getDoc(doc(db, COLLECTIONS.invoiceItems, id))),
+  );
+  const neededByProductEarly = new Map<string, number>();
+  for (let i = 0; i < itemSnapsEarly.length; i++) {
+    const snap = itemSnapsEarly[i]!;
+    if (!snap.exists()) {
+      throw new Error("Invoice items are incomplete. Please recreate draft.");
+    }
+    const item = snap.data() as InvoiceItemDoc | undefined;
+    if (!item || item.invoice_id !== trimmedId) {
+      throw new Error("Invoice item mismatch detected.");
+    }
+    const productId = typeof item.product_id === "string" ? item.product_id : "";
+    const qty = typeof item.quantity === "number" ? item.quantity : 0;
+    if (!productId || !Number.isInteger(qty) || qty <= 0) {
+      throw new Error("Invalid invoice item data.");
+    }
+    neededByProductEarly.set(productId, (neededByProductEarly.get(productId) ?? 0) + qty);
+  }
+  const productIdsForEstimate = Array.from(neededByProductEarly.keys());
+  let lotReadSumForEstimate = 0;
+  for (const pid of productIdsForEstimate) {
+    lotReadSumForEstimate += (preloadedLotsByProduct.get(pid) ?? []).length;
+  }
+  const postTxnOpEstimate =
+    1 +
+    itemIdsForEstimate.length +
+    productIdsForEstimate.length +
+    lotReadSumForEstimate +
+    itemIdsForEstimate.length * 4;
+  if (postTxnOpEstimate > FIRESTORE_TXN_DOC_CAP) {
+    throw new Error(
+      `This invoice is too large to post in one step (estimated ${postTxnOpEstimate} Firestore operations; limit ${FIRESTORE_TXN_DOC_CAP}). Split into multiple drafts with fewer lines or fewer stock lots per product.`,
+    );
+  }
 
   try {
     await runTransaction(db, async (tx) => {
@@ -559,6 +706,17 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   });
   } catch (e) {
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
+    if (
+      e instanceof FirebaseError &&
+      (e.code === "failed-precondition" ||
+        e.code === "invalid-argument" ||
+        (typeof e.message === "string" &&
+          (/500|transaction too big|too many/i.test(e.message) || /DEADLINE/i.test(e.message))))
+    ) {
+      throw new Error(
+        `Posting failed (Firestore transaction limit or size). Try splitting this invoice into smaller drafts with fewer lines. Original: ${e.message}`,
+      );
+    }
     throw e;
   }
 }
