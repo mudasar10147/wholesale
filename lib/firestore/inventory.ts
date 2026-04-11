@@ -23,19 +23,29 @@ function resolveStockInUnitCost(
   return typeof product?.cost_price === "number" ? product.cost_price : 0;
 }
 
+function assertNonNegativeMoney(label: string, value: number | undefined): void {
+  if (value === undefined) return;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be zero or greater.`);
+  }
+}
+
 /**
  * Increase stock atomically (stock in).
  * @param unitCost - Cost per unit for this receipt; omitted or undefined uses the product's current cost_price.
+ * @param salePrice - When set, updates the product's `sale_price` immediately (not tied to FIFO lots).
  */
 export async function stockIn(
   db: Firestore,
   productId: string,
   quantity: number,
   unitCost?: number,
+  salePrice?: number,
 ): Promise<void> {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
   }
+  assertNonNegativeMoney("Sale price", salePrice);
   const ref = doc(db, COLLECTIONS.products, productId);
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
@@ -45,10 +55,18 @@ export async function stockIn(
     const product = snap.data() as ProductDoc | undefined;
     const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
 
-    tx.update(ref, {
+    const patch: {
+      stock_quantity: ReturnType<typeof increment>;
+      cost_price: number;
+      sale_price?: number;
+    } = {
       stock_quantity: increment(quantity),
       cost_price: resolvedUnitCost,
-    });
+    };
+    if (salePrice !== undefined) {
+      patch.sale_price = salePrice;
+    }
+    tx.update(ref, patch);
     const lotRef = doc(collection(db, COLLECTIONS.stockLots));
     tx.set(lotRef, {
       product_id: productId,

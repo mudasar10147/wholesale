@@ -34,6 +34,8 @@ export function StockAdjustControls({
 }: StockAdjustControlsProps) {
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState(() => defaultCostInputString(defaultUnitCost));
+  /** Empty = do not change sale price on stock in. */
+  const [salePriceInput, setSalePriceInput] = useState("");
   const [pending, setPending] = useState<"in" | "out" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +44,10 @@ export function StockAdjustControls({
   useEffect(() => {
     setUnitCost(defaultCostInputString(defaultUnitCost));
   }, [productId, defaultUnitCost]);
+
+  useEffect(() => {
+    setSalePriceInput("");
+  }, [productId]);
 
   const parsedQty = useMemo(() => parsePositiveIntStrict(qty), [qty]);
   const stockOutDisabled =
@@ -61,9 +67,19 @@ export function StockAdjustControls({
       setError(cost.message ?? "Invalid unit cost.");
       return;
     }
+    let salePrice: number | undefined;
+    if (salePriceInput.trim() !== "") {
+      const sp = parseNonNegativeDecimal(salePriceInput);
+      if (!sp.ok) {
+        setError(sp.message ?? "Invalid sale price.");
+        return;
+      }
+      salePrice = sp.value;
+    }
     setPending("in");
     try {
-      await stockIn(getDb(), productId, parsed.value, cost.value);
+      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice);
+      setSalePriceInput("");
     } catch (e) {
       setError(getFirestoreUserMessage(e));
     } finally {
@@ -95,9 +111,10 @@ export function StockAdjustControls({
 
   const qtyId = `stock-qty-${productId}`;
   const costId = `stock-unit-cost-${productId}`;
+  const saleId = `stock-sale-price-${productId}`;
 
   return (
-    <div className="flex min-w-[220px] max-w-[280px] flex-col gap-2">
+    <div className="flex min-w-[220px] max-w-[300px] flex-col gap-2">
       <div className="flex flex-wrap items-end gap-2">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor={qtyId} className="text-xs text-muted-foreground">
@@ -130,6 +147,22 @@ export function StockAdjustControls({
             aria-label="Purchase unit cost for stock in"
           />
         </div>
+        <div className="flex min-w-0 flex-col gap-1">
+          <Label htmlFor={saleId} className="text-xs text-muted-foreground">
+            Sale price
+          </Label>
+          <Input
+            id={saleId}
+            className="h-9 w-[5.5rem] px-2 py-1.5 text-sm tabular-nums"
+            inputMode="decimal"
+            min={0}
+            step="any"
+            value={salePriceInput}
+            onChange={(e) => setSalePriceInput(e.target.value)}
+            placeholder="opt."
+            aria-label="Optional new sale price for stock in"
+          />
+        </div>
         <Button
           type="button"
           variant="primary"
@@ -153,7 +186,7 @@ export function StockAdjustControls({
         </Button>
       </div>
       <p className="text-[10px] leading-snug text-muted-foreground">
-        Stock in uses this receipt&apos;s cost for FIFO. The product&apos;s default cost updates to match.
+        Receipt cost feeds FIFO lots; optional sale price updates the product list price immediately (not per lot).
       </p>
       {error ? (
         <InlineAlert variant="error" id={alertId} className="max-w-[260px] text-xs">
