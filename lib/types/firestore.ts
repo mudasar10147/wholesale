@@ -43,6 +43,21 @@ export type ExpenseDoc = {
   date: Timestamp;
 };
 
+export type PartnerLoanEntryType = "loan_in" | "repayment";
+
+/**
+ * Document shape for `partner_loans/{loanId}`.
+ * Tracks money borrowed from partners and repayments back to them.
+ */
+export type PartnerLoanDoc = {
+  partner_name: string;
+  entry_type: PartnerLoanEntryType;
+  amount: number;
+  date: Timestamp;
+  note?: string;
+  created_at: Timestamp;
+};
+
 /**
  * Document shape for `customers/{customerId}`.
  */

@@ -8,6 +8,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { costPriceAfterFifoStockOutLots } from "@/lib/inventory/lotPricing";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
 function resolveStockInUnitCost(
@@ -106,6 +107,9 @@ export async function stockOut(
     }
   });
 
+  /** Stable order so transaction reads are deterministic across retries. */
+  const sortedLotCandidateIds = [...lotCandidateIds].sort();
+
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists) {
@@ -120,11 +124,10 @@ export async function stockOut(
     if (current < quantity) {
       throw new Error("Not enough stock.");
     }
-    transaction.update(ref, { stock_quantity: increment(-quantity) });
 
-    // Consume FIFO lots for manual stock-out to keep lot balances aligned.
+    // All reads before any writes (Firestore transaction requirement).
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
-    for (const lotId of lotCandidateIds) {
+    for (const lotId of sortedLotCandidateIds) {
       const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
       const lotSnap = await transaction.get(lotRef);
       if (!lotSnap.exists()) continue;
@@ -135,6 +138,7 @@ export async function stockOut(
     }
     lots.sort((a, b) => a.data.received_at.toMillis() - b.data.received_at.toMillis());
 
+    const lotUpdates: Array<{ id: string; qty_remaining: number }> = [];
     let remaining = quantity;
     for (const lot of lots) {
       if (remaining <= 0) break;
@@ -142,13 +146,23 @@ export async function stockOut(
       if (available <= 0) continue;
       const take = Math.min(available, remaining);
       remaining -= take;
-      transaction.update(doc(db, COLLECTIONS.stockLots, lot.id), {
-        qty_remaining: available - take,
-        updated_at: serverTimestamp(),
-      });
+      lotUpdates.push({ id: lot.id, qty_remaining: available - take });
     }
     if (remaining > 0) {
       throw new Error("Stock lots are out of sync. Please restock this product.");
+    }
+
+    const nextCostPrice = costPriceAfterFifoStockOutLots(lots, lotUpdates);
+
+    transaction.update(ref, {
+      stock_quantity: increment(-quantity),
+      cost_price: nextCostPrice,
+    });
+    for (const u of lotUpdates) {
+      transaction.update(doc(db, COLLECTIONS.stockLots, u.id), {
+        qty_remaining: u.qty_remaining,
+        updated_at: serverTimestamp(),
+      });
     }
   });
 }

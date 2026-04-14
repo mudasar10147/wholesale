@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import {
+  loadPartnerLoanSummaryAllTime,
+  loadPartnerLoanSummaryForPeriod,
+} from "@/lib/finance/loadPartnerLoansPeriod";
+import type { PartnerLoanSummary } from "@/lib/finance/partnerLoans";
 import { loadStockSummary, type StockSummaryData } from "@/lib/inventory/stockSummary";
 import { loadProfitForPeriod } from "@/lib/profit/loadPeriod";
 import {
@@ -13,6 +18,7 @@ import {
 import type { ProfitBreakdown } from "@/lib/profit/metrics";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
+import { PartnerLoanSummaryCard } from "@/app/components/dashboard/PartnerLoanSummaryCard";
 import { PeriodKpiRow } from "@/app/components/dashboard/PeriodKpiRow";
 import { ProfitBreakdownCard } from "@/app/components/dashboard/ProfitBreakdownCard";
 import { StockSummary } from "@/app/components/dashboard/StockSummary";
@@ -22,6 +28,8 @@ export function DashboardOverview() {
   const [today, setToday] = useState<ProfitBreakdown | null>(null);
   const [monthly, setMonthly] = useState<ProfitBreakdown | null>(null);
   const [yearly, setYearly] = useState<ProfitBreakdown | null>(null);
+  const [loanAllTime, setLoanAllTime] = useState<PartnerLoanSummary | null>(null);
+  const [loanMonthly, setLoanMonthly] = useState<PartnerLoanSummary | null>(null);
   const [stock, setStock] = useState<StockSummaryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,21 +43,27 @@ export function DashboardOverview() {
       const day = getTodayBounds(now);
       const month = getCurrentMonthBounds(now);
       const year = getCurrentYearBounds(now);
-      const [t, m, y, s] = await Promise.all([
+      const [t, m, y, s, loanAll, loanMonth] = await Promise.all([
         loadProfitForPeriod(db, day.start, day.end),
         loadProfitForPeriod(db, month.start, month.end),
         loadProfitForPeriod(db, year.start, year.end),
         loadStockSummary(db),
+        loadPartnerLoanSummaryAllTime(db),
+        loadPartnerLoanSummaryForPeriod(db, month.start, month.end),
       ]);
       setToday(t);
       setMonthly(m);
       setYearly(y);
       setStock(s);
+      setLoanAllTime(loanAll);
+      setLoanMonthly(loanMonth);
     } catch (e) {
       setError(getFirestoreUserMessage(e));
       setToday(null);
       setMonthly(null);
       setYearly(null);
+      setLoanAllTime(null);
+      setLoanMonthly(null);
       setStock(null);
     } finally {
       setLoading(false);
@@ -72,7 +86,7 @@ export function DashboardOverview() {
         <p className="max-w-2xl text-sm text-muted-foreground">
           KPIs use sales and expenses in local time. Profit subtracts COGS (cost_price × quantity
           sold). This month and this calendar year include all days in range. Inventory value is
-          current product cost × units on hand.
+          current product cost × units on hand. Partner loans are tracked separately from profit.
         </p>
         <Button type="button" variant="outline" className="shrink-0" onClick={() => void load()}>
           Refresh
@@ -130,6 +144,30 @@ export function DashboardOverview() {
             breakdown={monthly}
             loading={loading}
           />
+          <section aria-labelledby="partner-loan-heading" className="space-y-3">
+            <div>
+              <h2 id="partner-loan-heading" className="text-base font-semibold text-foreground">
+                Partner loans
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                Liability tracking only. Loan entries are excluded from profit.
+              </p>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <PartnerLoanSummaryCard
+                title="Pending loan (all time)"
+                description="Company amount still owed to partners."
+                summary={loanAllTime}
+                loading={loading}
+              />
+              <PartnerLoanSummaryCard
+                title="Partner loan activity this month"
+                description="Borrowed/repaid movements during this calendar month."
+                summary={loanMonthly}
+                loading={loading}
+              />
+            </div>
+          </section>
         </>
       ) : null}
     </div>

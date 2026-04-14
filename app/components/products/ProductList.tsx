@@ -13,6 +13,7 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { updateProductDetails } from "@/lib/firestore/products";
 import type { ProductDoc } from "@/lib/types/firestore";
+import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
 import { StockAdjustControls } from "@/app/components/products/StockAdjustControls";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -131,7 +132,12 @@ export function ProductList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingRow, setEditingRow] = useState<Row | null>(null);
+  const [lotsModalProductId, setLotsModalProductId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+
+  const lotsModalRow = lotsModalProductId
+    ? (rows.find((r) => r.id === lotsModalProductId) ?? null)
+    : null;
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -158,6 +164,9 @@ export function ProductList() {
           next.push({ id: docSnap.id, ...d });
         });
         setRows(next);
+        setLotsModalProductId((openId) =>
+          openId && !next.some((r) => r.id === openId) ? null : openId,
+        );
       },
       (err) => {
         setLoading(false);
@@ -198,6 +207,13 @@ export function ProductList() {
     <>
       {editingRow ? (
         <EditProductModal key={editingRow.id} row={editingRow} onDismiss={() => setEditingRow(null)} />
+      ) : null}
+      {lotsModalRow ? (
+        <ProductLotsModal
+          key={lotsModalRow.id}
+          row={lotsModalRow}
+          onDismiss={() => setLotsModalProductId(null)}
+        />
       ) : null}
       <div className="space-y-3">
         <div className="max-w-md">
@@ -269,14 +285,24 @@ export function ProductList() {
                       />
                     </td>
                     <td className="px-4 py-3 align-top">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-9 px-3 py-1.5 text-xs"
-                        onClick={() => setEditingRow(row)}
-                      >
-                        Edit
-                      </Button>
+                      <div className="flex flex-wrap gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 px-3 py-1.5 text-xs"
+                          onClick={() => setLotsModalProductId(row.id)}
+                        >
+                          Lots
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 px-3 py-1.5 text-xs"
+                          onClick={() => setEditingRow(row)}
+                        >
+                          Edit
+                        </Button>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
                   </tr>

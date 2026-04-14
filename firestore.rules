@@ -193,6 +193,21 @@ service cloud.firestore {
       )
       && data.created_at is timestamp;
     }
+    function validPartnerLoanBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['partner_name', 'entry_type', 'amount', 'date', 'note', 'created_at']
+      )
+      && data.partner_name is string
+      && data.partner_name.size() >= 2
+      && data.partner_name.size() <= 120
+      && data.entry_type in ['loan_in', 'repayment']
+      && data.amount is number
+      && data.amount > 0
+      && data.date is timestamp
+      && data.created_at is timestamp
+      && (!('note' in data) || (data.note is string && data.note.size() <= 500));
+    }
 
     // Phase 1 smoke test (optional)
     match /phase1_smoke/{docId} {
@@ -207,6 +222,13 @@ service cloud.firestore {
     }
     match /expenses/{docId} {
       allow read, write: if isAdmin();
+    }
+    match /partner_loans/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validPartnerLoanBase(request.resource.data);
+      allow update: if isAdmin() && validPartnerLoanBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at;
+      allow delete: if false;
     }
     match /customers/{docId} {
       allow read: if isAdmin();
@@ -326,7 +348,8 @@ service cloud.firestore {
         && request.resource.data.source == resource.data.source
         && request.resource.data.received_at == resource.data.received_at
         && request.resource.data.created_at == resource.data.created_at;
-      allow delete: if false;
+      // Temporary: allow admin to remove mistaken lots; prefer editing qty/cost when possible.
+      allow delete: if isAdmin();
     }
     // Posting can create an opening_balance lot and consumptions in the same transaction; exists(lot) would fail.
     // Use one get(invoice) + item_ids membership instead of two exists() — transactions share a 20 get/exists budget.
