@@ -18,10 +18,24 @@ import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
-import { Select } from "@/app/components/ui/Select";
+import { SearchableSelect } from "@/app/components/ui/SearchableSelect";
 
-type CustomerOption = { id: string; name: string; is_active: boolean };
-type ProductOption = { id: string; name: string; sale_price: number; stock_quantity: number };
+type CustomerOption = {
+  id: string;
+  name: string;
+  phone?: string;
+  address?: string;
+  is_active: boolean;
+  searchText: string;
+};
+type ProductOption = {
+  id: string;
+  name: string;
+  sale_price: number;
+  cost_price: number;
+  stock_quantity: number;
+  searchText: string;
+};
 type ItemInput = {
   id: string;
   productId: string;
@@ -74,7 +88,14 @@ export function AddInvoiceForm() {
       const list: CustomerOption[] = [];
       snap.forEach((docSnap) => {
         const d = docSnap.data() as CustomerDoc;
-        list.push({ id: docSnap.id, name: d.name, is_active: d.is_active });
+        list.push({
+          id: docSnap.id,
+          name: d.name,
+          phone: d.phone?.trim(),
+          address: d.address?.trim(),
+          is_active: d.is_active,
+          searchText: `${d.name} ${d.phone ?? ""} ${d.address ?? ""}`.toLowerCase(),
+        });
       });
       list.sort((a, b) => a.name.localeCompare(b.name));
       setCustomers(list.filter((c) => c.is_active));
@@ -93,7 +114,9 @@ export function AddInvoiceForm() {
           id: docSnap.id,
           name: d.name,
           sale_price: d.sale_price,
+          cost_price: d.cost_price,
           stock_quantity: d.stock_quantity,
+          searchText: `${d.name} ${d.sale_price} ${d.cost_price} ${d.stock_quantity}`.toLowerCase(),
         });
       });
       list.sort((a, b) => a.name.localeCompare(b.name));
@@ -256,23 +279,26 @@ export function AddInvoiceForm() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="invoice-customer">Customer</Label>
-          <Select
-            id="invoice-customer"
+          <SearchableSelect
+            options={customers}
             value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            disabled={loadingCustomers}
-            aria-invalid={!!error && !customerId}
-            aria-describedby={!!error && !customerId ? ALERT_ID : undefined}
-          >
-            <option value="">
-              {loadingCustomers ? "Loading customers…" : "Choose customer"}
-            </option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+            onChange={setCustomerId}
+            getDisplayValue={(c) => c.name}
+            renderOption={(c) => (
+              <div className="space-y-0.5">
+                <p className="font-medium text-foreground">{c.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {c.phone ? `Phone: ${c.phone}` : "Phone: -"} {c.address ? `| Address: ${c.address}` : ""}
+                </p>
+              </div>
+            )}
+            placeholder={loadingCustomers ? "Loading customers..." : "Search customer by name, phone, address"}
+            emptyText="No customers match your search."
+            disabled={loadingCustomers || submitting}
+            ariaLabel="Choose customer"
+            ariaInvalid={!!error && !customerId}
+            ariaDescribedBy={!!error && !customerId ? ALERT_ID : undefined}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="invoice-order-id">Order ID</Label>
@@ -290,9 +316,6 @@ export function AddInvoiceForm() {
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-foreground">Invoice items</h3>
-          <Button type="button" variant="outline" onClick={addLine} disabled={submitting}>
-            Add line
-          </Button>
         </div>
         <div className="space-y-3">
           {items.map((line) => {
@@ -302,20 +325,25 @@ export function AddInvoiceForm() {
                 <div className="grid gap-3 sm:grid-cols-12">
                   <div className="space-y-1 sm:col-span-4">
                     <Label>Product</Label>
-                    <Select
+                    <SearchableSelect
+                      options={products}
                       value={line.productId}
-                      onChange={(e) => updateLine(line.id, "productId", e.target.value)}
+                      onChange={(id) => updateLine(line.id, "productId", id)}
+                      getDisplayValue={(p) => p.name}
+                      renderOption={(p) => (
+                        <div className="space-y-0.5">
+                          <p className="font-medium text-foreground">{p.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Stock: {p.stock_quantity.toLocaleString()} | Sale: {money(p.sale_price)} | Purchase:{" "}
+                            {money(p.cost_price)}
+                          </p>
+                        </div>
+                      )}
+                      placeholder={loadingProducts ? "Loading products..." : "Search product name, stock, or price"}
+                      emptyText="No products match your search."
                       disabled={loadingProducts || submitting}
-                    >
-                      <option value="">
-                        {loadingProducts ? "Loading…" : "Choose product"}
-                      </option>
-                      {products.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name} (stock {p.stock_quantity.toLocaleString()})
-                        </option>
-                      ))}
-                    </Select>
+                      ariaLabel="Choose product"
+                    />
                   </div>
                   <div className="space-y-1 sm:col-span-2">
                     <Label>Qty</Label>
@@ -367,6 +395,11 @@ export function AddInvoiceForm() {
               </div>
             );
           })}
+        </div>
+        <div className="flex justify-end">
+          <Button type="button" variant="outline" onClick={addLine} disabled={submitting}>
+            Add line
+          </Button>
         </div>
       </div>
 

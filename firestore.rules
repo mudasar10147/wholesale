@@ -326,11 +326,12 @@ service cloud.firestore {
       allow delete: if isAdmin() && resource.data.status == 'draft' && resource.data.stock_reversal_applied == false;
     }
     // Note: draft invoice + line items are created in one transaction. Rules cannot see
-    // uncommitted writes, so exists(get) on the parent invoice would always fail — validate shape + product only.
+    // uncommitted writes, so exists(get) on the parent invoice would always fail.
+    // Keep create validation shape-only to avoid exceeding the 20 access-call limit
+    // when creating larger invoices (product existence is preflight-validated in app code).
     match /invoice_items/{docId} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && validInvoiceItemBase(request.resource.data)
-        && exists(/databases/$(database)/documents/products/$(request.resource.data.product_id));
+      allow create: if isAdmin() && validInvoiceItemBase(request.resource.data);
       allow update: if false;
       allow delete: if isAdmin() && resource.data.invoice_id is string
         && resource.data.invoice_id.size() > 0

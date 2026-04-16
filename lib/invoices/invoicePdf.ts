@@ -4,6 +4,9 @@ export type InvoicePdfInput = {
   order_id: string;
   status: string;
   customer_name: string;
+  customer_phone?: string;
+  customer_address?: string;
+  customer_email?: string;
   notes?: string;
   /** Pre-formatted created timestamp for the PDF header. */
   created_at_label: string;
@@ -75,11 +78,15 @@ export async function downloadInvoicePdf(input: InvoicePdfInput): Promise<void> 
   const meta = [
     `Status: ${input.status}`,
     `Customer: ${input.customer_name}`,
+    `Phone: ${input.customer_phone?.trim() || "-"}`,
+    `Address: ${input.customer_address?.trim() || "-"}`,
+    `Email: ${input.customer_email?.trim() || "-"}`,
     `Created: ${input.created_at_label}`,
   ];
   meta.forEach((line) => {
-    doc.text(line, margin, y);
-    y += 5;
+    const split = doc.splitTextToSize(line, pageW - 2 * margin);
+    doc.text(split, margin, y);
+    y += split.length * 5;
   });
 
   if (input.notes?.trim()) {

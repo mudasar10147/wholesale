@@ -11,6 +11,9 @@ export function buildInvoicePlainText(params: {
   order_id: string;
   status: string;
   customer_name: string;
+  customer_phone?: string;
+  customer_address?: string;
+  customer_email?: string;
   notes?: string;
   subtotal_amount: number;
   discount_amount: number;
@@ -29,6 +32,9 @@ export function buildInvoicePlainText(params: {
     `Invoice ${params.order_id}`,
     `Status: ${params.status}`,
     `Customer: ${params.customer_name}`,
+    `Phone: ${params.customer_phone?.trim() || "-"}`,
+    `Address: ${params.customer_address?.trim() || "-"}`,
+    `Email: ${params.customer_email?.trim() || "-"}`,
     "",
     lines,
     "",

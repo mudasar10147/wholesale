@@ -27,6 +27,12 @@ import { EditDraftInvoiceForm } from "@/app/components/invoices/EditDraftInvoice
 import { cn } from "@/lib/utils";
 
 type InvoiceRow = InvoiceDoc & { id: string };
+type InvoiceCustomerDetails = {
+  name: string;
+  phone: string;
+  address: string;
+  email: string;
+};
 
 function formatMoney(n: number) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -56,7 +62,12 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
   const [invoice, setInvoice] = useState<InvoiceRow | null>(null);
   const [invoiceMissing, setInvoiceMissing] = useState(false);
   const [items, setItems] = useState<Array<{ id: string; data: InvoiceItemDoc }>>([]);
-  const [customerName, setCustomerName] = useState<string>("");
+  const [customerDetails, setCustomerDetails] = useState<InvoiceCustomerDetails>({
+    name: "",
+    phone: "",
+    address: "",
+    email: "",
+  });
   const [productMap, setProductMap] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -96,15 +107,29 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
 
   useEffect(() => {
     if (!invoice?.customer_id) {
-      setCustomerName("");
+      setCustomerDetails({ name: "", phone: "", address: "", email: "" });
       return;
     }
     let cancelled = false;
     (async () => {
       const snap = await getDoc(doc(getDb(), COLLECTIONS.customers, invoice.customer_id));
-      if (cancelled || !snap.exists()) return;
+      if (cancelled) return;
+      if (!snap.exists()) {
+        setCustomerDetails({
+          name: invoice.customer_id,
+          phone: "",
+          address: "",
+          email: "",
+        });
+        return;
+      }
       const d = snap.data() as CustomerDoc;
-      setCustomerName(d.name ?? invoice.customer_id);
+      setCustomerDetails({
+        name: d.name?.trim() || invoice.customer_id,
+        phone: d.phone?.trim() || "",
+        address: d.address?.trim() || "",
+        email: d.email?.trim() || "",
+      });
     })();
     return () => {
       cancelled = true;
@@ -165,7 +190,10 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     return buildInvoicePlainText({
       order_id: invoice.order_id,
       status: invoice.status,
-      customer_name: customerName || invoice.customer_id,
+      customer_name: customerDetails.name || invoice.customer_id,
+      customer_phone: customerDetails.phone,
+      customer_address: customerDetails.address,
+      customer_email: customerDetails.email,
       notes: invoice.notes,
       subtotal_amount: invoice.subtotal_amount,
       discount_amount: invoice.discount_amount,
@@ -173,7 +201,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
       total_amount: invoice.total_amount,
       lines,
     });
-  }, [invoice, items, customerName, productMap]);
+  }, [invoice, items, customerDetails, productMap]);
 
   async function handleCopy() {
     setActionError(null);
@@ -206,7 +234,10 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
       await downloadInvoicePdf({
         order_id: invoice.order_id,
         status: invoice.status,
-        customer_name: customerName || invoice.customer_id,
+        customer_name: customerDetails.name || invoice.customer_id,
+        customer_phone: customerDetails.phone,
+        customer_address: customerDetails.address,
+        customer_email: customerDetails.email,
         notes: invoice.notes,
         created_at_label: formatDate(invoice.created_at),
         subtotal_amount: invoice.subtotal_amount,
@@ -421,7 +452,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               {invoice.status}
             </span>
             <span className="text-sm text-muted-foreground">
-              Customer: <strong className="text-foreground">{customerName || invoice.customer_id}</strong>
+              Customer: <strong className="text-foreground">{customerDetails.name || invoice.customer_id}</strong>
             </span>
           </div>
           {invoice.notes ? (
