@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import { getAuthClient } from "@/lib/firebase";
 
 type PollState =
-  | { kind: "ok"; checkedAt: string; email: string | null; uid: string; adminEffective: boolean; adminRaw: unknown }
+  | {
+      kind: "ok";
+      checkedAt: string;
+      email: string | null;
+      uid: string;
+      adminEffective: boolean;
+      adminRaw: unknown;
+      roleRaw: unknown;
+    }
   | { kind: "no_user"; checkedAt: string }
   | { kind: "error"; checkedAt: string; message: string };
 
@@ -15,7 +23,7 @@ function formatUid(uid: string): string {
 
 /**
  * Dev/diagnostic strip: polls ID token claims once per second so you can confirm
- * `admin` on the current session across dashboard routes.
+ * `admin` and `role` on the current session across dashboard routes.
  */
 export function AdminClaimStatusBar() {
   const [state, setState] = useState<PollState | null>(null);
@@ -46,6 +54,7 @@ export function AdminClaimStatusBar() {
             uid: u.uid,
             adminEffective,
             adminRaw: raw,
+            roleRaw: r.claims.role,
           });
         })
         .catch((err: unknown) => {
@@ -66,7 +75,7 @@ export function AdminClaimStatusBar() {
       aria-live="polite"
     >
       <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 font-mono text-muted-foreground">
-        <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground/80">Auth / admin</span>
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground/80">Auth / claims</span>
         {!state ? (
           <span>Starting…</span>
         ) : state.kind === "no_user" ? (
@@ -94,6 +103,10 @@ export function AdminClaimStatusBar() {
             </span>
             <span className="text-muted-foreground" title="Raw claim value from token">
               admin (raw): {state.adminRaw === undefined ? "undefined" : JSON.stringify(state.adminRaw)}
+            </span>
+            <span className="text-muted-foreground" title="role claim (e.g. clerk)">
+              role (raw):{" "}
+              {state.roleRaw === undefined ? "undefined" : JSON.stringify(state.roleRaw)}
             </span>
             <span className="text-muted-foreground/90">checked {state.checkedAt}</span>
           </>

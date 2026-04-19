@@ -8,7 +8,7 @@ import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
 
 export function RequireAdmin({ children }: { children: ReactNode }) {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, hasAppAccess } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -33,14 +33,15 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
     return null;
   }
 
-  if (!isAdmin) {
+  if (!hasAppAccess) {
     return (
       <div className="mx-auto flex max-w-md flex-col gap-4 rounded-lg border border-border bg-surface p-8 text-center">
         <h1 className="text-lg font-semibold text-foreground">Not authorized</h1>
         <p className="text-sm text-muted-foreground">
-          This account does not have admin access. Ask an owner to set the{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">admin</code> custom claim on your user in
-          Firebase.
+          This account is not allowed to use the app. Ask an owner to set the{" "}
+          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">admin</code> or{" "}
+          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: clerk</code> custom claim on your
+          user in Firebase.
         </p>
         <Button
           type="button"

@@ -1,3 +1,4 @@
+import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { FifoAuditReport } from "@/app/components/reports/FifoAuditReport";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import {
@@ -10,6 +11,7 @@ import {
 
 export default function FifoReportsPage() {
   return (
+    <AdminOnly>
     <div className="space-y-10">
       <PageHeader
         title="FIFO Reports"
@@ -29,5 +31,6 @@ export default function FifoReportsPage() {
         </CardContent>
       </Card>
     </div>
+    </AdminOnly>
   );
 }

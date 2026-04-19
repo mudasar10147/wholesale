@@ -9,6 +9,7 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
 import type { InvoiceDoc } from "@/lib/types/firestore";
+import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ function formatDate(ts?: Timestamp) {
 }
 
 export function InvoiceDraftList() {
+  const { isAdmin } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -194,14 +196,16 @@ export function InvoiceDraftList() {
                     </Link>
                     {row.status === "draft" ? (
                       <>
-                        <Button
-                          type="button"
-                          onClick={() => void handlePost(row)}
-                          disabled={workingId !== null}
-                          className="px-3 py-1.5 text-xs"
-                        >
-                          {workingId === row.id && workingAction === "post" ? "Posting…" : "Post invoice"}
-                        </Button>
+                        {isAdmin ? (
+                          <Button
+                            type="button"
+                            onClick={() => void handlePost(row)}
+                            disabled={workingId !== null}
+                            className="px-3 py-1.5 text-xs"
+                          >
+                            {workingId === row.id && workingAction === "post" ? "Posting…" : "Post invoice"}
+                          </Button>
+                        ) : null}
                         <Button
                           type="button"
                           variant="outline"
@@ -213,7 +217,7 @@ export function InvoiceDraftList() {
                         </Button>
                       </>
                     ) : null}
-                    {row.status === "draft" || row.status === "posted" ? (
+                    {(row.status === "draft" || row.status === "posted") && isAdmin ? (
                       <Button
                         type="button"
                         variant="outline"

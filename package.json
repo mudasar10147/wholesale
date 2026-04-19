@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "deploy:firestore-rules": "firebase deploy --only firestore:rules"
+    "deploy:firestore-rules": "firebase deploy --only firestore:rules",
+    "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"
   },
   "dependencies": {
     "firebase": "^12.11.0",

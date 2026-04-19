@@ -4,19 +4,25 @@
 
 ## Authentication (required)
 
-All Firestore reads and writes require a signed-in user whose ID token includes **`admin: true`** (Firebase Auth [custom claim](https://firebase.google.com/docs/auth/admin/custom-claims)).
+Firestore and the app distinguish:
+
+- **Admin:** ID token includes **`admin: true`** (boolean or string `"true"`). Full access.
+- **Clerk:** ID token includes **`role: "clerk"`** (string) and **no** `admin` claim. Limited access: customers, expenses, invoice **drafts** (create/edit/delete drafts), and read products for line items. Clerks **cannot** post or void invoices, edit products, use partner loans, FIFO reports, or the main dashboard KPIs (those reads are admin-only in rules).
+
+Uses Firebase Auth [custom claims](https://firebase.google.com/docs/auth/admin/custom-claims).
 
 1. **Firebase Console** → **Authentication** → enable **Email/Password**.
 2. Create a user (or use an existing account). Copy the user’s **UID** from the Users list.
-3. Set the admin claim using the Admin SDK (local script):
-   - Download a **service account** JSON: Project settings → Service accounts → Generate new private key.
-   - Run from the repo root (see [`scripts/set-admin-claim.cjs`](../scripts/set-admin-claim.cjs)):
+3. Set claims using the Admin SDK (local scripts from the repo root; service account JSON: Project settings → Service accounts → Generate new private key):
+   - **Admin:** [`scripts/set-admin-claim.cjs`](../scripts/set-admin-claim.cjs) sets `{ admin: true }` (replaces other custom claims on that user).
      - `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/serviceAccount.json node scripts/set-admin-claim.cjs <UID>`
+   - **Clerk:** [`scripts/set-clerk-claim.cjs`](../scripts/set-clerk-claim.cjs) sets `{ role: "clerk" }` (replaces other custom claims; removes `admin` if present).
+     - `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/serviceAccount.json node scripts/set-clerk-claim.cjs <UID>`
 4. **Authorized domains**: Authentication → Settings → add your production domain (e.g. Vercel `*.vercel.app` and custom domain). Include `localhost` for dev.
-5. **Publish** `firestore.rules` only after you can sign in and confirm the app loads data (or use the Rules Playground first). If you deploy rules before any user has `admin: true`, the app will get permission-denied until the claim is set.
-6. After setting the claim, the user must **sign out and sign in again** so the client picks up the new token (the app refreshes claims on auth state change with `getIdToken(true)`).
+5. **Publish** `firestore.rules` after you can sign in (or use the Rules Playground first). Users without `admin` or `role: "clerk"` cannot use the app.
+6. After setting or changing claims, the user must **sign out and sign in again** so the client picks up the new token (the app refreshes claims on auth state change with `getIdToken(true)`).
 
-The Next.js app uses **Email/Password** sign-in on [`/login`](../app/login/page.tsx); the dashboard is behind `RequireAdmin`.
+The Next.js app uses **Email/Password** sign-in on [`/login`](../app/login/page.tsx); the dashboard is behind `RequireAdmin`, which allows **admin or clerk** (`hasAppAccess`).
 
 ## If you see “permission denied” on localhost
 
@@ -46,7 +52,7 @@ The Next.js app uses **Email/Password** sign-in on [`/login`](../app/login/page.
 | `invoice_item_cogs` | Create only; COGS snapshot per line |
 | `/{document=**}` | Denied |
 
-Rules use `isAdmin()` = `request.auth != null && request.auth.token.admin == true` on every collection above.
+Rules use **`isAdmin()`** for full access and **`isStaff()`** (`isAdmin() || isClerk()`) where clerks are allowed—e.g. read `products`, read/write `expenses`, read/write `customers` and draft `invoices` / `invoice_items`. Posting invoices and inventory collections remain **`isAdmin()`** only. See `isClerk()` and `isStaff()` in [`firestore.rules`](../firestore.rules).
 
 ## Tightening later
 

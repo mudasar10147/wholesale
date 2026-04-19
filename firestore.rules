@@ -10,6 +10,12 @@ service cloud.firestore {
         request.auth.token.admin == 'true'
       );
     }
+    function isClerk() {
+      return isSignedIn() && request.auth.token.role == 'clerk';
+    }
+    function isStaff() {
+      return isAdmin() || isClerk();
+    }
     function hasOnlyKeys(data, keys) {
       return data.keys().hasOnly(keys);
     }
@@ -208,20 +214,34 @@ service cloud.firestore {
       && data.created_at is timestamp
       && (!('note' in data) || (data.note is string && data.note.size() <= 500));
     }
+    function validCashSettings(data) {
+      return hasOnlyKeys(data, ['opening_balance', 'updated_at'])
+      && data.opening_balance is number
+      && data.updated_at is timestamp;
+    }
+    // Clerk may only edit invoices while they stay draft (no post / void / payment paths).
+    function invoiceDraftToDraftOnly(res, req) {
+      return res.status == 'draft'
+        && req.status == 'draft'
+        && postedAtUnchanged(res, req)
+        && voidedAtUnchanged(res, req)
+        && req.stock_reversal_applied == false;
+    }
 
     // Phase 1 smoke test (optional)
     match /phase1_smoke/{docId} {
       allow read, write: if isAdmin();
     }
-    // MVP collections — admin only (see docs/FIREBASE_RULES.md)
+    // MVP collections — clerks: read products for invoice lines; writes admin-only.
     match /products/{docId} {
-      allow read, write: if isAdmin();
+      allow read: if isStaff();
+      allow write: if isAdmin();
     }
     match /sales/{docId} {
       allow read, write: if isAdmin();
     }
     match /expenses/{docId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isStaff();
     }
     match /partner_loans/{docId} {
       allow read: if isAdmin();
@@ -230,23 +250,28 @@ service cloud.firestore {
         && request.resource.data.created_at == resource.data.created_at;
       allow delete: if false;
     }
-    match /customers/{docId} {
+    match /settings/{docId} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && validCustomerBase(request.resource.data) && request.resource.data.is_active == true;
-      allow update: if isAdmin() && validCustomerBase(request.resource.data)
+      allow create, update: if isAdmin() && docId == 'cash' && validCashSettings(request.resource.data);
+      allow delete: if false;
+    }
+    match /customers/{docId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validCustomerBase(request.resource.data) && request.resource.data.is_active == true;
+      allow update: if isStaff() && validCustomerBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at;
       allow delete: if false;
     }
     match /invoices/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validInvoiceBase(request.resource.data)
+      allow read: if isStaff();
+      allow create: if isStaff() && validInvoiceBase(request.resource.data)
         && request.resource.data.order_id == docId
         && request.resource.data.status == 'draft'
         && request.resource.data.payment_status == 'unpaid'
         && request.resource.data.paid_amount == 0
         && request.resource.data.stock_reversal_applied == false
         && exists(/databases/$(database)/documents/customers/$(request.resource.data.customer_id));
-      allow update: if isAdmin() && validInvoiceBase(request.resource.data)
+      allow update: if validInvoiceBase(request.resource.data)
         && request.resource.data.order_id == resource.data.order_id
         && request.resource.data.created_at == resource.data.created_at
         && (
@@ -254,86 +279,89 @@ service cloud.firestore {
           || (resource.data.status == 'draft' && request.resource.data.status == 'draft')
         )
         && (
-          (
-            resource.data.status == 'draft'
-            && request.resource.data.status == 'draft'
-            && postedAtUnchanged(resource.data, request.resource.data)
-            && voidedAtUnchanged(resource.data, request.resource.data)
-            && request.resource.data.stock_reversal_applied == false
-          )
-          || (
-            resource.data.status == 'draft'
-            && request.resource.data.status == 'posted'
-            && request.resource.data.posted_at is timestamp
-            && voidedAtUnchanged(resource.data, request.resource.data)
-            && approxHeaderMoneyEq(
-              request.resource.data.posted_subtotal_amount,
-              resource.data.subtotal_amount
+          (isClerk() && invoiceDraftToDraftOnly(resource.data, request.resource.data))
+          || (isAdmin() && (
+            (
+              resource.data.status == 'draft'
+              && request.resource.data.status == 'draft'
+              && postedAtUnchanged(resource.data, request.resource.data)
+              && voidedAtUnchanged(resource.data, request.resource.data)
+              && request.resource.data.stock_reversal_applied == false
             )
-            && approxHeaderMoneyEq(
-              request.resource.data.posted_discount_amount,
-              resource.data.discount_amount
+            || (
+              resource.data.status == 'draft'
+              && request.resource.data.status == 'posted'
+              && request.resource.data.posted_at is timestamp
+              && voidedAtUnchanged(resource.data, request.resource.data)
+              && approxHeaderMoneyEq(
+                request.resource.data.posted_subtotal_amount,
+                resource.data.subtotal_amount
+              )
+              && approxHeaderMoneyEq(
+                request.resource.data.posted_discount_amount,
+                resource.data.discount_amount
+              )
+              && approxHeaderMoneyEq(
+                request.resource.data.posted_delivery_charge,
+                resource.data.delivery_charge
+              )
+              && approxHeaderMoneyEq(
+                request.resource.data.posted_total_amount,
+                resource.data.total_amount
+              )
+              && request.resource.data.posted_cogs_amount is number
+              && request.resource.data.posted_cogs_amount >= 0
+              && request.resource.data.stock_reversal_applied == false
             )
-            && approxHeaderMoneyEq(
-              request.resource.data.posted_delivery_charge,
-              resource.data.delivery_charge
+            || (
+              resource.data.status == 'draft'
+              && request.resource.data.status == 'void'
+              && request.resource.data.stock_reversal_applied == false
+              && request.resource.data.voided_at is timestamp
+              && postedAtUnchanged(resource.data, request.resource.data)
+              && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
+              && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
+              && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
+              && request.resource.data.posted_total_amount == resource.data.posted_total_amount
+              && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
             )
-            && approxHeaderMoneyEq(
-              request.resource.data.posted_total_amount,
-              resource.data.total_amount
+            || (
+              resource.data.status == 'posted'
+              && request.resource.data.status == 'posted'
+              && request.resource.data.stock_reversal_applied == false
+              && voidedAtUnchanged(resource.data, request.resource.data)
+              && postedAtUnchanged(resource.data, request.resource.data)
+              && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
+              && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
+              && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
+              && request.resource.data.posted_total_amount == resource.data.posted_total_amount
+              && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
             )
-            && request.resource.data.posted_cogs_amount is number
-            && request.resource.data.posted_cogs_amount >= 0
-            && request.resource.data.stock_reversal_applied == false
-          )
-          || (
-            resource.data.status == 'draft'
-            && request.resource.data.status == 'void'
-            && request.resource.data.stock_reversal_applied == false
-            && request.resource.data.voided_at is timestamp
-            && postedAtUnchanged(resource.data, request.resource.data)
-            && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
-            && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
-            && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
-            && request.resource.data.posted_total_amount == resource.data.posted_total_amount
-            && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
-          )
-          || (
-            resource.data.status == 'posted'
-            && request.resource.data.status == 'posted'
-            && request.resource.data.stock_reversal_applied == false
-            && voidedAtUnchanged(resource.data, request.resource.data)
-            && postedAtUnchanged(resource.data, request.resource.data)
-            && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
-            && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
-            && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
-            && request.resource.data.posted_total_amount == resource.data.posted_total_amount
-            && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
-          )
-          || (
-            resource.data.status == 'posted'
-            && request.resource.data.status == 'void'
-            && request.resource.data.stock_reversal_applied == true
-            && request.resource.data.voided_at is timestamp
-            && postedAtUnchanged(resource.data, request.resource.data)
-            && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
-            && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
-            && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
-            && request.resource.data.posted_total_amount == resource.data.posted_total_amount
-            && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
-          )
+            || (
+              resource.data.status == 'posted'
+              && request.resource.data.status == 'void'
+              && request.resource.data.stock_reversal_applied == true
+              && request.resource.data.voided_at is timestamp
+              && postedAtUnchanged(resource.data, request.resource.data)
+              && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
+              && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
+              && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
+              && request.resource.data.posted_total_amount == resource.data.posted_total_amount
+              && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
+            )
+          ))
         );
-      allow delete: if isAdmin() && resource.data.status == 'draft' && resource.data.stock_reversal_applied == false;
+      allow delete: if isStaff() && resource.data.status == 'draft' && resource.data.stock_reversal_applied == false;
     }
     // Note: draft invoice + line items are created in one transaction. Rules cannot see
     // uncommitted writes, so exists(get) on the parent invoice would always fail.
     // Keep create validation shape-only to avoid exceeding the 20 access-call limit
     // when creating larger invoices (product existence is preflight-validated in app code).
     match /invoice_items/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validInvoiceItemBase(request.resource.data);
+      allow read: if isStaff();
+      allow create: if isStaff() && validInvoiceItemBase(request.resource.data);
       allow update: if false;
-      allow delete: if isAdmin() && resource.data.invoice_id is string
+      allow delete: if isStaff() && resource.data.invoice_id is string
         && resource.data.invoice_id.size() > 0
         && exists(/databases/$(database)/documents/invoices/$(resource.data.invoice_id))
         && get(/databases/$(database)/documents/invoices/$(resource.data.invoice_id)).data.status == 'draft';
@@ -384,6 +412,74 @@ service cloud.firestore {
         && request.resource.data.customer_id
           == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.customer_id;
       allow update, delete: if false;
+    }
+    function validWalkInSessionCreate(data) {
+      return data.status == 'pending'
+        && data.sale_date is timestamp
+        && data.line_count is int
+        && data.line_count > 0
+        && data.created_at is timestamp
+        && data.updated_at is timestamp
+        && (!('created_by_uid' in data) || (data.created_by_uid is string && data.created_by_uid.size() > 0));
+    }
+    function validWalkInLine(data) {
+      return data.product_id is string
+        && data.product_id.size() > 0
+        && data.quantity is int
+        && data.quantity > 0
+        && data.unit_sale_price is number
+        && data.unit_sale_price >= 0
+        && data.created_at is timestamp;
+    }
+    function walkInStaffEditPending(res, req) {
+      return res.status == 'pending'
+        && req.status == 'pending'
+        && req.created_at == res.created_at
+        && req.sale_date is timestamp
+        && req.line_count is int
+        && req.line_count > 0
+        && req.updated_at is timestamp
+        && (!('created_by_uid' in res) || req.created_by_uid == res.created_by_uid)
+        && !('approved_at' in req)
+        && !('approved_by_uid' in req)
+        && !('rejection_note' in req);
+    }
+    function walkInApprove(res, req) {
+      return res.status == 'pending'
+        && req.status == 'approved'
+        && req.created_at == res.created_at
+        && req.sale_date == res.sale_date
+        && req.approved_at is timestamp
+        && req.approved_by_uid is string
+        && req.updated_at is timestamp;
+    }
+    function walkInReject(res, req) {
+      return res.status == 'pending'
+        && req.status == 'rejected'
+        && req.created_at == res.created_at
+        && req.sale_date == res.sale_date
+        && req.updated_at is timestamp
+        && (!('rejection_note' in req) || (req.rejection_note is string && req.rejection_note.size() <= 500))
+        && !('approved_at' in req)
+        && !('approved_by_uid' in req);
+    }
+    match /walk_in_sessions/{sessionId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validWalkInSessionCreate(request.resource.data);
+      allow update: if isStaff() && walkInStaffEditPending(resource.data, request.resource.data)
+        || (isAdmin() && walkInApprove(resource.data, request.resource.data))
+        || (isAdmin() && walkInReject(resource.data, request.resource.data));
+      allow delete: if isStaff() && resource.data.status == 'pending';
+    }
+    match /walk_in_sessions/{sessionId}/lines/{lineId} {
+      allow read: if isStaff();
+      allow create: if isStaff() && validWalkInLine(request.resource.data)
+        && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';
+      allow update: if isStaff() && validWalkInLine(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at
+        && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';
+      allow delete: if isStaff()
+        && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';
     }
     match /{document=**} {
       allow read, write: if false;

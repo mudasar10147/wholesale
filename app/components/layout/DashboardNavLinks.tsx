@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { isNavActive, navItems } from "@/lib/navigation";
+import { useAuth } from "@/app/components/auth/AuthProvider";
+import { isNavActive, isNavVisibleForUser, navItems } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 
 type DashboardNavLinksProps = {
@@ -12,10 +13,14 @@ type DashboardNavLinksProps = {
 
 export function DashboardNavLinks({ onNavigate }: DashboardNavLinksProps) {
   const pathname = usePathname();
+  const { isAdmin, isClerk } = useAuth();
+  const visibleItems = navItems.filter((item) =>
+    isNavVisibleForUser(item, { isAdmin, isClerk }),
+  );
 
   return (
     <nav className="flex flex-col gap-0.5" aria-label="Primary">
-      {navItems.map((item) => {
+      {visibleItems.map((item) => {
         const active = isNavActive(pathname, item.href);
         return (
           <Link

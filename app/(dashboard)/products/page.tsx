@@ -1,3 +1,4 @@
+import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { AddProductForm } from "@/app/components/products/AddProductForm";
 import { ProductList } from "@/app/components/products/ProductList";
 import { PageHeader } from "@/app/components/layout/PageHeader";
@@ -11,6 +12,7 @@ import {
 
 export default function ProductsPage() {
   return (
+    <AdminOnly>
     <div className="space-y-10">
       <PageHeader
         title="Products"
@@ -41,5 +43,6 @@ export default function ProductsPage() {
         </CardContent>
       </Card>
     </div>
+    </AdminOnly>
   );
 }

@@ -17,8 +17,14 @@ export function getFirestoreUserMessage(error: unknown): string {
       }
       case "unavailable":
         return "Service temporarily unavailable. Try again in a moment.";
-      case "failed-precondition":
+      case "failed-precondition": {
+        // Often a missing Firestore composite index; the SDK message includes a console link.
+        const msg = error.message?.trim() ?? "";
+        if (msg.length > 0 && (msg.includes("index") || msg.includes("console.firebase.google.com"))) {
+          return msg.length <= 600 ? msg : `${msg.slice(0, 597)}…`;
+        }
         return "Request could not be completed. Try again.";
+      }
       case "resource-exhausted":
         return "Too many requests. Wait a moment and try again.";
       case "deadline-exceeded":

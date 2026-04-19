@@ -19,6 +19,8 @@ export type ProductDoc = {
  */
 export type SaleDoc = {
   invoice_id?: string;
+  /** Set when sale was created from an approved walk-in session. */
+  walk_in_session_id?: string;
   order_id?: string;
   customer_id?: string;
   product_id: string;
@@ -32,6 +34,35 @@ export type SaleDoc = {
   total_amount: number;
   posted_at?: Timestamp;
   date: Timestamp;
+};
+
+export type WalkInSessionStatus = "pending" | "approved" | "rejected";
+
+/**
+ * `walk_in_sessions/{sessionId}` — pending shop sale until admin approves.
+ */
+export type WalkInSessionDoc = {
+  status: WalkInSessionStatus;
+  /** Start of local calendar day for reporting (same day as walk-in business date). */
+  sale_date: Timestamp;
+  /** Denormalized count of lines (for list UI). */
+  line_count: number;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+  created_by_uid?: string;
+  approved_at?: Timestamp;
+  approved_by_uid?: string;
+  rejection_note?: string;
+};
+
+/**
+ * `walk_in_sessions/{sessionId}/lines/{lineId}`.
+ */
+export type WalkInLineDoc = {
+  product_id: string;
+  quantity: number;
+  unit_sale_price: number;
+  created_at: Timestamp;
 };
 
 /**
@@ -56,6 +87,14 @@ export type PartnerLoanDoc = {
   date: Timestamp;
   note?: string;
   created_at: Timestamp;
+};
+
+/**
+ * Document shape for `settings/cash` — cash-on-hand baseline for the dashboard.
+ */
+export type CashSettingsDoc = {
+  opening_balance: number;
+  updated_at: Timestamp;
 };
 
 /**

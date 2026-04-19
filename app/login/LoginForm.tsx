@@ -12,7 +12,7 @@ import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 
 export function LoginForm() {
-  const { user, loading, isAdmin } = useAuth();
+  const { user, loading, hasAppAccess } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const nextRaw = searchParams.get("next") || "/";
@@ -25,10 +25,10 @@ export function LoginForm() {
 
   useEffect(() => {
     if (loading) return;
-    if (user && isAdmin) {
+    if (user && hasAppAccess) {
       router.replace(next);
     }
-  }, [loading, user, isAdmin, router, next]);
+  }, [loading, user, hasAppAccess, router, next]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -40,7 +40,7 @@ export function LoginForm() {
     setSubmitting(true);
     try {
       await signInWithEmailAndPassword(getAuthClient(), email.trim(), password);
-      // Redirect only via useEffect when claims are loaded (avoids racing ahead of isAdmin).
+      // Redirect only via useEffect when claims are loaded (avoids racing ahead of hasAppAccess).
     } catch (err) {
       setError(getAuthUserMessage(err));
     } finally {
@@ -56,17 +56,18 @@ export function LoginForm() {
     );
   }
 
-  if (user && !isAdmin) {
+  if (user && !hasAppAccess) {
     return (
       <InlineAlert variant="error">
-        This account is signed in but does not have the admin role. Set the{" "}
-        <code className="rounded bg-surface-muted px-1">admin</code> custom claim in Firebase, sign out, then sign in
-        again.
+        This account is signed in but is not allowed to use the app. Set the{" "}
+        <code className="rounded bg-surface-muted px-1">admin</code> or{" "}
+        <code className="rounded bg-surface-muted px-1">role: clerk</code> custom claim in Firebase, sign out, then
+        sign in again.
       </InlineAlert>
     );
   }
 
-  if (user && isAdmin) {
+  if (user && hasAppAccess) {
     return (
       <p className="text-center text-sm text-muted-foreground" role="status">
         Redirecting…

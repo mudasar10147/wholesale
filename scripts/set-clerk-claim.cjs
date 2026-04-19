@@ -1,16 +1,18 @@
 /**
- * Set Firebase Auth custom claim { admin: true } for a user UID.
- * Replaces all custom claims on that user (clears `role: "clerk"` if present).
+ * Set Firebase Auth custom claim { role: "clerk" } for a user UID.
+ *
+ * Replaces all custom claims on that user with this object (clerk has no `admin` claim).
+ * To promote to admin later, run set-admin-claim.cjs (which sets { admin: true } only).
  *
  * Prerequisites:
  * - Service account JSON from Firebase Console → Project settings → Service accounts
  * - npm install (installs firebase-admin as devDependency)
  *
  * Usage:
- *   GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/serviceAccount.json node scripts/set-admin-claim.cjs <USER_UID>
+ *   GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/serviceAccount.json node scripts/set-clerk-claim.cjs <USER_UID>
  *
  * Find UID: Firebase Console → Authentication → Users → copy UID.
- * After running, have the user sign out and sign in again (or wait ~1h for token refresh).
+ * After running, have the user sign out and sign in again (or wait for token refresh).
  */
 
 const fs = require("fs");
@@ -20,7 +22,9 @@ const uid = process.argv[2];
 const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
 if (!uid) {
-  console.error("Usage: GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccount.json node scripts/set-admin-claim.cjs <USER_UID>");
+  console.error(
+    "Usage: GOOGLE_APPLICATION_CREDENTIALS=/path/to/serviceAccount.json node scripts/set-clerk-claim.cjs <USER_UID>",
+  );
   process.exit(1);
 }
 if (!credPath || !fs.existsSync(credPath)) {
@@ -37,9 +41,9 @@ admin.initializeApp({
 
 admin
   .auth()
-  .setCustomUserClaims(uid, { admin: true })
+  .setCustomUserClaims(uid, { role: "clerk" })
   .then(() => {
-    console.log(`Custom claim admin=true set for uid=${uid}`);
+    console.log(`Custom claim role=clerk set for uid=${uid}`);
     process.exit(0);
   })
   .catch((err) => {

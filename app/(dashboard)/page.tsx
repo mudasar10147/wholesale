@@ -1,4 +1,4 @@
-import Image from "next/image";
+import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { FirestoreSmokeTest } from "@/app/components/FirestoreSmokeTest";
 import { DashboardOverview } from "@/app/components/dashboard/DashboardOverview";
 import { PageHeader } from "@/app/components/layout/PageHeader";
@@ -6,16 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/app
 
 export default function DashboardPage() {
   return (
-    <div className="space-y-10">
-      <div className="flex flex-col gap-6 border-b border-border pb-8 sm:flex-row sm:items-end sm:gap-8">
-        <Image
-          src="/wholesale_logo.png"
-          alt="Wholesale"
-          width={200}
-          height={64}
-          className="h-14 w-auto max-w-[min(100%,12rem)] object-contain object-left sm:h-16"
-          priority
-        />
+    <AdminOnly>
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:gap-8">
         <PageHeader
           className="flex-1 border-0 pb-0"
           title="Dashboard"
@@ -52,5 +45,6 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
     </div>
+    </AdminOnly>
   );
 }

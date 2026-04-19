@@ -14,6 +14,7 @@ import { downloadInvoicePdf } from "@/lib/invoices/invoicePdf";
 import { buildInvoicePlainText, downloadTextFile } from "@/lib/invoices/invoiceText";
 import { normalizeOrderId } from "@/lib/validation/contracts";
 import type { CustomerDoc, InvoiceDoc, InvoiceItemDoc, ProductDoc } from "@/lib/types/firestore";
+import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import {
@@ -50,6 +51,7 @@ function formatDate(ts?: Timestamp) {
 type Props = { invoiceId: string };
 
 export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
+  const { isAdmin } = useAuth();
   const router = useRouter();
   const invoiceId = useMemo(() => {
     try {
@@ -358,7 +360,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               {editing ? "Close editor" : "Edit draft"}
             </Button>
           ) : null}
-          {isDraft ? (
+          {isDraft && isAdmin ? (
             <Button
               type="button"
               className="px-3 py-1.5 text-xs"
@@ -370,7 +372,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               {working === "post" ? "Posting…" : "Post invoice"}
             </Button>
           ) : null}
-          {isDraft || invoice.status === "posted" ? (
+          {(isDraft || invoice.status === "posted") && isAdmin ? (
             <Button
               type="button"
               variant="outline"

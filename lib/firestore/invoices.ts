@@ -5,12 +5,15 @@ import {
   doc,
   getDoc,
   getDocs,
+  query,
   runTransaction,
   serverTimestamp,
+  where,
   writeBatch,
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import type {
   CustomerDoc,
@@ -46,6 +49,133 @@ export type CreateInvoiceInput = {
 
 /** Firestore allows at most ~500 document reads+writes per transaction. */
 const FIRESTORE_TXN_DOC_CAP = 500;
+
+function sortLotsByReceivedAt(lots: Array<{ id: string; data: StockLotDoc }>): void {
+  lots.sort((a, b) => {
+    const at = typeof a.data.received_at?.toMillis === "function" ? a.data.received_at.toMillis() : 0;
+    const bt = typeof b.data.received_at?.toMillis === "function" ? b.data.received_at.toMillis() : 0;
+    return at - bt;
+  });
+}
+
+function captureLotQtySnapshot(
+  lotsByProductId: Map<string, Array<{ id: string; data: StockLotDoc }>>,
+): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const rows of lotsByProductId.values()) {
+    for (const lot of rows) {
+      m.set(lot.id, typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0);
+    }
+  }
+  return m;
+}
+
+function collectDirtyLotIds(
+  before: Map<string, number>,
+  lotsByProductId: Map<string, Array<{ id: string; data: StockLotDoc }>>,
+): Set<string> {
+  const dirty = new Set<string>();
+  for (const rows of lotsByProductId.values()) {
+    for (const lot of rows) {
+      const prev = before.get(lot.id) ?? 0;
+      const next = typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0;
+      if (prev !== next) {
+        dirty.add(lot.id);
+      }
+    }
+  }
+  return dirty;
+}
+
+function cloneLotsByProductForSimulation(
+  src: Map<string, Array<{ id: string; data: StockLotDoc }>>,
+): Map<string, Array<{ id: string; data: StockLotDoc }>> {
+  const out = new Map<string, Array<{ id: string; data: StockLotDoc }>>();
+  for (const [pid, rows] of src) {
+    out.set(
+      pid,
+      rows.map((r) => ({
+        id: r.id,
+        data: {
+          ...r.data,
+          qty_remaining: typeof r.data.qty_remaining === "number" ? r.data.qty_remaining : 0,
+        },
+      })),
+    );
+  }
+  return out;
+}
+
+function simulateFifoForDirtyEstimate(
+  invoiceItems: Array<{ id: string; data: InvoiceItemDoc }>,
+  lotsByProductId: Map<string, Array<{ id: string; data: StockLotDoc }>>,
+): Set<string> {
+  const before = captureLotQtySnapshot(lotsByProductId);
+  const sim = cloneLotsByProductForSimulation(lotsByProductId);
+  for (const row of invoiceItems) {
+    const item = row.data;
+    const qty = item.quantity;
+    const productLots = sim.get(item.product_id) ?? [];
+    let need = qty;
+    for (const lot of productLots) {
+      if (need <= 0) {
+        break;
+      }
+      const available = typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0;
+      if (available <= 0) {
+        continue;
+      }
+      const take = Math.min(available, need);
+      need -= take;
+      lot.data.qty_remaining = available - take;
+    }
+  }
+  return collectDirtyLotIds(before, sim);
+}
+
+function buildLotsMapsForPost(
+  productIds: string[],
+  lotsDataByProduct: Map<string, StockLotRow[]>,
+  productById: Map<string, ProductDoc>,
+  stockSnapshot: Map<string, number>,
+): Map<string, Array<{ id: string; data: StockLotDoc }>> {
+  const lotsByProductId = new Map<string, Array<{ id: string; data: StockLotDoc }>>();
+  for (const productId of productIds) {
+    const product = productById.get(productId);
+    const currentStock = stockSnapshot.get(productId) ?? 0;
+    const rows = lotsDataByProduct.get(productId) ?? [];
+    const lots: Array<{ id: string; data: StockLotDoc }> = rows.map((r) => ({
+      id: r.id,
+      data: r.data,
+    }));
+
+    const lotTotal = lots.reduce(
+      (acc, row) => acc + (typeof row.data.qty_remaining === "number" ? row.data.qty_remaining : 0),
+      0,
+    );
+    const gap = Math.max(0, currentStock - lotTotal);
+    if (gap > 0 && product) {
+      const openingCost = typeof product.cost_price === "number" ? product.cost_price : 0;
+      lots.push({
+        id: `__sim_opening__${productId}`,
+        data: {
+          product_id: productId,
+          unit_cost: openingCost,
+          qty_in: gap,
+          qty_remaining: gap,
+          source: "opening_balance",
+          reference_id: productId,
+          received_at: product.created_at,
+          created_at: product.created_at,
+          updated_at: product.created_at,
+        } as StockLotDoc,
+      });
+    }
+    sortLotsByReceivedAt(lots);
+    lotsByProductId.set(productId, lots);
+  }
+  return lotsByProductId;
+}
 
 /**
  * Load customer + products outside a transaction, matching previous server checks.
@@ -397,17 +527,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     throw new Error(`Only draft invoices can be posted (current status: ${String(preInvoice?.status)}).`);
   }
 
-  const preloadedLotsByProduct = new Map<string, string[]>();
-  const lotsSnap = await getDocs(collection(db, COLLECTIONS.stockLots));
-  lotsSnap.forEach((docSnap) => {
-    const data = docSnap.data() as Partial<StockLotDoc>;
-    const productId = typeof data.product_id === "string" ? data.product_id : "";
-    if (!productId) return;
-    const list = preloadedLotsByProduct.get(productId) ?? [];
-    list.push(docSnap.id);
-    preloadedLotsByProduct.set(productId, list);
-  });
-
   const itemIdsForEstimate = Array.isArray(preInvoice.item_ids) ? preInvoice.item_ids.filter(Boolean) : [];
   if (itemIdsForEstimate.length === 0) {
     throw new Error("Invoice has no items to post.");
@@ -434,16 +553,92 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     neededByProductEarly.set(productId, (neededByProductEarly.get(productId) ?? 0) + qty);
   }
   const productIdsForEstimate = Array.from(neededByProductEarly.keys());
+
+  const lotsDataByProduct = new Map<string, StockLotRow[]>();
+  await Promise.all(
+    productIdsForEstimate.map(async (pid) => {
+      lotsDataByProduct.set(pid, await fetchStockLotsForProduct(db, pid));
+    }),
+  );
+
+  const preloadedLotsByProduct = new Map<string, string[]>();
+  for (const pid of productIdsForEstimate) {
+    preloadedLotsByProduct.set(
+      pid,
+      (lotsDataByProduct.get(pid) ?? []).map((r) => r.id),
+    );
+  }
+
+  const productDocsEarly = await Promise.all(
+    productIdsForEstimate.map((pid) => getDoc(doc(db, COLLECTIONS.products, pid))),
+  );
+  const productByIdEarly = new Map<string, ProductDoc>();
+  const stockSnapshotEarly = new Map<string, number>();
+  for (let i = 0; i < productIdsForEstimate.length; i++) {
+    const pid = productIdsForEstimate[i]!;
+    const snap = productDocsEarly[i]!;
+    if (!snap.exists()) {
+      throw new Error("A product in this invoice no longer exists.");
+    }
+    const p = snap.data() as ProductDoc;
+    productByIdEarly.set(pid, p);
+    stockSnapshotEarly.set(pid, typeof p.stock_quantity === "number" ? p.stock_quantity : 0);
+  }
+
+  for (const pid of productIdsForEstimate) {
+    const need = neededByProductEarly.get(pid) ?? 0;
+    const stock = stockSnapshotEarly.get(pid) ?? 0;
+    if (stock < need) {
+      const p = productByIdEarly.get(pid);
+      throw new Error(
+        `Not enough stock for ${p?.name ?? pid} (needed: ${need}, available: ${stock}).`,
+      );
+    }
+  }
+
+  const invoiceItemsEarly: Array<{ id: string; data: InvoiceItemDoc }> = [];
+  for (let i = 0; i < itemIdsForEstimate.length; i++) {
+    const id = itemIdsForEstimate[i]!;
+    const snap = itemSnapsEarly[i]!;
+    invoiceItemsEarly.push({ id, data: snap.data() as InvoiceItemDoc });
+  }
+
+  const lotsByProductForEstimate = buildLotsMapsForPost(
+    productIdsForEstimate,
+    lotsDataByProduct,
+    productByIdEarly,
+    stockSnapshotEarly,
+  );
+  const dirtyEstimate = simulateFifoForDirtyEstimate(invoiceItemsEarly, lotsByProductForEstimate);
+
   let lotReadSumForEstimate = 0;
   for (const pid of productIdsForEstimate) {
     lotReadSumForEstimate += (preloadedLotsByProduct.get(pid) ?? []).length;
   }
+
+  let openingCountEstimate = 0;
+  for (const pid of productIdsForEstimate) {
+    const rows = lotsDataByProduct.get(pid) ?? [];
+    const lotTotal = rows.reduce(
+      (acc, r) => acc + (typeof r.data.qty_remaining === "number" ? r.data.qty_remaining : 0),
+      0,
+    );
+    const stock = stockSnapshotEarly.get(pid) ?? 0;
+    if (stock > lotTotal) {
+      openingCountEstimate += 1;
+    }
+  }
+
   const postTxnOpEstimate =
     1 +
     itemIdsForEstimate.length +
     productIdsForEstimate.length +
     lotReadSumForEstimate +
-    itemIdsForEstimate.length * 4;
+    itemIdsForEstimate.length * 3 +
+    dirtyEstimate.size +
+    openingCountEstimate +
+    productIdsForEstimate.length +
+    1;
   if (postTxnOpEstimate > FIRESTORE_TXN_DOC_CAP) {
     throw new Error(
       `This invoice is too large to post in one step (estimated ${postTxnOpEstimate} Firestore operations; limit ${FIRESTORE_TXN_DOC_CAP}). Split into multiple drafts with fewer lines or fewer stock lots per product.`,
@@ -579,11 +774,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         });
       }
 
-      lots.sort((a, b) => {
-        const at = typeof a.data.received_at?.toMillis === "function" ? a.data.received_at.toMillis() : 0;
-        const bt = typeof b.data.received_at?.toMillis === "function" ? b.data.received_at.toMillis() : 0;
-        return at - bt;
-      });
+      sortLotsByReceivedAt(lots);
       lotsByProductId.set(productId, lots);
     }
 
@@ -597,6 +788,8 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
         stock_quantity: currentStock - qtyNeeded,
       });
     }
+
+    const initialLotQtyMap = captureLotQtySnapshot(lotsByProductId);
 
     let postedCogs = 0;
     for (const row of invoiceItems) {
@@ -637,12 +830,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       cogsAmount = roundMoney2(cogsAmount);
       postedCogs += cogsAmount;
 
-      for (const lot of productLots) {
-        tx.update(doc(db, COLLECTIONS.stockLots, lot.id), {
-          qty_remaining: lot.data.qty_remaining,
-          updated_at: serverTimestamp(),
-        });
-      }
       for (const chunk of consumptionRows) {
         const consumptionRef = doc(collection(db, COLLECTIONS.lotConsumptions));
         tx.set(consumptionRef, {
@@ -692,6 +879,20 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       } satisfies Omit<InvoiceItemCogsDoc, "created_at"> & { created_at: unknown });
     }
 
+    const dirtyLotIds = collectDirtyLotIds(initialLotQtyMap, lotsByProductId);
+    for (const lotId of dirtyLotIds) {
+      const lotRow = Array.from(lotsByProductId.values())
+        .flat()
+        .find((r) => r.id === lotId);
+      if (!lotRow) {
+        continue;
+      }
+      tx.update(doc(db, COLLECTIONS.stockLots, lotId), {
+        qty_remaining: lotRow.data.qty_remaining,
+        updated_at: serverTimestamp(),
+      });
+    }
+
     tx.update(invoiceRef, {
       status: "posted",
       stock_reversal_applied: false,
@@ -733,13 +934,14 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   }
   await logFirestoreAuthForDebug("voidInvoice (before transaction)");
 
+  const consumptionQ = query(
+    collection(db, COLLECTIONS.lotConsumptions),
+    where("invoice_id", "==", trimmedId),
+  );
+  const consumptionSnap = await getDocs(consumptionQ);
   const preloadedConsumptionIds: string[] = [];
-  const consumptionAllSnap = await getDocs(collection(db, COLLECTIONS.lotConsumptions));
-  consumptionAllSnap.forEach((docSnap) => {
-    const data = docSnap.data() as Partial<LotConsumptionDoc>;
-    if (data.invoice_id === trimmedId) {
-      preloadedConsumptionIds.push(docSnap.id);
-    }
+  consumptionSnap.forEach((docSnap) => {
+    preloadedConsumptionIds.push(docSnap.id);
   });
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);

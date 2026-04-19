@@ -1,3 +1,4 @@
+import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { AddPartnerLoanEntryForm } from "@/app/components/finance/AddPartnerLoanEntryForm";
 import { PartnerLoanLedgerTable } from "@/app/components/finance/PartnerLoanLedgerTable";
 import { PageHeader } from "@/app/components/layout/PageHeader";
@@ -11,6 +12,7 @@ import {
 
 export default function LoansPage() {
   return (
+    <AdminOnly>
     <div className="space-y-10">
       <PageHeader
         title="Partner Loans"
@@ -41,5 +43,6 @@ export default function LoansPage() {
         </CardContent>
       </Card>
     </div>
+    </AdminOnly>
   );
 }
