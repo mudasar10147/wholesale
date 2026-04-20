@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import { getAuthClient } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import type { ProductDoc, WalkInLineDoc, WalkInSessionDoc } from "@/lib/types/firestore";
+import type { ProductDoc, SaleDoc, WalkInLineDoc, WalkInSessionDoc } from "@/lib/types/firestore";
 
 /** Local midnight for the given calendar day (used as business `sale_date`). */
 export function startOfLocalDay(d: Date): Date {
@@ -245,6 +245,61 @@ export async function rejectWalkInSession(
     ...(note && note.trim().length > 0
       ? { rejection_note: note.trim() }
       : { rejection_note: deleteField() }),
+  });
+}
+
+/**
+ * Admin: reverse an approved session by deleting its generated sales rows
+ * and restocking products, then mark the session rejected.
+ */
+export async function deleteApprovedWalkInSession(db: Firestore, sessionId: string): Promise<void> {
+  const auth = getAuthClient();
+  if (!auth.currentUser?.uid) {
+    throw new Error("You must be signed in to delete an approved session.");
+  }
+
+  const sessionRef = doc(db, COLLECTIONS.walkInSessions, sessionId);
+  const salesQ = query(collection(db, COLLECTIONS.sales), where("walk_in_session_id", "==", sessionId));
+  const salesSnap = await getDocs(salesQ);
+  if (salesSnap.empty) {
+    throw new Error("No sales rows found for this approved session.");
+  }
+  const saleRefs = salesSnap.docs.map((d) => d.ref);
+
+  await runTransaction(db, async (transaction) => {
+    const sessSnap = await transaction.get(sessionRef);
+    if (!sessSnap.exists()) {
+      throw new Error("Session not found.");
+    }
+    const sess = sessSnap.data() as WalkInSessionDoc;
+    if (sess.status !== "approved") {
+      throw new Error("Only approved sessions can be deleted.");
+    }
+
+    for (const saleRef of saleRefs) {
+      const saleSnap = await transaction.get(saleRef);
+      if (!saleSnap.exists()) continue;
+      const sale = saleSnap.data() as SaleDoc;
+      if (!sale.product_id || !Number.isFinite(sale.quantity) || sale.quantity <= 0) {
+        throw new Error("Invalid sale row found for this session.");
+      }
+      const productRef = doc(db, COLLECTIONS.products, sale.product_id);
+      const productSnap = await transaction.get(productRef);
+      if (!productSnap.exists()) {
+        throw new Error(`Product not found for reversal: ${sale.product_id}`);
+      }
+
+      transaction.update(productRef, { stock_quantity: increment(sale.quantity) });
+      transaction.delete(saleRef);
+    }
+
+    transaction.update(sessionRef, {
+      status: "rejected",
+      rejection_note: "Approved walk-in deleted by admin; stock restored and sales reversed.",
+      approved_at: deleteField(),
+      approved_by_uid: deleteField(),
+      updated_at: serverTimestamp(),
+    });
   });
 }
 

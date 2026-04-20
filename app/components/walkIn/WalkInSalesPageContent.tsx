@@ -8,6 +8,7 @@ import { COLLECTIONS } from "@/lib/firestore/collections";
 import {
   approveWalkInSession,
   createWalkInSession,
+  deleteApprovedWalkInSession,
   deletePendingWalkInSession,
   fetchWalkInLines,
   rejectWalkInSession,
@@ -72,7 +73,10 @@ export function WalkInSalesPageContent() {
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [pending, setPending] = useState<Array<{ id: string; data: WalkInSessionDoc }>>([]);
+  const [approved, setApproved] = useState<Array<{ id: string; data: WalkInSessionDoc }>>([]);
+  const [sessionItemNames, setSessionItemNames] = useState<Record<string, string>>({});
   const [pendingLoading, setPendingLoading] = useState(true);
+  const [approvedLoading, setApprovedLoading] = useState(true);
 
   const [saleDateInput, setSaleDateInput] = useState(() => toDateInputValue(new Date()));
   const [lines, setLines] = useState<LineForm[]>([emptyLine()]);
@@ -132,6 +136,62 @@ export function WalkInSalesPageContent() {
     );
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const db = getDb();
+    const q = query(collection(db, COLLECTIONS.walkInSessions), where("status", "==", "approved"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        setApprovedLoading(false);
+        const rows: Array<{ id: string; data: WalkInSessionDoc }> = [];
+        snap.forEach((d) => rows.push({ id: d.id, data: d.data() as WalkInSessionDoc }));
+        rows.sort((a, b) => {
+          const ta = a.data.sale_date?.toMillis?.() ?? 0;
+          const tb = b.data.sale_date?.toMillis?.() ?? 0;
+          return tb - ta;
+        });
+        setApproved(rows);
+      },
+      (err) => {
+        setApprovedLoading(false);
+        setError(getFirestoreUserMessage(err));
+      },
+    );
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const db = getDb();
+    const allSessions = [...pending, ...approved];
+    const sessionIds = Array.from(new Set(allSessions.map((row) => row.id)));
+
+    async function loadSessionItemNames() {
+      if (sessionIds.length === 0) {
+        if (!cancelled) setSessionItemNames({});
+        return;
+      }
+      const entries = await Promise.all(
+        sessionIds.map(async (sessionId) => {
+          const lineRows = await fetchWalkInLines(db, sessionId);
+          const names = lineRows
+            .map((l) => products.find((p) => p.id === l.data.product_id)?.name ?? "Unknown product")
+            .filter((name, idx, arr) => arr.indexOf(name) === idx);
+          return [sessionId, names.join(", ")] as const;
+        }),
+      );
+
+      if (!cancelled) {
+        setSessionItemNames(Object.fromEntries(entries));
+      }
+    }
+
+    void loadSessionItemNames();
+    return () => {
+      cancelled = true;
+    };
+  }, [approved, pending, products]);
 
   const effectiveSaleDate = (): Date => {
     if (isAdmin) {
@@ -272,6 +332,22 @@ export function WalkInSalesPageContent() {
         resetForm();
       }
       setSuccess("Draft deleted.");
+    } catch (err) {
+      setError(getFirestoreUserMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onDeleteApproved = async (sessionId: string) => {
+    if (!window.confirm("Delete this approved walk-in sale? This will remove sales rows and restock items.")) {
+      return;
+    }
+    setError(null);
+    setBusyId(sessionId);
+    try {
+      await deleteApprovedWalkInSession(getDb(), sessionId);
+      setSuccess("Approved walk-in deleted. Stock restored.");
     } catch (err) {
       setError(getFirestoreUserMessage(err));
     } finally {
@@ -456,6 +532,7 @@ export function WalkInSalesPageContent() {
               <thead>
                 <tr className="border-b border-border bg-surface-muted">
                   <th className="px-4 py-2.5 font-semibold">Sale date</th>
+                  <th className="px-4 py-2.5 font-semibold">Items</th>
                   <th className="px-4 py-2.5 font-semibold">Lines</th>
                   <th className="px-4 py-2.5 font-semibold">Session</th>
                   <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
@@ -465,6 +542,11 @@ export function WalkInSalesPageContent() {
                 {pending.map((row) => (
                   <tr key={row.id} className="border-b border-border last:border-b-0">
                     <td className="px-4 py-3 text-foreground">{formatSaleDate(row.data.sale_date)}</td>
+                    <td className="px-4 py-3 text-foreground">
+                      {sessionItemNames[row.id] && sessionItemNames[row.id].trim().length > 0
+                        ? sessionItemNames[row.id]
+                        : "Loading…"}
+                    </td>
                     <td className="px-4 py-3 tabular-nums">{row.data.line_count}</td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.id}</td>
                     <td className="px-4 py-3">
@@ -508,6 +590,60 @@ export function WalkInSalesPageContent() {
                             </Button>
                           </>
                         ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-4">
+        <h2 className="text-base font-semibold text-foreground">Approved</h2>
+        {approvedLoading ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : approved.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No approved walk-in sales.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-border bg-surface-muted">
+                  <th className="px-4 py-2.5 font-semibold">Sale date</th>
+                  <th className="px-4 py-2.5 font-semibold">Items</th>
+                  <th className="px-4 py-2.5 font-semibold">Lines</th>
+                  <th className="px-4 py-2.5 font-semibold">Session</th>
+                  <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {approved.map((row) => (
+                  <tr key={row.id} className="border-b border-border last:border-b-0">
+                    <td className="px-4 py-3 text-foreground">{formatSaleDate(row.data.sale_date)}</td>
+                    <td className="px-4 py-3 text-foreground">
+                      {sessionItemNames[row.id] && sessionItemNames[row.id].trim().length > 0
+                        ? sessionItemNames[row.id]
+                        : "Loading…"}
+                    </td>
+                    <td className="px-4 py-3 tabular-nums">{row.data.line_count}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.id}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {isAdmin ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="px-3 py-1.5 text-xs text-destructive"
+                            disabled={busyId !== null}
+                            onClick={() => void onDeleteApproved(row.id)}
+                          >
+                            {busyId === row.id ? "…" : "Delete and restock"}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">No actions</span>
+                        )}
                       </div>
                     </td>
                   </tr>

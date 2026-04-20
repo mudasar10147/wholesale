@@ -463,12 +463,24 @@ service cloud.firestore {
         && !('approved_at' in req)
         && !('approved_by_uid' in req);
     }
+    function walkInDeleteApproved(res, req) {
+      return res.status == 'approved'
+        && req.status == 'rejected'
+        && req.created_at == res.created_at
+        && req.sale_date == res.sale_date
+        && req.updated_at is timestamp
+        && req.rejection_note is string
+        && req.rejection_note.size() <= 500
+        && !('approved_at' in req)
+        && !('approved_by_uid' in req);
+    }
     match /walk_in_sessions/{sessionId} {
       allow read: if isStaff();
       allow create: if isStaff() && validWalkInSessionCreate(request.resource.data);
       allow update: if isStaff() && walkInStaffEditPending(resource.data, request.resource.data)
         || (isAdmin() && walkInApprove(resource.data, request.resource.data))
-        || (isAdmin() && walkInReject(resource.data, request.resource.data));
+        || (isAdmin() && walkInReject(resource.data, request.resource.data))
+        || (isAdmin() && walkInDeleteApproved(resource.data, request.resource.data));
       allow delete: if isStaff() && resource.data.status == 'pending';
     }
     match /walk_in_sessions/{sessionId}/lines/{lineId} {
