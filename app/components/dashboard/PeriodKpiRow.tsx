@@ -9,6 +9,7 @@ export type PeriodKpiRowProps = {
   salesLabel: string;
   expensesLabel: string;
   profitLabel: string;
+  onSalesClick?: () => void;
 };
 
 export function PeriodKpiRow({
@@ -17,6 +18,7 @@ export function PeriodKpiRow({
   salesLabel,
   expensesLabel,
   profitLabel,
+  onSalesClick,
 }: PeriodKpiRowProps) {
   if (loading) {
     return (
@@ -43,7 +45,12 @@ export function PeriodKpiRow({
 
   return (
     <div className="grid gap-4 sm:grid-cols-3">
-      <StatCard label={salesLabel} value={formatMoney(sales)} />
+      <StatCard
+        label={salesLabel}
+        value={formatMoney(sales)}
+        onClick={onSalesClick}
+        ariaLabel={`${salesLabel}: ${formatMoney(sales)}. Open sale line details.`}
+      />
       <StatCard label={expensesLabel} value={formatMoney(expenses)} />
       <StatCard
         label={profitLabel}

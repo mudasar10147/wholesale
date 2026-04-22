@@ -23,6 +23,7 @@ import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { PartnerLoanSummaryCard } from "@/app/components/dashboard/PartnerLoanSummaryCard";
 import { PeriodKpiRow } from "@/app/components/dashboard/PeriodKpiRow";
+import { SalesDrilldownModal } from "@/app/components/dashboard/SalesDrilldownModal";
 import { ProfitBreakdownCard } from "@/app/components/dashboard/ProfitBreakdownCard";
 import { StockSummary } from "@/app/components/dashboard/StockSummary";
 import { CashInHandCard } from "@/app/components/dashboard/CashInHandCard";
@@ -54,6 +55,7 @@ export function DashboardOverview() {
   const [cashLoading, setCashLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [salesDrillOpen, setSalesDrillOpen] = useState(false);
 
   const selectedRange = useMemo(() => {
     const current = new Date();
@@ -262,6 +264,7 @@ export function DashboardOverview() {
               salesLabel={`Total sales (${selectedRange.label.toLowerCase()})`}
               expensesLabel={`Total expenses (${selectedRange.label.toLowerCase()})`}
               profitLabel={`Profit (${selectedRange.label.toLowerCase()})`}
+              onSalesClick={() => setSalesDrillOpen(true)}
             />
           </div>
         ) : null}
@@ -273,6 +276,17 @@ export function DashboardOverview() {
           />
         </div>
       </div>
+
+      {!error && selectedRange.bounds ? (
+        <SalesDrilldownModal
+          open={salesDrillOpen}
+          onClose={() => setSalesDrillOpen(false)}
+          start={selectedRange.bounds.start}
+          end={selectedRange.bounds.end}
+          periodTitle={`${selectedRange.label}: ${selectedRange.description}`}
+          kpiTotalSales={selected?.totalSales ?? 0}
+        />
+      ) : null}
 
       <DashboardSecondaryStatRow
         cashSnapshot={cashSnapshot}
