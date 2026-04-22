@@ -19,6 +19,7 @@ const FORM_ALERT_ID = "add-product-form-alert";
 export function AddProductForm() {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
   const [costPrice, setCostPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
@@ -69,10 +70,15 @@ export function AddProductForm() {
       if (cat) {
         payload.category = cat;
       }
+      const img = imageUrl.trim();
+      if (img) {
+        payload.image_url = img;
+      }
 
       await addDoc(collection(getDb(), COLLECTIONS.products), payload);
       setName("");
       setCategory("");
+      setImageUrl("");
       setCostPrice("");
       setSalePrice("");
       setStockQuantity("");
@@ -111,6 +117,17 @@ export function AddProductForm() {
             value={category}
             onChange={(e) => setCategory(e.target.value)}
             placeholder="e.g. Grains"
+          />
+        </div>
+        <div className="space-y-2 sm:col-span-2">
+          <Label htmlFor="product-image-url">Image URL (optional)</Label>
+          <Input
+            id="product-image-url"
+            name="image_url"
+            autoComplete="off"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            placeholder="https://..."
           />
         </div>
         <div className="space-y-2">

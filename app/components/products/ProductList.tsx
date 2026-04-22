@@ -38,6 +38,7 @@ function formatDate(ts: Timestamp) {
 function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void }) {
   const [name, setName] = useState(row.name);
   const [category, setCategory] = useState(row.category ?? "");
+  const [imageUrl, setImageUrl] = useState(row.image_url ?? "");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,7 +60,7 @@ function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void 
     }
     setPending(true);
     try {
-      await updateProductDetails(getDb(), row.id, { name: trimmed, category });
+      await updateProductDetails(getDb(), row.id, { name: trimmed, category, imageUrl });
       onDismiss();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
@@ -84,7 +85,7 @@ function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void 
         <h2 id="edit-product-title" className="text-lg font-semibold text-foreground">
           Edit product
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">Name and category only.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Name, category, and image URL.</p>
         <form onSubmit={onSubmit} className="mt-4 space-y-4" noValidate>
           <div className="space-y-2">
             <Label htmlFor="edit-product-name">Name</Label>
@@ -106,6 +107,16 @@ function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void 
               value={category}
               onChange={(e) => setCategory(e.target.value)}
               placeholder="e.g. Grains"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-product-image-url">Image URL (optional)</Label>
+            <Input
+              id="edit-product-image-url"
+              autoComplete="off"
+              value={imageUrl}
+              onChange={(e) => setImageUrl(e.target.value)}
+              placeholder="https://..."
             />
           </div>
           {error ? (

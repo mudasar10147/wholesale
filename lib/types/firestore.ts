@@ -7,6 +7,7 @@ import type { Timestamp } from "firebase/firestore";
 export type ProductDoc = {
   name: string;
   category?: string;
+  image_url?: string;
   cost_price: number;
   sale_price: number;
   stock_quantity: number;
