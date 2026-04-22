@@ -234,7 +234,7 @@ service cloud.firestore {
     }
     // MVP collections — clerks: read products for invoice lines; writes admin-only.
     match /products/{docId} {
-      allow read: if isStaff();
+      allow read: if true;
       allow write: if isAdmin();
     }
     match /sales/{docId} {
