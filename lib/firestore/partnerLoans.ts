@@ -28,8 +28,8 @@ export async function addPartnerLoanEntry(
   if (partnerName.length < 2) {
     throw new Error("Partner name must be at least 2 characters.");
   }
-  if (!["loan_in", "repayment"].includes(input.entryType)) {
-    throw new Error("Entry type must be loan_in or repayment.");
+  if (!["loan_in", "repayment", "loan_given", "loan_given_return"].includes(input.entryType)) {
+    throw new Error("Entry type must be loan_in, repayment, loan_given, or loan_given_return.");
   }
   if (!Number.isFinite(input.amount) || input.amount <= 0) {
     throw new Error("Amount must be greater than zero.");

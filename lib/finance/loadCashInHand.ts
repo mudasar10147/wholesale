@@ -1,6 +1,6 @@
 import { collection, getDocs, type Firestore } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { fetchCashSettings, getOpeningBalance } from "@/lib/firestore/cashSettings";
+import { fetchCashSettings, getActualCashBalance, getOpeningBalance } from "@/lib/firestore/cashSettings";
 import { fetchAllPartnerLoans } from "@/lib/firestore/partnerLoans";
 import { summarizePartnerLoans } from "@/lib/finance/partnerLoans";
 import type { ExpenseDoc, InvoiceDoc, SaleDoc, StockLotDoc } from "@/lib/types/firestore";
@@ -18,11 +18,17 @@ export type CashInHandBreakdown = {
   totalExpenses: number;
   partnerLoanIn: number;
   partnerRepayments: number;
+  partnerLoanGiven: number;
+  partnerLoanGivenReturned: number;
   /** Cash paid for inventory receipts (`stock_lots` with `source: stock_in`). */
   stockPurchasesCash: number;
 };
 
 export type CashInHandSnapshot = CashInHandBreakdown & {
+  operationalCash: number;
+  loanCashImpact: number;
+  expectedCashNow: number;
+  actualCashBalance: number | null;
   totalCashInHand: number;
 };
 
@@ -89,14 +95,29 @@ export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandS
 
   const loanSummary = summarizePartnerLoans(loanRows);
   const openingBalance = getOpeningBalance(settings);
+  const actualCashBalance = getActualCashBalance(settings);
+
+  const operationalCash = roundMoney2(
+    openingBalance +
+      cashWalkInSales +
+      cashInvoicePayments -
+      totalExpenses -
+      stockPurchasesCash -
+      loanSummary.givenOut +
+      loanSummary.givenReturnedIn,
+  );
+  const loanCashImpact = roundMoney2(loanSummary.borrowedIn - loanSummary.borrowedRepaidOut);
+  const expectedCashNow = roundMoney2(operationalCash + loanCashImpact);
 
   const totalCashInHand = roundMoney2(
     openingBalance +
       cashWalkInSales +
       cashInvoicePayments -
       totalExpenses +
-      loanSummary.totalLoanIn -
-      loanSummary.totalRepaid -
+      loanSummary.borrowedIn -
+      loanSummary.borrowedRepaidOut -
+      loanSummary.givenOut +
+      loanSummary.givenReturnedIn -
       stockPurchasesCash,
   );
 
@@ -105,9 +126,15 @@ export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandS
     cashWalkInSales: roundMoney2(cashWalkInSales),
     cashInvoicePayments: roundMoney2(cashInvoicePayments),
     totalExpenses: roundMoney2(totalExpenses),
-    partnerLoanIn: roundMoney2(loanSummary.totalLoanIn),
-    partnerRepayments: roundMoney2(loanSummary.totalRepaid),
+    partnerLoanIn: roundMoney2(loanSummary.borrowedIn),
+    partnerRepayments: roundMoney2(loanSummary.borrowedRepaidOut),
+    partnerLoanGiven: roundMoney2(loanSummary.givenOut),
+    partnerLoanGivenReturned: roundMoney2(loanSummary.givenReturnedIn),
     stockPurchasesCash: roundMoney2(stockPurchasesCash),
+    operationalCash,
+    loanCashImpact,
+    expectedCashNow,
+    actualCashBalance,
     totalCashInHand,
   };
 }

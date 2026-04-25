@@ -6,6 +6,7 @@ import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { ProductDoc } from "@/lib/types/firestore";
+import { getSignedProductImageUrl } from "@/lib/upload/productImages";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 
@@ -14,6 +15,7 @@ type ProductRow = {
   name: string;
   salePrice: number;
   imageUrl?: string;
+  imagePath?: string;
 };
 
 const SELLING_LINE = "Limited stock | Order now";
@@ -80,6 +82,7 @@ export function WhatsappDailyPost() {
             name: typeof data.name === "string" ? data.name : "Product",
             salePrice: typeof data.sale_price === "number" ? data.sale_price : 0,
             imageUrl: typeof data.image_url === "string" ? data.image_url : undefined,
+            imagePath: typeof data.image_path === "string" ? data.image_path : undefined,
           });
         });
         rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -141,10 +144,13 @@ export function WhatsappDailyPost() {
     }
   }
 
-  async function copyProductImage(imageUrl?: string) {
+  async function copyProductImage(product: ProductRow) {
     setFeedback(null);
     try {
-      const src = imageUrl && imageUrl.trim().length > 0 ? imageUrl : DUMMY_IMAGE_PATH;
+      let src = product.imageUrl && product.imageUrl.trim().length > 0 ? product.imageUrl : DUMMY_IMAGE_PATH;
+      if (product.imagePath && product.imagePath.trim().length > 0) {
+        src = await getSignedProductImageUrl(product.imagePath);
+      }
       const res = await fetch(src);
       if (!res.ok) throw new Error("Image fetch failed");
       const blob = await res.blob();
@@ -155,7 +161,7 @@ export function WhatsappDailyPost() {
       ]);
       setFeedback("Image copied.");
     } catch {
-      setFeedback("Could not copy image. Check image URL/CORS or browser permissions.");
+      setFeedback("Could not copy image. Please refresh and try again.");
     }
   }
 
@@ -216,7 +222,7 @@ export function WhatsappDailyPost() {
                   <Button type="button" variant="outline" onClick={() => void copyLineText(p)}>
                     Copy text
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => void copyProductImage(p.imageUrl)}>
+                  <Button type="button" variant="outline" onClick={() => void copyProductImage(p)}>
                     Copy image
                   </Button>
                 </div>

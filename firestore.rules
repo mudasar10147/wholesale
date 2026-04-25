@@ -207,7 +207,7 @@ service cloud.firestore {
       && data.partner_name is string
       && data.partner_name.size() >= 2
       && data.partner_name.size() <= 120
-      && data.entry_type in ['loan_in', 'repayment']
+      && data.entry_type in ['loan_in', 'repayment', 'loan_given', 'loan_given_return']
       && data.amount is number
       && data.amount > 0
       && data.date is timestamp
@@ -215,8 +215,10 @@ service cloud.firestore {
       && (!('note' in data) || (data.note is string && data.note.size() <= 500));
     }
     function validCashSettings(data) {
-      return hasOnlyKeys(data, ['opening_balance', 'updated_at'])
+      return hasOnlyKeys(data, ['opening_balance', 'actual_cash_balance', 'actual_cash_updated_at', 'updated_at'])
       && data.opening_balance is number
+      && (!('actual_cash_balance' in data) || data.actual_cash_balance is number)
+      && (!('actual_cash_updated_at' in data) || data.actual_cash_updated_at is timestamp)
       && data.updated_at is timestamp;
     }
     // Clerk may only edit invoices while they stay draft (no post / void / payment paths).
@@ -226,6 +228,28 @@ service cloud.firestore {
         && postedAtUnchanged(res, req)
         && voidedAtUnchanged(res, req)
         && req.stock_reversal_applied == false;
+    }
+    function invoicePostedPaymentUpdateOnly(res, req) {
+      return res.status == 'posted'
+        && req.status == 'posted'
+        && req.stock_reversal_applied == false
+        && postedAtUnchanged(res, req)
+        && voidedAtUnchanged(res, req)
+        && req.posted_subtotal_amount == res.posted_subtotal_amount
+        && req.posted_discount_amount == res.posted_discount_amount
+        && req.posted_delivery_charge == res.posted_delivery_charge
+        && req.posted_total_amount == res.posted_total_amount
+        && req.posted_cogs_amount == res.posted_cogs_amount
+        && req.customer_id == res.customer_id
+        && req.order_id == res.order_id
+        && req.item_ids == res.item_ids
+        && req.subtotal_amount == res.subtotal_amount
+        && req.discount_amount == res.discount_amount
+        && req.delivery_charge == res.delivery_charge
+        && req.total_amount == res.total_amount
+        && req.payment_status in ['unpaid', 'partial', 'paid']
+        && req.paid_amount >= res.paid_amount
+        && req.paid_amount <= req.total_amount;
     }
 
     // Phase 1 smoke test (optional)
@@ -326,16 +350,7 @@ service cloud.firestore {
               && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
             )
             || (
-              resource.data.status == 'posted'
-              && request.resource.data.status == 'posted'
-              && request.resource.data.stock_reversal_applied == false
-              && voidedAtUnchanged(resource.data, request.resource.data)
-              && postedAtUnchanged(resource.data, request.resource.data)
-              && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
-              && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
-              && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
-              && request.resource.data.posted_total_amount == resource.data.posted_total_amount
-              && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
+              invoicePostedPaymentUpdateOnly(resource.data, request.resource.data)
             )
             || (
               resource.data.status == 'posted'
@@ -447,10 +462,13 @@ service cloud.firestore {
     function walkInApprove(res, req) {
       return res.status == 'pending'
         && req.status == 'approved'
+        && req.payment_status == 'paid'
         && req.created_at == res.created_at
         && req.sale_date == res.sale_date
         && req.approved_at is timestamp
         && req.approved_by_uid is string
+        && req.paid_at is timestamp
+        && !('rejection_note' in req)
         && req.updated_at is timestamp;
     }
     function walkInReject(res, req) {
@@ -474,13 +492,28 @@ service cloud.firestore {
         && !('approved_at' in req)
         && !('approved_by_uid' in req);
     }
+    function walkInMarkPaid(res, req) {
+      return res.status == 'approved'
+        && req.status == 'approved'
+        && req.created_at == res.created_at
+        && req.sale_date == res.sale_date
+        && req.line_count == res.line_count
+        && req.approved_at == res.approved_at
+        && req.approved_by_uid == res.approved_by_uid
+        && (!('created_by_uid' in res) || req.created_by_uid == res.created_by_uid)
+        && (!('rejection_note' in res) && !('rejection_note' in req))
+        && req.payment_status == 'paid'
+        && req.paid_at is timestamp
+        && req.updated_at is timestamp;
+    }
     match /walk_in_sessions/{sessionId} {
       allow read: if isStaff();
       allow create: if isStaff() && validWalkInSessionCreate(request.resource.data);
       allow update: if isStaff() && walkInStaffEditPending(resource.data, request.resource.data)
         || (isAdmin() && walkInApprove(resource.data, request.resource.data))
         || (isAdmin() && walkInReject(resource.data, request.resource.data))
-        || (isAdmin() && walkInDeleteApproved(resource.data, request.resource.data));
+        || (isAdmin() && walkInDeleteApproved(resource.data, request.resource.data))
+        || (isAdmin() && walkInMarkPaid(resource.data, request.resource.data));
       allow delete: if isStaff() && resource.data.status == 'pending';
     }
     match /walk_in_sessions/{sessionId}/lines/{lineId} {

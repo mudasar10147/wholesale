@@ -8,11 +8,13 @@ import {
   query,
   type Timestamp,
 } from "firebase/firestore";
+import Image from "next/image";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { updateProductDetails } from "@/lib/firestore/products";
 import type { ProductDoc } from "@/lib/types/firestore";
+import { deleteProductImageByPath, uploadProductImage } from "@/lib/upload/productImages";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
 import { StockAdjustControls } from "@/app/components/products/StockAdjustControls";
 import { Button } from "@/app/components/ui/Button";
@@ -38,7 +40,8 @@ function formatDate(ts: Timestamp) {
 function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void }) {
   const [name, setName] = useState(row.name);
   const [category, setCategory] = useState(row.category ?? "");
-  const [imageUrl, setImageUrl] = useState(row.image_url ?? "");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [removeImage, setRemoveImage] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,7 +63,42 @@ function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void 
     }
     setPending(true);
     try {
-      await updateProductDetails(getDb(), row.id, { name: trimmed, category, imageUrl });
+      if (imageFile) {
+        const uploaded = await uploadProductImage(imageFile);
+        const oldPath = row.image_path?.trim();
+        if (oldPath) {
+          void deleteProductImageByPath(oldPath);
+        }
+        await updateProductDetails(getDb(), row.id, {
+          name: trimmed,
+          category,
+          image: {
+            action: "replace",
+            file: {
+              path: uploaded.path,
+              mimeType: uploaded.mimeType,
+              size: uploaded.size,
+              previewUrl: uploaded.url,
+            },
+          },
+        });
+      } else if (removeImage) {
+        const oldPath = row.image_path?.trim();
+        if (oldPath) {
+          void deleteProductImageByPath(oldPath);
+        }
+        await updateProductDetails(getDb(), row.id, {
+          name: trimmed,
+          category,
+          image: { action: "remove" },
+        });
+      } else {
+        await updateProductDetails(getDb(), row.id, {
+          name: trimmed,
+          category,
+          image: { action: "keep" },
+        });
+      }
       onDismiss();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
@@ -85,7 +123,7 @@ function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void 
         <h2 id="edit-product-title" className="text-lg font-semibold text-foreground">
           Edit product
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">Name, category, and image URL.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Name, category, and product image.</p>
         <form onSubmit={onSubmit} className="mt-4 space-y-4" noValidate>
           <div className="space-y-2">
             <Label htmlFor="edit-product-name">Name</Label>
@@ -110,14 +148,38 @@ function EditProductModal({ row, onDismiss }: { row: Row; onDismiss: () => void 
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="edit-product-image-url">Image URL (optional)</Label>
+            <Label htmlFor="edit-product-image">Replace image (optional)</Label>
             <Input
-              id="edit-product-image-url"
-              autoComplete="off"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              placeholder="https://..."
+              id="edit-product-image"
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+              onChange={(e) => {
+                setImageFile(e.target.files?.[0] ?? null);
+                if (e.target.files?.[0]) setRemoveImage(false);
+              }}
             />
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={removeImage}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setRemoveImage(next);
+                  if (next) setImageFile(null);
+                }}
+              />
+              Remove existing image
+            </label>
+            {row.image_url ? (
+              <Image
+                src={row.image_url}
+                alt={row.name}
+                width={56}
+                height={56}
+                className="h-14 w-14 rounded-md border border-border bg-surface-muted object-contain p-1"
+                unoptimized
+              />
+            ) : null}
           </div>
           {error ? (
             <InlineAlert variant="error" className="text-sm">

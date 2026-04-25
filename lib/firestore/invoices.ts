@@ -922,6 +922,45 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   }
 }
 
+export async function markInvoicePaid(db: Firestore, invoiceId: string): Promise<void> {
+  const trimmedId = invoiceId.trim().toUpperCase();
+  if (!trimmedId) {
+    throw new Error("Invoice ID is required.");
+  }
+
+  const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(invoiceRef);
+    if (!snap.exists()) {
+      throw new Error("Invoice not found.");
+    }
+    const invoice = snap.data() as InvoiceDoc | undefined;
+    if (!invoice) {
+      throw new Error("Invoice not found.");
+    }
+    if (invoice.status === "void") {
+      throw new Error("Cannot mark a void invoice as paid.");
+    }
+    if (invoice.status !== "posted") {
+      throw new Error("Only posted invoices can be marked as paid.");
+    }
+
+    const total = roundMoney2(
+      typeof invoice.posted_total_amount === "number" ? invoice.posted_total_amount : invoice.total_amount,
+    );
+    const paidNow = roundMoney2(typeof invoice.paid_amount === "number" ? invoice.paid_amount : 0);
+    if (paidNow >= total) {
+      return;
+    }
+
+    tx.update(invoiceRef, {
+      paid_amount: total,
+      payment_status: "paid",
+      updated_at: serverTimestamp(),
+    });
+  });
+}
+
 export async function voidInvoice(db: Firestore, invoiceId: string): Promise<void> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {

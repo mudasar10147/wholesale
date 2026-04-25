@@ -40,7 +40,12 @@ export function AddPartnerLoanEntryForm() {
   const [success, setSuccess] = useState(false);
 
   const submitLabel = useMemo(
-    () => (entryType === "loan_in" ? "Add loan entry" : "Add repayment entry"),
+    () => {
+      if (entryType === "loan_in") return "Add loan in entry";
+      if (entryType === "repayment") return "Add repayment entry";
+      if (entryType === "loan_given") return "Add loan given entry";
+      return "Add loan return entry";
+    },
     [entryType],
   );
 
@@ -108,6 +113,8 @@ export function AddPartnerLoanEntryForm() {
           >
             <option value="loan_in">Loan in (partner gives money to company)</option>
             <option value="repayment">Repayment (company pays partner back)</option>
+            <option value="loan_given">Loan given (company gives money to partner)</option>
+            <option value="loan_given_return">Loan given return (partner returns money to company)</option>
           </select>
         </div>
         <div className="space-y-2">

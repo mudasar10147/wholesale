@@ -8,6 +8,10 @@ export type ProductDoc = {
   name: string;
   category?: string;
   image_url?: string;
+  image_path?: string;
+  image_mime?: string;
+  image_size?: number;
+  image_updated_at?: Timestamp;
   cost_price: number;
   sale_price: number;
   stock_quantity: number;
@@ -44,6 +48,7 @@ export type WalkInSessionStatus = "pending" | "approved" | "rejected";
  */
 export type WalkInSessionDoc = {
   status: WalkInSessionStatus;
+  payment_status?: "paid" | "unpaid";
   /** Start of local calendar day for reporting (same day as walk-in business date). */
   sale_date: Timestamp;
   /** Denormalized count of lines (for list UI). */
@@ -53,6 +58,7 @@ export type WalkInSessionDoc = {
   created_by_uid?: string;
   approved_at?: Timestamp;
   approved_by_uid?: string;
+  paid_at?: Timestamp;
   rejection_note?: string;
 };
 
@@ -75,7 +81,7 @@ export type ExpenseDoc = {
   date: Timestamp;
 };
 
-export type PartnerLoanEntryType = "loan_in" | "repayment";
+export type PartnerLoanEntryType = "loan_in" | "repayment" | "loan_given" | "loan_given_return";
 
 /**
  * Document shape for `partner_loans/{loanId}`.
@@ -95,6 +101,8 @@ export type PartnerLoanDoc = {
  */
 export type CashSettingsDoc = {
   opening_balance: number;
+  actual_cash_balance?: number;
+  actual_cash_updated_at?: Timestamp;
   updated_at: Timestamp;
 };
 

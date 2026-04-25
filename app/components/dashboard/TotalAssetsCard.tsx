@@ -53,7 +53,7 @@ export function TotalAssetsCard({
         <CardTitle>Total assets</CardTitle>
         <CardDescription>
           Cash on hand plus inventory at cost (current product cost × units on hand). Other balance
-          sheet items are not included.
+          sheet items are not included. This is not the same as liquid cash.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

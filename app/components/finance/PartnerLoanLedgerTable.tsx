@@ -53,7 +53,11 @@ export function PartnerLoanLedgerTable() {
     const m = new Map<string, number>();
     return rows.map((row) => {
       const prev = m.get(row.partner_name) ?? 0;
-      const next = prev + (row.entry_type === "loan_in" ? row.amount : -row.amount);
+      const next =
+        prev +
+        (row.entry_type === "loan_in" || row.entry_type === "loan_given_return"
+          ? row.amount
+          : -row.amount);
       m.set(row.partner_name, next);
       return { id: row.id, pending: next };
     });
@@ -93,19 +97,31 @@ export function PartnerLoanLedgerTable() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-4 text-sm">
         <span className="text-muted-foreground">
-          Total borrowed:{" "}
+          Borrowed in:{" "}
           <strong className="tabular-nums font-semibold text-foreground">
-            {formatMoney(summary.totalLoanIn)}
+            {formatMoney(summary.borrowedIn)}
           </strong>
         </span>
         <span className="text-muted-foreground">
-          Total repaid:{" "}
+          Borrowed repaid:{" "}
           <strong className="tabular-nums font-semibold text-foreground">
-            {formatMoney(summary.totalRepaid)}
+            {formatMoney(summary.borrowedRepaidOut)}
           </strong>
         </span>
         <span className="text-muted-foreground">
-          Pending loan:{" "}
+          Loan given out:{" "}
+          <strong className="tabular-nums font-semibold text-foreground">
+            {formatMoney(summary.givenOut)}
+          </strong>
+        </span>
+        <span className="text-muted-foreground">
+          Loan given returned:{" "}
+          <strong className="tabular-nums font-semibold text-foreground">
+            {formatMoney(summary.givenReturnedIn)}
+          </strong>
+        </span>
+        <span className="text-muted-foreground">
+          Net loan impact:{" "}
           <strong className="tabular-nums font-semibold text-foreground">
             {formatMoney(summary.pendingTotal)}
           </strong>
@@ -133,9 +149,19 @@ export function PartnerLoanLedgerTable() {
           </thead>
           <tbody>
             {rows.map((row, i) => {
-              const isLoanIn = row.entry_type === "loan_in";
-              const signed = isLoanIn ? row.amount : -row.amount;
+              const signed =
+                row.entry_type === "loan_in" || row.entry_type === "loan_given_return"
+                  ? row.amount
+                  : -row.amount;
               const pending = runningById.get(row.id) ?? 0;
+              const typeLabel =
+                row.entry_type === "loan_in"
+                  ? "Loan in"
+                  : row.entry_type === "repayment"
+                    ? "Repayment"
+                    : row.entry_type === "loan_given"
+                      ? "Loan given"
+                      : "Loan given return";
               return (
                 <tr
                   key={row.id}
@@ -147,7 +173,7 @@ export function PartnerLoanLedgerTable() {
                   <td className="px-4 py-3 text-muted-foreground">{formatDate(row.date)}</td>
                   <td className="px-4 py-3 font-medium text-foreground">{row.partner_name}</td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {isLoanIn ? "Loan in" : "Repayment"}
+                    {typeLabel}
                   </td>
                   <td
                     className={cn(

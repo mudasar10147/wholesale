@@ -30,6 +30,7 @@ import { CashInHandCard } from "@/app/components/dashboard/CashInHandCard";
 import { CashInHandStatCard } from "@/app/components/dashboard/CashInHandStatCard";
 import { TotalAssetsCard } from "@/app/components/dashboard/TotalAssetsCard";
 import { DashboardSecondaryStatRow } from "@/app/components/dashboard/DashboardSecondaryStatRow";
+import { ExpectedCashCards } from "@/app/components/dashboard/ExpectedCashCards";
 import { Input } from "@/app/components/ui/Input";
 
 type KpiPreset = "today" | "day" | "month" | "year" | "custom";
@@ -296,6 +297,12 @@ export function DashboardOverview() {
         loanAllTime={loanAllTime}
       />
       </div>
+
+      <ExpectedCashCards
+        snapshot={cashSnapshot}
+        loading={cashLoading}
+        onSaved={() => void load()}
+      />
 
       <CashInHandCard
         snapshot={cashSnapshot}

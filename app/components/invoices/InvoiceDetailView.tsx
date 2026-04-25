@@ -9,7 +9,7 @@ import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { deleteDraftInvoice, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
+import { deleteDraftInvoice, markInvoicePaid, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
 import { downloadInvoicePdf } from "@/lib/invoices/invoicePdf";
 import { buildInvoicePlainText, downloadTextFile } from "@/lib/invoices/invoiceText";
 import { normalizeOrderId } from "@/lib/validation/contracts";
@@ -295,6 +295,11 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
   }
 
   const isDraft = invoice.status === "draft";
+  const isPosted = invoice.status === "posted";
+  const invoiceTotal = invoice.posted_total_amount ?? invoice.total_amount ?? 0;
+  const paidAmount = Math.min(Math.max(0, invoice.paid_amount ?? 0), Math.max(0, invoiceTotal));
+  const unpaidAmount = Math.max(0, invoiceTotal - paidAmount);
+  const isFullyPaid = invoice.payment_status === "paid" || unpaidAmount <= 0;
   const initialLinesForEdit = items.map(({ data }) => ({
     product_id: data.product_id,
     quantity: data.quantity,
@@ -372,7 +377,20 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               {working === "post" ? "Posting…" : "Post invoice"}
             </Button>
           ) : null}
-          {(isDraft || invoice.status === "posted") && isAdmin ? (
+          {isPosted && isAdmin ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="px-3 py-1.5 text-xs"
+              disabled={working !== null || editing || isFullyPaid}
+              onClick={() =>
+                void runAction("mark-paid", () => markInvoicePaid(getDb(), invoice.id))
+              }
+            >
+              {working === "mark-paid" ? "Saving…" : isFullyPaid ? "Paid" : "Mark as paid"}
+            </Button>
+          ) : null}
+          {(isDraft || isPosted) && isAdmin ? (
             <Button
               type="button"
               variant="outline"
@@ -456,6 +474,14 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             <span className="text-sm text-muted-foreground">
               Customer: <strong className="text-foreground">{customerDetails.name || invoice.customer_id}</strong>
             </span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-xs font-medium",
+                isFullyPaid ? "bg-success-muted text-success" : "bg-surface-hover text-foreground",
+              )}
+            >
+              {isFullyPaid ? "paid" : "unpaid"}
+            </span>
           </div>
           {invoice.notes ? (
             <p className="text-sm text-muted-foreground">
@@ -504,6 +530,14 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             <div>
               <dt className="text-muted-foreground">Invoice discount</dt>
               <dd className="font-medium text-foreground">{formatMoney(invoice.discount_amount)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Paid amount</dt>
+              <dd className="font-medium text-success">{formatMoney(paidAmount)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Unpaid amount</dt>
+              <dd className="font-medium text-destructive">{formatMoney(unpaidAmount)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Total</dt>

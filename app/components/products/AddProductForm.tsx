@@ -5,11 +5,13 @@ import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { uploadProductImage } from "@/lib/upload/productImages";
 import {
   parseNonNegativeDecimal,
   parseNonNegativeIntStrict,
 } from "@/lib/validation/numbers";
 import { Button } from "@/app/components/ui/Button";
+import { CategorySuggestInput } from "@/app/components/products/CategorySuggestInput";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
@@ -19,7 +21,7 @@ const FORM_ALERT_ID = "add-product-form-alert";
 export function AddProductForm() {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [costPrice, setCostPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
@@ -70,15 +72,19 @@ export function AddProductForm() {
       if (cat) {
         payload.category = cat;
       }
-      const img = imageUrl.trim();
-      if (img) {
-        payload.image_url = img;
+      if (imageFile) {
+        const uploaded = await uploadProductImage(imageFile);
+        payload.image_url = uploaded.url;
+        payload.image_path = uploaded.path;
+        payload.image_mime = uploaded.mimeType;
+        payload.image_size = uploaded.size;
+        payload.image_updated_at = serverTimestamp();
       }
 
       await addDoc(collection(getDb(), COLLECTIONS.products), payload);
       setName("");
       setCategory("");
-      setImageUrl("");
+      setImageFile(null);
       setCostPrice("");
       setSalePrice("");
       setStockQuantity("");
@@ -110,24 +116,22 @@ export function AddProductForm() {
         </div>
         <div className="space-y-2 sm:col-span-2">
           <Label htmlFor="product-category">Category (optional)</Label>
-          <Input
+          <CategorySuggestInput
             id="product-category"
             name="category"
-            autoComplete="off"
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="e.g. Grains"
+            onChange={setCategory}
+            placeholder="Type or pick from existing categories"
           />
         </div>
         <div className="space-y-2 sm:col-span-2">
-          <Label htmlFor="product-image-url">Image URL (optional)</Label>
+          <Label htmlFor="product-image">Product image (optional)</Label>
           <Input
-            id="product-image-url"
-            name="image_url"
-            autoComplete="off"
-            value={imageUrl}
-            onChange={(e) => setImageUrl(e.target.value)}
-            placeholder="https://..."
+            id="product-image"
+            name="image_file"
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+            onChange={(e) => setImageFile(e.target.files?.[0] ?? null)}
           />
         </div>
         <div className="space-y-2">

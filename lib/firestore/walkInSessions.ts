@@ -214,8 +214,37 @@ export async function approveWalkInSession(db: Firestore, sessionId: string): Pr
 
     transaction.update(sessionRef, {
       status: "approved",
+      payment_status: "paid",
       approved_at: serverTimestamp(),
       approved_by_uid: uid,
+      paid_at: serverTimestamp(),
+      updated_at: serverTimestamp(),
+    });
+  });
+}
+
+export async function markApprovedWalkInSessionPaid(db: Firestore, sessionId: string): Promise<void> {
+  const auth = getAuthClient();
+  if (!auth.currentUser?.uid) {
+    throw new Error("You must be signed in to set payment.");
+  }
+
+  const sessionRef = doc(db, COLLECTIONS.walkInSessions, sessionId);
+  await runTransaction(db, async (transaction) => {
+    const sessSnap = await transaction.get(sessionRef);
+    if (!sessSnap.exists()) {
+      throw new Error("Session not found.");
+    }
+    const sess = sessSnap.data() as WalkInSessionDoc;
+    if (sess.status !== "approved") {
+      throw new Error("Only approved sessions can be marked paid.");
+    }
+    if (sess.payment_status === "paid") {
+      return;
+    }
+    transaction.update(sessionRef, {
+      payment_status: "paid",
+      paid_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     });
   });

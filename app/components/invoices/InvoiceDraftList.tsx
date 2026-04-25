@@ -7,7 +7,7 @@ import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { deleteDraftInvoice, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
+import { deleteDraftInvoice, markInvoicePaid, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
 import type { InvoiceDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
@@ -36,7 +36,7 @@ export function InvoiceDraftList() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [workingId, setWorkingId] = useState<string | null>(null);
-  const [workingAction, setWorkingAction] = useState<"post" | "void" | "delete" | null>(null);
+  const [workingAction, setWorkingAction] = useState<"post" | "void" | "delete" | "mark-paid" | null>(null);
 
   useEffect(() => {
     const db = getDb();
@@ -84,6 +84,21 @@ export function InvoiceDraftList() {
       await voidInvoice(getDb(), row.id);
     } catch (err) {
       logFirestoreError("InvoiceDraftList handleVoid", err);
+      setActionError(getFirestoreUserMessage(err));
+    } finally {
+      setWorkingId(null);
+      setWorkingAction(null);
+    }
+  }
+
+  async function handleMarkPaid(row: Row) {
+    setActionError(null);
+    setWorkingId(row.id);
+    setWorkingAction("mark-paid");
+    try {
+      await markInvoicePaid(getDb(), row.id);
+    } catch (err) {
+      logFirestoreError("InvoiceDraftList handleMarkPaid", err);
       setActionError(getFirestoreUserMessage(err));
     } finally {
       setWorkingId(null);
@@ -194,6 +209,40 @@ export function InvoiceDraftList() {
                     >
                       View
                     </Link>
+                    {row.status === "posted" && isAdmin ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void handleMarkPaid(row)}
+                        disabled={
+                          workingId !== null ||
+                          row.payment_status === "paid" ||
+                          Math.max(
+                            0,
+                            (row.posted_total_amount ?? row.total_amount ?? 0) -
+                              Math.min(
+                                Math.max(0, row.paid_amount ?? 0),
+                                Math.max(0, row.posted_total_amount ?? row.total_amount ?? 0),
+                              ),
+                          ) <= 0
+                        }
+                        className="px-3 py-1.5 text-xs"
+                      >
+                        {workingId === row.id && workingAction === "mark-paid"
+                          ? "Saving…"
+                          : row.payment_status === "paid" ||
+                              Math.max(
+                                0,
+                                (row.posted_total_amount ?? row.total_amount ?? 0) -
+                                  Math.min(
+                                    Math.max(0, row.paid_amount ?? 0),
+                                    Math.max(0, row.posted_total_amount ?? row.total_amount ?? 0),
+                                  ),
+                              ) <= 0
+                            ? "Paid"
+                            : "Mark paid"}
+                      </Button>
+                    ) : null}
                     {row.status === "draft" ? (
                       <>
                         {isAdmin ? (

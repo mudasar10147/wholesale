@@ -11,6 +11,7 @@ import {
   deleteApprovedWalkInSession,
   deletePendingWalkInSession,
   fetchWalkInLines,
+  markApprovedWalkInSessionPaid,
   rejectWalkInSession,
   replaceWalkInSessionContent,
   startOfLocalDay,
@@ -66,6 +67,10 @@ function formatSaleDate(ts: Timestamp | undefined): string {
   } catch {
     return "—";
   }
+}
+
+function isWalkInPaid(row: WalkInSessionDoc): boolean {
+  return row.payment_status === "paid";
 }
 
 export function WalkInSalesPageContent() {
@@ -355,6 +360,19 @@ export function WalkInSalesPageContent() {
     }
   };
 
+  const onSetApprovedPaid = async (sessionId: string) => {
+    setError(null);
+    setBusyId(sessionId);
+    try {
+      await markApprovedWalkInSessionPaid(getDb(), sessionId);
+      setSuccess("Approved sale marked as paid.");
+    } catch (err) {
+      setError(getFirestoreUserMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const addLine = () => setLines((prev) => [...prev, emptyLine()]);
   const removeLine = (idx: number) =>
     setLines((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== idx)));
@@ -534,6 +552,7 @@ export function WalkInSalesPageContent() {
                   <th className="px-4 py-2.5 font-semibold">Sale date</th>
                   <th className="px-4 py-2.5 font-semibold">Items</th>
                   <th className="px-4 py-2.5 font-semibold">Lines</th>
+                  <th className="px-4 py-2.5 font-semibold">Payment</th>
                   <th className="px-4 py-2.5 font-semibold">Session</th>
                   <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
                 </tr>
@@ -628,19 +647,41 @@ export function WalkInSalesPageContent() {
                         : "Loading…"}
                     </td>
                     <td className="px-4 py-3 tabular-nums">{row.data.line_count}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={
+                          isWalkInPaid(row.data)
+                            ? "rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success"
+                            : "rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium text-foreground"
+                        }
+                      >
+                        {isWalkInPaid(row.data) ? "paid" : "unpaid"}
+                      </span>
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.id}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap justify-end gap-2">
                         {isAdmin ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="px-3 py-1.5 text-xs text-destructive"
-                            disabled={busyId !== null}
-                            onClick={() => void onDeleteApproved(row.id)}
-                          >
-                            {busyId === row.id ? "…" : "Delete and restock"}
-                          </Button>
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="px-3 py-1.5 text-xs"
+                              disabled={busyId !== null || isWalkInPaid(row.data)}
+                              onClick={() => void onSetApprovedPaid(row.id)}
+                            >
+                              {busyId === row.id && !isWalkInPaid(row.data) ? "…" : isWalkInPaid(row.data) ? "Paid" : "Set paid"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="px-3 py-1.5 text-xs text-destructive"
+                              disabled={busyId !== null}
+                              onClick={() => void onDeleteApproved(row.id)}
+                            >
+                              {busyId === row.id ? "…" : "Delete and restock"}
+                            </Button>
+                          </>
                         ) : (
                           <span className="text-xs text-muted-foreground">No actions</span>
                         )}
