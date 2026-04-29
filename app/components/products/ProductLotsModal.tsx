@@ -5,6 +5,7 @@ import { collection, onSnapshot, query, type Timestamp } from "firebase/firestor
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import {
+  convertOpeningBalanceLotToStockIn,
   createAdjustmentLot,
   deleteLotAndSyncProduct,
   syncProductStockFromLots,
@@ -42,6 +43,7 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
   const [cost, setCost] = useState(() => String(lot.unit_cost));
   const [pending, setPending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
+  const [convertPending, setConvertPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,7 +102,24 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
     }
   }
 
-  const busy = pending || deletePending;
+  async function handleConvertToStockIn() {
+    setError(null);
+    const ok = window.confirm(
+      "Convert this lot source from opening_balance to stock_in? " +
+        "It will start counting in stock purchases cash-outflow.",
+    );
+    if (!ok) return;
+    setConvertPending(true);
+    try {
+      await convertOpeningBalanceLotToStockIn(getDb(), productId, lot.id);
+    } catch (e) {
+      setError(getFirestoreUserMessage(e));
+    } finally {
+      setConvertPending(false);
+    }
+  }
+
+  const busy = pending || deletePending || convertPending;
 
   return (
     <tr className="border-b border-border align-top">
@@ -141,6 +160,17 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
           >
             {deletePending ? "…" : "Delete lot"}
           </Button>
+          {lot.source === "opening_balance" ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 px-2 text-xs"
+              disabled={busy}
+              onClick={handleConvertToStockIn}
+            >
+              {convertPending ? "…" : "Count as stock purchase"}
+            </Button>
+          ) : null}
           {error ? (
             <span className="text-[11px] text-destructive" role="alert">
               {error}
@@ -267,8 +297,10 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
           FIFO sales and stock out consume oldest lots first. You can edit unit cost and quantity
-          remaining per lot. Receipt size (<code className="text-xs">qty_in</code>), source, and
-          received date cannot be changed (Firestore rules).{" "}
+          remaining per lot. Receipt size (<code className="text-xs">qty_in</code>) and received
+          date cannot be changed (Firestore rules). You can convert{" "}
+          <code className="text-xs">opening_balance</code> to{" "}
+          <code className="text-xs">stock_in</code> using the row action.{" "}
           <span className="text-destructive">
             Delete lot is temporary: use only for bad entries; product stock is re-synced from
             remaining lots.

@@ -24,6 +24,48 @@ Uses Firebase Auth [custom claims](https://firebase.google.com/docs/auth/admin/c
 
 The Next.js app uses **Email/Password** sign-in on [`/login`](../app/login/page.tsx); the dashboard is behind `RequireAdmin`, which allows **admin or clerk** (`hasAppAccess`).
 
+## One-time inventory lot backfill (admin script)
+
+Use this when existing products have `stock_quantity` but missing lots (`sum(qty_remaining)` is lower).
+
+- Script: [`scripts/backfill-opening-lots.cjs`](../scripts/backfill-opening-lots.cjs)
+- Behavior:
+  - Finds products where `stock_quantity > sum(lot.qty_remaining)`.
+  - Creates one `stock_lots` row per product with:
+    - `source: "opening_balance"`
+    - `qty_in = gap`
+    - `qty_remaining = gap`
+    - `unit_cost = product.cost_price`
+    - `reference_id = backfill tag`
+  - Does **not** change `products.stock_quantity`.
+  - Skips anomalies where `sum(lots) > stock_quantity` and logs them for manual review.
+
+### Commands
+
+1. **Dry run (default, no writes):**
+   - `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/serviceAccount.json node scripts/backfill-opening-lots.cjs`
+2. **Apply writes:**
+   - `GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/serviceAccount.json node scripts/backfill-opening-lots.cjs --apply`
+3. **Optional flags:**
+   - `--project <projectId>`
+   - `--tag <referenceTag>`
+   - `--limit <N>`
+
+### Safety notes
+
+- Run dry-run first and review candidate/anomaly output before `--apply`.
+- Re-running with the same `--tag` is idempotent (script skips products already backfilled with that tag).
+- Because source is `opening_balance`, this backfill does **not** inflate stock purchase cash-outflow (`source: stock_in` only).
+
+### Rollback guidance
+
+- If you need to revert this run, delete only lots with:
+  - `source == "opening_balance"` and
+  - `reference_id == <backfill tag used>`
+- After deletion, verify per affected product:
+  - Lots modal `Sum of lots`
+  - Product `stock_quantity` (unchanged by this script)
+
 ## If you see “permission denied” on localhost
 
 1. **Publish the full rules**  

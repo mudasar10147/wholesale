@@ -288,3 +288,37 @@ export async function deleteLotAndSyncProduct(
     });
   });
 }
+
+/**
+ * Convert a legacy opening-balance lot into stock_in so it is counted in stock purchase cash outflow.
+ * This does not change quantities or unit cost.
+ */
+export async function convertOpeningBalanceLotToStockIn(
+  db: Firestore,
+  productId: string,
+  lotId: string,
+): Promise<void> {
+  const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
+  if (!sortedLotIds.includes(lotId)) {
+    throw new Error("Lot not found for this product.");
+  }
+
+  const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
+  await runTransaction(db, async (tx) => {
+    const lotSnap = await tx.get(lotRef);
+    if (!lotSnap.exists()) {
+      throw new Error("Lot not found.");
+    }
+    const lot = lotSnap.data() as StockLotDoc;
+    if (lot.product_id !== productId) {
+      throw new Error("Lot does not belong to this product.");
+    }
+    if (lot.source !== "opening_balance") {
+      throw new Error("Only opening_balance lots can be converted to stock_in.");
+    }
+    tx.update(lotRef, {
+      source: "stock_in",
+      updated_at: serverTimestamp(),
+    });
+  });
+}

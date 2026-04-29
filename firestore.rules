@@ -136,6 +136,10 @@ service cloud.firestore {
       && data.created_at is timestamp
       && data.updated_at is timestamp;
     }
+    function stockLotSourceTransitionAllowed(res, req) {
+      return req.source == res.source
+        || (res.source == 'opening_balance' && req.source == 'stock_in');
+    }
     // No hasOnlyKeys: avoid false denials on shapes that match validators but add optional fields.
     function validLotConsumptionBase(data) {
       return data.invoice_id is string
@@ -380,7 +384,7 @@ service cloud.firestore {
       allow update: if isAdmin() && validStockLotBase(request.resource.data)
         && request.resource.data.product_id == resource.data.product_id
         && request.resource.data.qty_in == resource.data.qty_in
-        && request.resource.data.source == resource.data.source
+        && stockLotSourceTransitionAllowed(resource.data, request.resource.data)
         && request.resource.data.received_at == resource.data.received_at
         && request.resource.data.created_at == resource.data.created_at;
       // Temporary: allow admin to remove mistaken lots; prefer editing qty/cost when possible.

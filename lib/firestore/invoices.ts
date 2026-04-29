@@ -1054,6 +1054,8 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
       restoreByLot.set(lotId, (restoreByLot.get(lotId) ?? 0) + qty);
     }
 
+    // Firestore transactions require all reads before any writes.
+    const lotNextQtyById = new Map<string, number>();
     for (const [lotId, qtyRestore] of restoreByLot) {
       const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
       const lotSnap = await tx.get(lotRef);
@@ -1067,8 +1069,24 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
       if (next > lotIn) {
         throw new Error("Invalid reversal: lot quantity would exceed original intake.");
       }
-      tx.update(lotRef, {
-        qty_remaining: next,
+      lotNextQtyById.set(lotId, next);
+    }
+
+    const productNextStockById = new Map<string, number>();
+    for (const [productId, qtyRestore] of restoreByProduct) {
+      const productRef = doc(db, COLLECTIONS.products, productId);
+      const productSnap = await tx.get(productRef);
+      if (!productSnap.exists()) {
+        throw new Error("A product in this invoice no longer exists.");
+      }
+      const product = productSnap.data() as ProductDoc | undefined;
+      const currentStock = typeof product?.stock_quantity === "number" ? product.stock_quantity : 0;
+      productNextStockById.set(productId, currentStock + qtyRestore);
+    }
+
+    for (const [lotId, nextQty] of lotNextQtyById) {
+      tx.update(doc(db, COLLECTIONS.stockLots, lotId), {
+        qty_remaining: nextQty,
         updated_at: serverTimestamp(),
       });
     }
@@ -1079,16 +1097,9 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
       });
     }
 
-    for (const [productId, qtyRestore] of restoreByProduct) {
-      const productRef = doc(db, COLLECTIONS.products, productId);
-      const productSnap = await tx.get(productRef);
-      if (!productSnap.exists()) {
-        throw new Error("A product in this invoice no longer exists.");
-      }
-      const product = productSnap.data() as ProductDoc | undefined;
-      const currentStock = typeof product?.stock_quantity === "number" ? product.stock_quantity : 0;
-      tx.update(productRef, {
-        stock_quantity: currentStock + qtyRestore,
+    for (const [productId, nextStock] of productNextStockById) {
+      tx.update(doc(db, COLLECTIONS.products, productId), {
+        stock_quantity: nextStock,
       });
     }
 
