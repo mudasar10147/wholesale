@@ -1,8 +1,7 @@
 import { collection, getDocs, type Firestore } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchCashSettings, getActualCashBalance, getOpeningBalance } from "@/lib/firestore/cashSettings";
-import { fetchAllPartnerLoans } from "@/lib/firestore/partnerLoans";
-import { summarizePartnerLoans } from "@/lib/finance/partnerLoans";
+import { fetchAllCashEntries } from "@/lib/firestore/cashEntries";
 import type { ExpenseDoc, InvoiceDoc, SaleDoc, StockLotDoc } from "@/lib/types/firestore";
 
 function roundMoney2(n: number): number {
@@ -16,17 +15,14 @@ export type CashInHandBreakdown = {
   /** Sum of `paid_amount` on posted, non-void invoices. */
   cashInvoicePayments: number;
   totalExpenses: number;
-  partnerLoanIn: number;
-  partnerRepayments: number;
-  partnerLoanGiven: number;
-  partnerLoanGivenReturned: number;
+  manualCashAdded: number;
+  manualCashRemoved: number;
   /** Cash paid for inventory receipts (`stock_lots` with `source: stock_in`). */
   stockPurchasesCash: number;
 };
 
 export type CashInHandSnapshot = CashInHandBreakdown & {
   operationalCash: number;
-  loanCashImpact: number;
   expectedCashNow: number;
   actualCashBalance: number | null;
   totalCashInHand: number;
@@ -34,16 +30,16 @@ export type CashInHandSnapshot = CashInHandBreakdown & {
 
 /**
  * Estimated cash on hand: opening balance + cash-style inflows − outflows.
- * Invoice revenue uses collections (`paid_amount`), not posted line totals. Partner borrow/repay included.
+ * Invoice revenue uses collections (`paid_amount`), not posted line totals.
  */
 export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandSnapshot> {
-  const [settings, salesSnap, expensesSnap, invoicesSnap, lotsSnap, loanRows] = await Promise.all([
+  const [settings, salesSnap, expensesSnap, invoicesSnap, lotsSnap, cashEntries] = await Promise.all([
     fetchCashSettings(db),
     getDocs(collection(db, COLLECTIONS.sales)),
     getDocs(collection(db, COLLECTIONS.expenses)),
     getDocs(collection(db, COLLECTIONS.invoices)),
     getDocs(collection(db, COLLECTIONS.stockLots)),
-    fetchAllPartnerLoans(db),
+    fetchAllCashEntries(db),
   ]);
 
   let cashWalkInSales = 0;
@@ -93,46 +89,36 @@ export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandS
     }
   });
 
-  const loanSummary = summarizePartnerLoans(loanRows);
+  let manualCashAdded = 0;
+  let manualCashRemoved = 0;
+  for (const entry of cashEntries) {
+    const amount = typeof entry.amount === "number" ? entry.amount : 0;
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (entry.entry_type === "add") manualCashAdded += amount;
+    if (entry.entry_type === "remove") manualCashRemoved += amount;
+  }
+
   const openingBalance = getOpeningBalance(settings);
   const actualCashBalance = getActualCashBalance(settings);
 
   const operationalCash = roundMoney2(
-    openingBalance +
-      cashWalkInSales +
-      cashInvoicePayments -
-      totalExpenses -
-      stockPurchasesCash -
-      loanSummary.givenOut +
-      loanSummary.givenReturnedIn,
+    cashWalkInSales + cashInvoicePayments - totalExpenses - stockPurchasesCash,
   );
-  const loanCashImpact = roundMoney2(loanSummary.borrowedIn - loanSummary.borrowedRepaidOut);
-  const expectedCashNow = roundMoney2(operationalCash + loanCashImpact);
+  const expectedCashNow = roundMoney2(
+    openingBalance + manualCashAdded - manualCashRemoved + operationalCash,
+  );
 
-  const totalCashInHand = roundMoney2(
-    openingBalance +
-      cashWalkInSales +
-      cashInvoicePayments -
-      totalExpenses +
-      loanSummary.borrowedIn -
-      loanSummary.borrowedRepaidOut -
-      loanSummary.givenOut +
-      loanSummary.givenReturnedIn -
-      stockPurchasesCash,
-  );
+  const totalCashInHand = expectedCashNow;
 
   return {
     openingBalance,
     cashWalkInSales: roundMoney2(cashWalkInSales),
     cashInvoicePayments: roundMoney2(cashInvoicePayments),
     totalExpenses: roundMoney2(totalExpenses),
-    partnerLoanIn: roundMoney2(loanSummary.borrowedIn),
-    partnerRepayments: roundMoney2(loanSummary.borrowedRepaidOut),
-    partnerLoanGiven: roundMoney2(loanSummary.givenOut),
-    partnerLoanGivenReturned: roundMoney2(loanSummary.givenReturnedIn),
+    manualCashAdded: roundMoney2(manualCashAdded),
+    manualCashRemoved: roundMoney2(manualCashRemoved),
     stockPurchasesCash: roundMoney2(stockPurchasesCash),
     operationalCash,
-    loanCashImpact,
     expectedCashNow,
     actualCashBalance,
     totalCashInHand,

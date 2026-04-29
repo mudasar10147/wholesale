@@ -69,8 +69,8 @@ export function ExpectedCashCards({ snapshot, loading, onSaved }: ExpectedCashCa
 
   if (loading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label="Expected and actual cash cards">
-        {[1, 2, 3, 4, 5].map((k) => (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Expected and actual cash cards">
+        {[1, 2, 3, 4].map((k) => (
           <StatCard key={k} label="…" value="Loading…" />
         ))}
       </div>
@@ -79,9 +79,8 @@ export function ExpectedCashCards({ snapshot, loading, onSaved }: ExpectedCashCa
 
   if (!snapshot) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label="Expected and actual cash cards">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Expected and actual cash cards">
         <StatCard label="Operational cash" value="—" hint="No cash snapshot available." />
-        <StatCard label="Loan cash impact" value="—" hint="No cash snapshot available." />
         <StatCard label="Expected cash now" value="—" hint="No cash snapshot available." />
         <StatCard label="Actual cash today" value="—" hint="No cash snapshot available." />
         <StatCard label="Difference (actual - expected)" value="—" hint="No cash snapshot available." />
@@ -96,27 +95,23 @@ export function ExpectedCashCards({ snapshot, loading, onSaved }: ExpectedCashCa
           Expected vs actual cash
         </h2>
         <p className="text-sm text-muted-foreground">
-          Expected cash is all-time liquid cash estimate from recorded flows. Compare it with your real bank + cash amount.
+          Expected cash uses opening balance, manual cash entries, and all recorded business flows.
+          Compare it with your real bank + cash amount.
         </p>
       </div>
 
       {error ? <InlineAlert variant="error">{error}</InlineAlert> : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5" aria-label="Expected and actual cash cards">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Expected and actual cash cards">
         <StatCard
           label="Operational cash"
           value={formatMoney(snapshot.operationalCash)}
-          hint="Opening + cash sales + invoice collections - expenses - stock-in cash."
-        />
-        <StatCard
-          label="Loan cash impact"
-          value={formatMoney(snapshot.loanCashImpact)}
-          hint="Money borrowed - partner repayments."
+          hint="Cash sales + invoice collections - expenses - stock-in cash (excluding opening/manual entries)."
         />
         <StatCard
           label="Expected cash now"
           value={formatMoney(snapshot.expectedCashNow)}
-          hint="Operational cash + loan cash impact."
+          hint="Operational cash + opening balance + manual cash added - manual cash removed."
         />
         <div className="rounded-xl border border-border bg-surface p-5 shadow-card">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Actual cash today</p>

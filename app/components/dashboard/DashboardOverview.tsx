@@ -3,11 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import {
-  loadPartnerLoanSummaryAllTime,
-  loadPartnerLoanSummaryForPeriod,
-} from "@/lib/finance/loadPartnerLoansPeriod";
-import type { PartnerLoanSummary } from "@/lib/finance/partnerLoans";
 import { loadStockSummary, type StockSummaryData } from "@/lib/inventory/stockSummary";
 import { loadProfitForPeriod } from "@/lib/profit/loadPeriod";
 import {
@@ -21,13 +16,14 @@ import type { ProfitBreakdown } from "@/lib/profit/metrics";
 import { loadCashInHandSnapshot, type CashInHandSnapshot } from "@/lib/finance/loadCashInHand";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
-import { PartnerLoanSummaryCard } from "@/app/components/dashboard/PartnerLoanSummaryCard";
 import { PeriodKpiRow } from "@/app/components/dashboard/PeriodKpiRow";
 import { SalesDrilldownModal } from "@/app/components/dashboard/SalesDrilldownModal";
 import { ProfitBreakdownCard } from "@/app/components/dashboard/ProfitBreakdownCard";
 import { StockSummary } from "@/app/components/dashboard/StockSummary";
 import { CashInHandCard } from "@/app/components/dashboard/CashInHandCard";
 import { CashInHandStatCard } from "@/app/components/dashboard/CashInHandStatCard";
+import { CashEntryForm } from "@/app/components/dashboard/CashEntryForm";
+import { CashEntryLedgerTable } from "@/app/components/dashboard/CashEntryLedgerTable";
 import { TotalAssetsCard } from "@/app/components/dashboard/TotalAssetsCard";
 import { DashboardSecondaryStatRow } from "@/app/components/dashboard/DashboardSecondaryStatRow";
 import { ExpectedCashCards } from "@/app/components/dashboard/ExpectedCashCards";
@@ -49,8 +45,6 @@ export function DashboardOverview() {
   const [customStartDate, setCustomStartDate] = useState(() => toDateInputValue(initialNow));
   const [customEndDate, setCustomEndDate] = useState(() => toDateInputValue(initialNow));
   const [selected, setSelected] = useState<ProfitBreakdown | null>(null);
-  const [loanAllTime, setLoanAllTime] = useState<PartnerLoanSummary | null>(null);
-  const [loanMonthly, setLoanMonthly] = useState<PartnerLoanSummary | null>(null);
   const [stock, setStock] = useState<StockSummaryData | null>(null);
   const [cashSnapshot, setCashSnapshot] = useState<CashInHandSnapshot | null>(null);
   const [cashLoading, setCashLoading] = useState(true);
@@ -130,29 +124,20 @@ export function DashboardOverview() {
       setError("Select a valid date or date range.");
       setSelected(null);
       setStock(null);
-      setLoanAllTime(null);
-      setLoanMonthly(null);
       setLoading(false);
       return;
     }
 
     try {
-      const month = getCurrentMonthBounds(new Date());
-      const [periodSummary, s, loanAll, loanMonth] = await Promise.all([
+      const [periodSummary, s] = await Promise.all([
         loadProfitForPeriod(db, selectedRange.bounds.start, selectedRange.bounds.end),
         loadStockSummary(db),
-        loadPartnerLoanSummaryAllTime(db),
-        loadPartnerLoanSummaryForPeriod(db, month.start, month.end),
       ]);
       setSelected(periodSummary);
       setStock(s);
-      setLoanAllTime(loanAll);
-      setLoanMonthly(loanMonth);
     } catch (e) {
       setError(getFirestoreUserMessage(e));
       setSelected(null);
-      setLoanAllTime(null);
-      setLoanMonthly(null);
       setStock(null);
     } finally {
       setLoading(false);
@@ -169,8 +154,7 @@ export function DashboardOverview() {
         <p className="max-w-2xl text-sm text-muted-foreground">
           KPIs use sales and expenses in local time. Profit subtracts COGS (cost_price × quantity
           sold). Choose preset, one calendar day, or a custom range to view period totals. Inventory
-          value is
-          current product cost × units on hand. Partner loans are tracked separately from profit.
+          value is current product cost × units on hand.
           Cash in hand is an all-time estimate from recorded flows; set opening cash if you started
           mid-stream.
         </p>
@@ -293,8 +277,7 @@ export function DashboardOverview() {
         cashSnapshot={cashSnapshot}
         cashLoading={cashLoading}
         stock={stock}
-        stockAndLoansLoading={loading}
-        loanAllTime={loanAllTime}
+        stockLoading={loading}
       />
       </div>
 
@@ -309,6 +292,20 @@ export function DashboardOverview() {
         loading={cashLoading}
         onSaved={() => void load()}
       />
+
+      <section aria-labelledby="cash-entry-ledger-heading" className="space-y-4">
+        <div>
+          <h2 id="cash-entry-ledger-heading" className="text-base font-semibold text-foreground">
+            Cash entry ledger
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            Add or remove manual cash entries (such as owner investment or withdrawals). These
+            entries are included in cash-in-hand calculations.
+          </p>
+        </div>
+        <CashEntryForm onCreated={() => load()} />
+        <CashEntryLedgerTable onChanged={() => load()} />
+      </section>
 
       <TotalAssetsCard
         cashSnapshot={cashSnapshot}
@@ -327,30 +324,6 @@ export function DashboardOverview() {
             breakdown={selected}
             loading={loading}
           />
-          <section aria-labelledby="partner-loan-heading" className="space-y-3">
-            <div>
-              <h2 id="partner-loan-heading" className="text-base font-semibold text-foreground">
-                Partner loans
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                Liability tracking only. Loan entries are excluded from profit.
-              </p>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <PartnerLoanSummaryCard
-                title="Pending loan (all time)"
-                description="Company amount still owed to partners."
-                summary={loanAllTime}
-                loading={loading}
-              />
-              <PartnerLoanSummaryCard
-                title="Partner loan activity this month"
-                description="Borrowed/repaid movements during this calendar month."
-                summary={loanMonthly}
-                loading={loading}
-              />
-            </div>
-          </section>
         </>
       ) : null}
     </div>

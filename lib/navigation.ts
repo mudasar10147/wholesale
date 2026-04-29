@@ -15,7 +15,6 @@ export const navItems: readonly NavItem[] = [
   { href: "/sales", label: "Sales", roles: ["admin", "clerk"] },
   { href: "/walk-in", label: "Walk-in", roles: ["admin", "clerk"] },
   { href: "/expenses", label: "Expenses", roles: ["admin", "clerk"] },
-  { href: "/loans", label: "Partner Loans", roles: ["admin"] },
   { href: "/customers", label: "Customers", roles: ["admin", "clerk"] },
   { href: "/reports/fifo", label: "FIFO Reports", roles: ["admin"] },
 ];

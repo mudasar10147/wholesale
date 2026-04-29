@@ -7,7 +7,7 @@ export const COLLECTIONS = {
   products: "products",
   sales: "sales",
   expenses: "expenses",
-  partnerLoans: "partner_loans",
+  cashEntries: "cash_entries",
   customers: "customers",
   invoices: "invoices",
   invoiceItems: "invoice_items",

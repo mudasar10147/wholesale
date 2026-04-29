@@ -219,6 +219,8 @@ export async function approveWalkInSession(db: Firestore, sessionId: string): Pr
       approved_by_uid: uid,
       paid_at: serverTimestamp(),
       updated_at: serverTimestamp(),
+      // So merged doc has no `rejection_note` key; rules require !('rejection_note' in req) on approve.
+      rejection_note: deleteField(),
     });
   });
 }

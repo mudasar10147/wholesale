@@ -81,15 +81,14 @@ export type ExpenseDoc = {
   date: Timestamp;
 };
 
-export type PartnerLoanEntryType = "loan_in" | "repayment" | "loan_given" | "loan_given_return";
+export type CashEntryType = "add" | "remove";
 
 /**
- * Document shape for `partner_loans/{loanId}`.
- * Tracks money borrowed from partners and repayments back to them.
+ * Document shape for `cash_entries/{entryId}`.
+ * Manual cash inflow/outflow entries for ledger-style adjustments.
  */
-export type PartnerLoanDoc = {
-  partner_name: string;
-  entry_type: PartnerLoanEntryType;
+export type CashEntryDoc = {
+  entry_type: CashEntryType;
   amount: number;
   date: Timestamp;
   note?: string;

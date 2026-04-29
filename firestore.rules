@@ -199,27 +199,21 @@ service cloud.firestore {
       )
       && data.created_at is timestamp;
     }
-    function validPartnerLoanBase(data) {
-      return hasOnlyKeys(
-        data,
-        ['partner_name', 'entry_type', 'amount', 'date', 'note', 'created_at']
-      )
-      && data.partner_name is string
-      && data.partner_name.size() >= 2
-      && data.partner_name.size() <= 120
-      && data.entry_type in ['loan_in', 'repayment', 'loan_given', 'loan_given_return']
-      && data.amount is number
-      && data.amount > 0
-      && data.date is timestamp
-      && data.created_at is timestamp
-      && (!('note' in data) || (data.note is string && data.note.size() <= 500));
-    }
     function validCashSettings(data) {
       return hasOnlyKeys(data, ['opening_balance', 'actual_cash_balance', 'actual_cash_updated_at', 'updated_at'])
       && data.opening_balance is number
       && (!('actual_cash_balance' in data) || data.actual_cash_balance is number)
       && (!('actual_cash_updated_at' in data) || data.actual_cash_updated_at is timestamp)
       && data.updated_at is timestamp;
+    }
+    function validCashEntryBase(data) {
+      return hasOnlyKeys(data, ['entry_type', 'amount', 'date', 'note', 'created_at'])
+      && data.entry_type in ['add', 'remove']
+      && data.amount is number
+      && data.amount > 0
+      && data.date is timestamp
+      && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+      && data.created_at is timestamp;
     }
     // Clerk may only edit invoices while they stay draft (no post / void / payment paths).
     function invoiceDraftToDraftOnly(res, req) {
@@ -267,12 +261,9 @@ service cloud.firestore {
     match /expenses/{docId} {
       allow read, write: if isStaff();
     }
-    match /partner_loans/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validPartnerLoanBase(request.resource.data);
-      allow update: if isAdmin() && validPartnerLoanBase(request.resource.data)
-        && request.resource.data.created_at == resource.data.created_at;
-      allow delete: if false;
+    match /cash_entries/{docId} {
+      allow read, delete: if isAdmin();
+      allow create, update: if isAdmin() && validCashEntryBase(request.resource.data);
     }
     match /settings/{docId} {
       allow read: if isAdmin();
@@ -459,17 +450,20 @@ service cloud.firestore {
         && !('approved_by_uid' in req)
         && !('rejection_note' in req);
     }
+    // serverTimestamp() fields: use == request.time (reliable) instead of "is timestamp" in some clients/transactions.
     function walkInApprove(res, req) {
       return res.status == 'pending'
         && req.status == 'approved'
         && req.payment_status == 'paid'
+        && req.line_count == res.line_count
         && req.created_at == res.created_at
         && req.sale_date == res.sale_date
-        && req.approved_at is timestamp
+        && (!('created_by_uid' in res) || req.created_by_uid == res.created_by_uid)
         && req.approved_by_uid is string
-        && req.paid_at is timestamp
         && !('rejection_note' in req)
-        && req.updated_at is timestamp;
+        && req.approved_at == request.time
+        && req.paid_at == request.time
+        && req.updated_at == request.time;
     }
     function walkInReject(res, req) {
       return res.status == 'pending'
@@ -503,8 +497,8 @@ service cloud.firestore {
         && (!('created_by_uid' in res) || req.created_by_uid == res.created_by_uid)
         && (!('rejection_note' in res) && !('rejection_note' in req))
         && req.payment_status == 'paid'
-        && req.paid_at is timestamp
-        && req.updated_at is timestamp;
+        && req.paid_at == request.time
+        && req.updated_at == request.time;
     }
     match /walk_in_sessions/{sessionId} {
       allow read: if isStaff();

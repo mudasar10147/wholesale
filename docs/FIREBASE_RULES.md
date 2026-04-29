@@ -7,7 +7,7 @@
 Firestore and the app distinguish:
 
 - **Admin:** ID token includes **`admin: true`** (boolean or string `"true"`). Full access.
-- **Clerk:** ID token includes **`role: "clerk"`** (string) and **no** `admin` claim. Limited access: customers, expenses, invoice **drafts** (create/edit/delete drafts), and read products for line items. Clerks **cannot** post or void invoices, edit products, use partner loans, FIFO reports, or the main dashboard KPIs (those reads are admin-only in rules).
+- **Clerk:** ID token includes **`role: "clerk"`** (string) and **no** `admin` claim. Limited access: customers, expenses, invoice **drafts** (create/edit/delete drafts), and read products for line items. Clerks **cannot** post or void invoices, edit products, use FIFO reports, or the main dashboard KPIs (those reads are admin-only in rules).
 
 Uses Firebase Auth [custom claims](https://firebase.google.com/docs/auth/admin/custom-claims).
 

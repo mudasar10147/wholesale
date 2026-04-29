@@ -1,5 +1,4 @@
 import type { CashInHandSnapshot } from "@/lib/finance/loadCashInHand";
-import type { PartnerLoanSummary } from "@/lib/finance/partnerLoans";
 import type { StockSummaryData } from "@/lib/inventory/stockSummary";
 import { StatCard } from "@/app/components/ui/StatCard";
 import { formatMoney } from "@/app/components/dashboard/ProfitBreakdownCard";
@@ -9,8 +8,7 @@ type DashboardSecondaryStatRowProps = {
   cashSnapshot: CashInHandSnapshot | null;
   cashLoading: boolean;
   stock: StockSummaryData | null;
-  stockAndLoansLoading: boolean;
-  loanAllTime: PartnerLoanSummary | null;
+  stockLoading: boolean;
 };
 
 function StatSkeleton({ className }: { className?: string }) {
@@ -31,18 +29,14 @@ export function DashboardSecondaryStatRow({
   cashSnapshot,
   cashLoading,
   stock,
-  stockAndLoansLoading,
-  loanAllTime,
+  stockLoading,
 }: DashboardSecondaryStatRowProps) {
-  const loading = cashLoading || stockAndLoansLoading;
+  const loading = cashLoading || stockLoading;
 
   if (loading) {
     return (
-      <div
-        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-        aria-label="Total assets, inventory, and loan snapshot"
-      >
-        {[1, 2, 3, 4].map((k) => (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Total assets and inventory snapshot">
+        {[1, 2, 3].map((k) => (
           <StatSkeleton key={k} />
         ))}
       </div>
@@ -58,14 +52,8 @@ export function DashboardSecondaryStatRow({
   const units = stock?.totalUnits;
   const hasUnits = typeof units === "number" && Number.isFinite(units);
 
-  const pending = loanAllTime?.pendingTotal;
-  const hasPending = typeof pending === "number" && Number.isFinite(pending);
-
   return (
-    <div
-      className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-      aria-label="Total assets, inventory, and loan snapshot"
-    >
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Total assets and inventory snapshot">
       <StatCard
         label="Total assets"
         value={totalAssets !== null ? formatMoney(totalAssets) : "—"}
@@ -80,11 +68,6 @@ export function DashboardSecondaryStatRow({
         label="Total inventory value"
         value={hasInv ? formatMoney(inventory) : "—"}
         hint="At current product cost × units on hand."
-      />
-      <StatCard
-        label="Pending loan"
-        value={hasPending ? formatMoney(pending) : "—"}
-        hint="Company amount still owed to partners (all time)."
       />
     </div>
   );

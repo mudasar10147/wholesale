@@ -103,10 +103,10 @@ export function CashInHandCard({ snapshot, loading, onSaved }: CashInHandCardPro
         <div>
           <CardTitle>Cash in hand breakdown</CardTitle>
           <CardDescription>
-            Opening cash + walk-in sales + invoice payments collected − expenses − loan repayments + money
-            borrowed − loan given to partners + loan given returned by partners − cash paid for stock
-            receipts (FIFO lots from stock in). Invoice lines posted to sales are counted when customers
-            pay, not at post time. This is your expected liquid cash estimate.
+            Opening cash + manual cash added - manual cash removed + walk-in sales + invoice
+            payments collected - expenses - cash paid for stock receipts (FIFO lots from stock in).
+            Invoice lines posted to sales are counted when customers pay, not at post time. This is
+            your expected liquid cash estimate.
           </CardDescription>
         </div>
         {!editing ? (
@@ -159,19 +159,14 @@ export function CashInHandCard({ snapshot, loading, onSaved }: CashInHandCardPro
 
         <div className="space-y-0 border-t border-border pt-2">
           <MetricRow label="Opening balance" value={formatMoney(snapshot.openingBalance)} />
+          <MetricRow label="Manual cash added" value={formatMoney(snapshot.manualCashAdded)} />
+          <MetricRow label="Manual cash removed" value={formatMoney(-snapshot.manualCashRemoved)} />
           <MetricRow label="Walk-in / non-invoice sales (cash)" value={formatMoney(snapshot.cashWalkInSales)} />
           <MetricRow
             label="Invoice payments collected"
             value={formatMoney(snapshot.cashInvoicePayments)}
           />
           <MetricRow label="Total expenses" value={formatMoney(-snapshot.totalExpenses)} />
-          <MetricRow label="Partner money borrowed" value={formatMoney(snapshot.partnerLoanIn)} />
-          <MetricRow label="Partner loan repayments" value={formatMoney(-snapshot.partnerRepayments)} />
-          <MetricRow label="Loan given to partners" value={formatMoney(-snapshot.partnerLoanGiven)} />
-          <MetricRow
-            label="Loan given returned by partners"
-            value={formatMoney(snapshot.partnerLoanGivenReturned)}
-          />
           <MetricRow label="Stock purchases (stock in)" value={formatMoney(-snapshot.stockPurchasesCash)} />
         </div>
       </CardContent>
