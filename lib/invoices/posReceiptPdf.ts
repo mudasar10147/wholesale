@@ -117,18 +117,34 @@ function trimReceiptPageToContent(doc: import("jspdf").default, contentBottomYMm
   (doc.internal.pageSize as unknown as { setHeight: (mm: number) => void }).setHeight(h);
 }
 
+/** Bottom Y of the last autoTable; `lastAutoTable` is `false` until a table is drawn. */
+function readAutoTableFinalY(
+  doc: import("jspdf").default,
+  tableStartY: number,
+  lineCount: number,
+): number {
+  const raw = (doc as { lastAutoTable?: unknown }).lastAutoTable;
+  if (raw && typeof raw === "object" && "finalY" in raw) {
+    const fy = (raw as { finalY: unknown }).finalY;
+    if (typeof fy === "number" && Number.isFinite(fy) && fy > tableStartY + 2) {
+      return fy;
+    }
+  }
+  return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
+}
+
 async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
-  const [{ default: jsPDF }, autoTableMod] = await Promise.all([
-    import("jspdf"),
-    import("jspdf-autotable"),
-  ]);
-  const autoTable = autoTableMod.default;
+  const { default: jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
 
   const policyParas = getPosPolicyParagraphs();
-  /** Working height only; trimmed to real content before output */
+  /**
+   * One tall working page so the line-items table does not split across pages
+   * (split tables + trim MediaBox would clip product rows). Trimmed after layout.
+   */
   const workingPageHeightMm = Math.min(
-    2000,
-    Math.max(260, 160 + input.lines.length * 7 + policyParas.length * 22),
+    2400,
+    Math.max(700, 280 + input.lines.length * 9 + policyParas.length * 28),
   );
   const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, workingPageHeightMm] });
   const cx = PAGE_W_MM / 2;
@@ -235,9 +251,11 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     return [name, String(l.quantity), moneyCompact(l.unit_price), moneyCompact(l.line_total)];
   });
 
+  const tableStartY = y;
+
   // Sum of cellWidth must fit inside CONTENT_W; padding adds width — keep columns slightly under.
   autoTable(doc, {
-    startY: y,
+    startY: tableStartY,
     head: head,
     body,
     tableWidth: CONTENT_W,
@@ -266,8 +284,8 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     margin: { left: MARGIN, right: MARGIN },
   });
 
-  const lastAuto = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable;
-  let totalsY = (lastAuto?.finalY ?? y) + 8;
+  const tableBottomY = readAutoTableFinalY(doc, tableStartY, input.lines.length);
+  let totalsY = tableBottomY + 8;
 
   doc.setFont("helvetica", "normal");
   totalsY = drawTotalsLine(doc, "Subtotal", money(input.subtotal_amount), totalsY, {
@@ -304,7 +322,8 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     totalsY += parts.length * 3.2 + 2;
   }
 
-  trimReceiptPageToContent(doc, totalsY);
+  const contentBottomY = Math.max(totalsY, tableBottomY + 6);
+  trimReceiptPageToContent(doc, contentBottomY);
 
   return doc.output("blob");
 }
@@ -337,20 +356,20 @@ export async function printPosReceipt(input: PosReceiptInput): Promise<void> {
     iframe.remove();
   };
 
-  let didPrint = false;
-  iframe.onload = () => {
-    if (didPrint) return;
-    const win = iframe.contentWindow;
-    if (!win) {
-      cleanup();
-      return;
-    }
-    didPrint = true;
-    win.focus();
-    // Defer so the PDF viewer has laid out the (trimmed) page once
-    window.requestAnimationFrame(() => {
-      win.print();
-    });
-    window.setTimeout(cleanup, 2_000);
-  };
+  iframe.addEventListener(
+    "load",
+    () => {
+      const win = iframe.contentWindow;
+      if (!win) {
+        cleanup();
+        return;
+      }
+      win.focus();
+      window.requestAnimationFrame(() => {
+        win.print();
+      });
+      window.setTimeout(cleanup, 2_000);
+    },
+    { once: true },
+  );
 }
