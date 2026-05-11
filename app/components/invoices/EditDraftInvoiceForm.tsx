@@ -7,6 +7,10 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { updateDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import {
+  buildPosReceiptInputFromCalc,
+  printPosReceipt,
+} from "@/lib/invoices/posReceiptPdf";
 import type { CustomerDoc, InvoiceItemDoc, ProductDoc } from "@/lib/types/firestore";
 import {
   parseNonNegativeDecimal,
@@ -23,6 +27,7 @@ type CustomerOption = {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
   address?: string;
   is_active: boolean;
   searchText: string;
@@ -54,6 +59,8 @@ function nextItem(seed = ""): ItemInput {
 type Props = {
   invoiceId: string;
   orderId: string;
+  /** Shown on POS receipt as invoice date */
+  invoiceCreatedAtLabel: string;
   initialCustomerId: string;
   initialDiscount: string;
   initialDelivery: string;
@@ -61,11 +68,14 @@ type Props = {
   initialLines: Array<Pick<InvoiceItemDoc, "product_id" | "quantity" | "unit_price" | "line_discount">>;
   onSaved: () => void;
   onCancel: () => void;
+  /** Called after save when POS print succeeds or fails (or skipped) */
+  onReceiptPrintResult?: (result: { ok: true } | { ok: false; message: string }) => void;
 };
 
 export function EditDraftInvoiceForm({
   invoiceId,
   orderId,
+  invoiceCreatedAtLabel,
   initialCustomerId,
   initialDiscount,
   initialDelivery,
@@ -73,6 +83,7 @@ export function EditDraftInvoiceForm({
   initialLines,
   onSaved,
   onCancel,
+  onReceiptPrintResult,
 }: Props) {
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
@@ -109,9 +120,10 @@ export function EditDraftInvoiceForm({
           id: docSnap.id,
           name: d.name,
           phone: d.phone?.trim(),
+          email: d.email?.trim(),
           address: d.address?.trim(),
           is_active: d.is_active,
-          searchText: `${d.name} ${d.phone ?? ""} ${d.address ?? ""}`.toLowerCase(),
+          searchText: `${d.name} ${d.phone ?? ""} ${d.email ?? ""} ${d.address ?? ""}`.toLowerCase(),
         });
       });
       list.sort((a, b) => a.name.localeCompare(b.name));
@@ -272,6 +284,43 @@ export function EditDraftInvoiceForm({
         notes,
         lines: linePayload,
       });
+
+      const calc = calculateInvoiceSummary({
+        lines: linePayload,
+        delivery_charge: delivery.value,
+        discount_amount: invDiscount.value,
+      });
+      const customer = customers.find((c) => c.id === customerId);
+      if (customer) {
+        const productNames = new Map(products.map((p) => [p.id, p.name] as const));
+        try {
+          await printPosReceipt(
+            buildPosReceiptInputFromCalc({
+              order_id: orderId,
+              status: "draft",
+              customer_name: customer.name,
+              customer_phone: customer.phone,
+              customer_address: customer.address,
+              customer_email: customer.email,
+              notes: notes.trim() || undefined,
+              created_at_label: invoiceCreatedAtLabel,
+              calc,
+              productNames,
+            }),
+          );
+          onReceiptPrintResult?.({ ok: true });
+        } catch (printErr) {
+          console.error(printErr);
+          onReceiptPrintResult?.({
+            ok: false,
+            message:
+              printErr instanceof Error ? printErr.message : "POS receipt did not open.",
+          });
+        }
+      } else {
+        onReceiptPrintResult?.({ ok: true });
+      }
+
       onSaved();
     } catch (err) {
       setError(getFirestoreUserMessage(err));

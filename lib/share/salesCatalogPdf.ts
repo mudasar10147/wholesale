@@ -1,30 +1,7 @@
 import type { ProductDoc } from "@/lib/types/firestore";
+import { loadPublicPngAsDataUrl } from "@/lib/pdf/loadPublicImage";
 
 export type SalesCatalogPdfRow = ProductDoc & { id: string };
-
-function loadPublicPngAsDataUrl(src: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Could not get canvas context."));
-          return;
-        }
-        ctx.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL("image/png"));
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    };
-    img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
-    img.src = src;
-  });
-}
 
 function formatMoney(value: number): string {
   return value.toLocaleString(undefined, {

@@ -77,6 +77,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
   const [working, setWorking] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editBanner, setEditBanner] = useState<string | null>(null);
+  const [receiptPrintNotice, setReceiptPrintNotice] = useState<string | null>(null);
   const [pdfWorking, setPdfWorking] = useState(false);
 
   useEffect(() => {
@@ -359,6 +360,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               className="px-3 py-1.5 text-xs"
               onClick={() => {
                 setEditBanner(null);
+                setReceiptPrintNotice(null);
                 setEditing((e) => !e);
               }}
             >
@@ -431,12 +433,16 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
 
       {actionError ? <InlineAlert variant="error">{actionError}</InlineAlert> : null}
       {editBanner ? <InlineAlert variant="success">{editBanner}</InlineAlert> : null}
+      {receiptPrintNotice ? (
+        <InlineAlert variant="info">{receiptPrintNotice}</InlineAlert>
+      ) : null}
 
       {editing && isDraft ? (
         <EditDraftInvoiceForm
           key={`${invoice.updated_at?.toMillis?.() ?? 0}-${items.length}`}
           invoiceId={invoice.id}
           orderId={invoice.order_id}
+          invoiceCreatedAtLabel={formatDate(invoice.created_at)}
           initialCustomerId={invoice.customer_id}
           initialDiscount={String(invoice.discount_amount)}
           initialDelivery={String(invoice.delivery_charge)}
@@ -447,6 +453,13 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             setEditBanner("Draft updated.");
           }}
           onCancel={() => setEditing(false)}
+          onReceiptPrintResult={(result) => {
+            if (result.ok) {
+              setReceiptPrintNotice(null);
+            } else {
+              setReceiptPrintNotice(`POS receipt did not open: ${result.message}`);
+            }
+          }}
         />
       ) : null}
 

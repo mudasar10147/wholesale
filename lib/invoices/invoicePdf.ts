@@ -1,4 +1,5 @@
 import type { InvoiceTextLine } from "@/lib/invoices/invoiceText";
+import { loadPublicPngAsDataUrl } from "@/lib/pdf/loadPublicImage";
 
 export type InvoicePdfInput = {
   order_id: string;
@@ -16,30 +17,6 @@ export type InvoicePdfInput = {
   total_amount: number;
   lines: InvoiceTextLine[];
 };
-
-function loadPublicPngAsDataUrl(src: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("Could not get canvas context."));
-          return;
-        }
-        ctx.drawImage(img, 0, 0);
-        resolve(canvas.toDataURL("image/png"));
-      } catch (e) {
-        reject(e instanceof Error ? e : new Error(String(e)));
-      }
-    };
-    img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
-    img.src = src;
-  });
-}
 
 /**
  * Generates an invoice PDF in the browser and triggers download.

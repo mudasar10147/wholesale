@@ -8,6 +8,10 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { createDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import {
+  buildPosReceiptInputFromCalc,
+  printPosReceipt,
+} from "@/lib/invoices/posReceiptPdf";
 import type { CustomerDoc, ProductDoc } from "@/lib/types/firestore";
 import {
   parseNonNegativeDecimal,
@@ -24,6 +28,7 @@ type CustomerOption = {
   id: string;
   name: string;
   phone?: string;
+  email?: string;
   address?: string;
   is_active: boolean;
   searchText: string;
@@ -92,9 +97,10 @@ export function AddInvoiceForm() {
           id: docSnap.id,
           name: d.name,
           phone: d.phone?.trim(),
+          email: d.email?.trim(),
           address: d.address?.trim(),
           is_active: d.is_active,
-          searchText: `${d.name} ${d.phone ?? ""} ${d.address ?? ""}`.toLowerCase(),
+          searchText: `${d.name} ${d.phone ?? ""} ${d.email ?? ""} ${d.address ?? ""}`.toLowerCase(),
         });
       });
       list.sort((a, b) => a.name.localeCompare(b.name));
@@ -252,6 +258,11 @@ export function AddInvoiceForm() {
 
     setSubmitting(true);
     try {
+      const calc = calculateInvoiceSummary({
+        lines: linePayload,
+        delivery_charge: delivery.value,
+        discount_amount: invDiscount.value,
+      });
       const result = await createDraftInvoice(getDb(), {
         customer_id: customerId,
         order_id: orderId,
@@ -260,6 +271,42 @@ export function AddInvoiceForm() {
         notes,
         lines: linePayload,
       });
+      const customer = customers.find((c) => c.id === customerId);
+      if (customer) {
+        const productNames = new Map(products.map((p) => [p.id, p.name] as const));
+        const createdAtLabel = new Date().toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+        try {
+          await printPosReceipt(
+            buildPosReceiptInputFromCalc({
+              order_id: result.invoiceId,
+              status: "draft",
+              customer_name: customer.name,
+              customer_phone: customer.phone,
+              customer_address: customer.address,
+              customer_email: customer.email,
+              notes: notes.trim() || undefined,
+              created_at_label: createdAtLabel,
+              calc,
+              productNames,
+            }),
+          );
+        } catch (printErr) {
+          console.error(printErr);
+          setSuccess(
+            `Draft invoice created: ${result.invoiceId}. POS receipt did not open (${printErr instanceof Error ? printErr.message : "unknown error"}).`,
+          );
+          setLastCreatedId(result.invoiceId);
+          setOrderId(createOrderId());
+          setInvoiceDiscount("0");
+          setDeliveryCharge("0");
+          setNotes("");
+          setItems([nextItem()]);
+          return;
+        }
+      }
       setLastCreatedId(result.invoiceId);
       setSuccess(`Draft invoice created: ${result.invoiceId}`);
       setOrderId(createOrderId());
