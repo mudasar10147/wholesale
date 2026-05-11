@@ -105,20 +105,35 @@ function drawTotalsLine(
   return y + lineGap;
 }
 
-/** Bottom Y of the last autoTable; `lastAutoTable` is `false` until a table is drawn. */
+/**
+ * Bottom Y of the last autoTable. On a very tall measure page, some drivers/plugins leave
+ * `finalY` near the page bottom even for a short table — that inflates receipt height and
+ * causes endless blank feed. We clamp to a row-count-based budget.
+ */
 function readAutoTableFinalY(
   doc: import("jspdf").default,
   tableStartY: number,
   lineCount: number,
+  pageHeightMm: number,
 ): number {
+  const lines = Math.max(lineCount, 1);
+  const headAndRowMm = 12 + lines * 26;
+  const tableBudgetMm = Math.min(2000, headAndRowMm + 40);
+  const plausibleMax = tableStartY + tableBudgetMm;
+
   const raw = (doc as { lastAutoTable?: unknown }).lastAutoTable;
   if (raw && typeof raw === "object" && "finalY" in raw) {
     const fy = (raw as { finalY: unknown }).finalY;
     if (typeof fy === "number" && Number.isFinite(fy) && fy > tableStartY + 2) {
-      return fy;
+      const nearBlankPageBottom = fy >= pageHeightMm - 35;
+      const looksTooLowForShortTable = lines <= 40 && fy > tableStartY + 220 && nearBlankPageBottom;
+      if (looksTooLowForShortTable) {
+        return Math.min(plausibleMax, tableStartY + 12 + lines * 8 + 8);
+      }
+      return Math.min(fy, plausibleMax);
     }
   }
-  return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
+  return Math.min(tableStartY + 12 + lines * 8 + 8, plausibleMax);
 }
 
 type AutoTableFn = (d: import("jspdf").default, options: Record<string, unknown>) => void;
@@ -237,6 +252,7 @@ async function drawPosReceiptOnDoc(
   });
 
   const tableStartY = y;
+  const pageHeightMm = doc.internal.pageSize.getHeight();
 
   autoTable(doc, {
     startY: tableStartY,
@@ -268,7 +284,7 @@ async function drawPosReceiptOnDoc(
     margin: { left: MARGIN, right: MARGIN },
   });
 
-  const tableBottomY = readAutoTableFinalY(doc, tableStartY, input.lines.length);
+  const tableBottomY = readAutoTableFinalY(doc, tableStartY, input.lines.length, pageHeightMm);
   let totalsY = tableBottomY + 8;
 
   doc.setFont("helvetica", "normal");
@@ -306,7 +322,7 @@ async function drawPosReceiptOnDoc(
     totalsY += parts.length * 3.2 + 2;
   }
 
-  return totalsY;
+  return totalsY + 3;
 }
 
 async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
@@ -321,12 +337,22 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
    * Measure on a tall throwaway doc, then render once at the exact height.
    */
   const measureDoc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, 2400] });
-  const bottomY = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
+  const bottomYRaw = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
 
-  const bottomPadMm = 14;
+  const bottomPadMm = 12;
+  const lines = Math.max(input.lines.length, 1);
+  const policyChars = policyParas.reduce((n, p) => n + p.length, 0);
+  const hardCapMm = Math.min(
+    2400,
+    200 + lines * 28 + Math.ceil(policyChars / 48) * 3.5 + 140,
+  );
+  const bottomY = Number.isFinite(bottomYRaw)
+    ? Math.min(bottomYRaw, hardCapMm)
+    : Math.min(hardCapMm, 400);
+
   const pageHeightMm = Math.min(
     2400,
-    Math.max(MARGIN + bottomPadMm + 8, Math.ceil((bottomY + bottomPadMm) * 10) / 10),
+    Math.max(MARGIN + bottomPadMm + 10, Math.ceil((bottomY + bottomPadMm) * 10) / 10),
   );
 
   const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
@@ -350,10 +376,12 @@ export async function printPosReceipt(input: PosReceiptInput): Promise<void> {
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
   iframe.style.position = "fixed";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
+  iframe.style.left = "-9999px";
+  iframe.style.top = "0";
+  iframe.style.width = "1px";
+  iframe.style.height = "1px";
   iframe.style.border = "0";
-  iframe.style.opacity = "0";
+  iframe.style.overflow = "hidden";
   iframe.style.pointerEvents = "none";
   iframe.src = url;
   document.body.appendChild(iframe);
