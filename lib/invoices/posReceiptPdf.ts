@@ -105,18 +105,6 @@ function drawTotalsLine(
   return y + lineGap;
 }
 
-/**
- * Thermal drivers print the full PDF MediaBox height. We draw on a tall working page,
- * then shrink the page to actual content so the printer does not feed blank paper to match
- * a 1000+ mm page.
- */
-function trimReceiptPageToContent(doc: import("jspdf").default, contentBottomYMm: number): void {
-  const bottomPadMm = 12;
-  const h = Math.max(MARGIN + bottomPadMm, Math.ceil((contentBottomYMm + bottomPadMm) * 10) / 10);
-  // Runtime API includes setHeight; bundled typings omit it
-  (doc.internal.pageSize as unknown as { setHeight: (mm: number) => void }).setHeight(h);
-}
-
 /** Bottom Y of the last autoTable; `lastAutoTable` is `false` until a table is drawn. */
 function readAutoTableFinalY(
   doc: import("jspdf").default,
@@ -133,24 +121,21 @@ function readAutoTableFinalY(
   return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
 }
 
-async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
-  const { default: jsPDF } = await import("jspdf");
-  const { default: autoTable } = await import("jspdf-autotable");
+type AutoTableFn = (d: import("jspdf").default, options: Record<string, unknown>) => void;
 
-  const policyParas = getPosPolicyParagraphs();
-  /**
-   * One tall working page so the line-items table does not split across pages
-   * (split tables + trim MediaBox would clip product rows). Trimmed after layout.
-   */
-  const workingPageHeightMm = Math.min(
-    2400,
-    Math.max(700, 280 + input.lines.length * 9 + policyParas.length * 28),
-  );
-  const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, workingPageHeightMm] });
+/**
+ * Draws the full receipt on `doc`. Returns Y after the last footer line (for page sizing).
+ */
+async function drawPosReceiptOnDoc(
+  doc: import("jspdf").default,
+  input: PosReceiptInput,
+  policyParas: string[],
+  logoDataUrl: string,
+  autoTable: AutoTableFn,
+): Promise<number> {
   const cx = PAGE_W_MM / 2;
   let y = MARGIN;
 
-  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png");
   const logoMaxW = 36;
   const imgProps = doc.getImageProperties(logoDataUrl);
   const logoW = logoMaxW;
@@ -253,7 +238,6 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
 
   const tableStartY = y;
 
-  // Sum of cellWidth must fit inside CONTENT_W; padding adds width — keep columns slightly under.
   autoTable(doc, {
     startY: tableStartY,
     head: head,
@@ -322,8 +306,31 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     totalsY += parts.length * 3.2 + 2;
   }
 
-  const contentBottomY = Math.max(totalsY, tableBottomY + 6);
-  trimReceiptPageToContent(doc, contentBottomY);
+  return totalsY;
+}
+
+async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
+  const { default: jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
+
+  const policyParas = getPosPolicyParagraphs();
+  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png");
+
+  /**
+   * `doc.internal.pageSize.setHeight()` after drawing breaks many PDF viewers (blank page).
+   * Measure on a tall throwaway doc, then render once at the exact height.
+   */
+  const measureDoc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, 2400] });
+  const bottomY = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
+
+  const bottomPadMm = 14;
+  const pageHeightMm = Math.min(
+    2400,
+    Math.max(MARGIN + bottomPadMm + 8, Math.ceil((bottomY + bottomPadMm) * 10) / 10),
+  );
+
+  const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
+  await drawPosReceiptOnDoc(doc, input, policyParas, logoDataUrl, autoTable);
 
   return doc.output("blob");
 }
