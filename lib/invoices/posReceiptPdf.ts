@@ -105,6 +105,18 @@ function drawTotalsLine(
   return y + lineGap;
 }
 
+/**
+ * Thermal drivers print the full PDF MediaBox height. We draw on a tall working page,
+ * then shrink the page to actual content so the printer does not feed blank paper to match
+ * a 1000+ mm page.
+ */
+function trimReceiptPageToContent(doc: import("jspdf").default, contentBottomYMm: number): void {
+  const bottomPadMm = 12;
+  const h = Math.max(MARGIN + bottomPadMm, Math.ceil((contentBottomYMm + bottomPadMm) * 10) / 10);
+  // Runtime API includes setHeight; bundled typings omit it
+  (doc.internal.pageSize as unknown as { setHeight: (mm: number) => void }).setHeight(h);
+}
+
 async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const [{ default: jsPDF }, autoTableMod] = await Promise.all([
     import("jspdf"),
@@ -113,11 +125,12 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const autoTable = autoTableMod.default;
 
   const policyParas = getPosPolicyParagraphs();
-  const pageHeightMm = Math.min(
-    2500,
-    Math.max(320, 220 + input.lines.length * 6.5 + policyParas.length * 18),
+  /** Working height only; trimmed to real content before output */
+  const workingPageHeightMm = Math.min(
+    2000,
+    Math.max(260, 160 + input.lines.length * 7 + policyParas.length * 22),
   );
-  const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
+  const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, workingPageHeightMm] });
   const cx = PAGE_W_MM / 2;
   let y = MARGIN;
 
@@ -291,6 +304,8 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     totalsY += parts.length * 3.2 + 2;
   }
 
+  trimReceiptPageToContent(doc, totalsY);
+
   return doc.output("blob");
 }
 
@@ -322,14 +337,20 @@ export async function printPosReceipt(input: PosReceiptInput): Promise<void> {
     iframe.remove();
   };
 
+  let didPrint = false;
   iframe.onload = () => {
+    if (didPrint) return;
     const win = iframe.contentWindow;
     if (!win) {
       cleanup();
       return;
     }
+    didPrint = true;
     win.focus();
-    win.print();
+    // Defer so the PDF viewer has laid out the (trimmed) page once
+    window.requestAnimationFrame(() => {
+      win.print();
+    });
     window.setTimeout(cleanup, 2_000);
   };
 }
