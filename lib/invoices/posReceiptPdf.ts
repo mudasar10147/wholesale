@@ -105,35 +105,42 @@ function drawTotalsLine(
   return y + lineGap;
 }
 
+type AutoTableLast = {
+  head?: Array<{ height?: number }>;
+  body?: Array<{ height?: number }>;
+  foot?: Array<{ height?: number }>;
+  finalY?: number;
+};
+
+function sumRowHeightsMm(rows: Array<{ height?: number }> | undefined): number {
+  return (rows ?? []).reduce((sum, row) => {
+    const h = row.height;
+    return sum + (typeof h === "number" && Number.isFinite(h) ? h : 0);
+  }, 0);
+}
+
 /**
- * Bottom Y of the last autoTable. On a very tall measure page, some drivers/plugins leave
- * `finalY` near the page bottom even for a short table — that inflates receipt height and
- * causes endless blank feed. We clamp to a row-count-based budget.
+ * Table bottom Y from real row heights (matches `finalY` when correct). Do not use raw
+ * `finalY` alone on a tall measure page — it can sit near the page bottom and blow up height.
  */
-function readAutoTableFinalY(
+function getTableBottomYMm(
   doc: import("jspdf").default,
   tableStartY: number,
   lineCount: number,
-  pageHeightMm: number,
 ): number {
-  const lines = Math.max(lineCount, 1);
-  const headAndRowMm = 12 + lines * 26;
-  const tableBudgetMm = Math.min(2000, headAndRowMm + 40);
-  const plausibleMax = tableStartY + tableBudgetMm;
-
   const raw = (doc as { lastAutoTable?: unknown }).lastAutoTable;
-  if (raw && typeof raw === "object" && "finalY" in raw) {
-    const fy = (raw as { finalY: unknown }).finalY;
-    if (typeof fy === "number" && Number.isFinite(fy) && fy > tableStartY + 2) {
-      const nearBlankPageBottom = fy >= pageHeightMm - 35;
-      const looksTooLowForShortTable = lines <= 40 && fy > tableStartY + 220 && nearBlankPageBottom;
-      if (looksTooLowForShortTable) {
-        return Math.min(plausibleMax, tableStartY + 12 + lines * 8 + 8);
-      }
-      return Math.min(fy, plausibleMax);
-    }
+  if (!raw || typeof raw !== "object") {
+    return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
   }
-  return Math.min(tableStartY + 12 + lines * 8 + 8, plausibleMax);
+  const t = raw as AutoTableLast;
+  const inner = sumRowHeightsMm(t.head) + sumRowHeightsMm(t.body) + sumRowHeightsMm(t.foot);
+  if (inner > 0.5) {
+    return tableStartY + inner + 2;
+  }
+  if (typeof t.finalY === "number" && Number.isFinite(t.finalY) && t.finalY > tableStartY + 2) {
+    return t.finalY;
+  }
+  return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
 }
 
 type AutoTableFn = (d: import("jspdf").default, options: Record<string, unknown>) => void;
@@ -252,7 +259,6 @@ async function drawPosReceiptOnDoc(
   });
 
   const tableStartY = y;
-  const pageHeightMm = doc.internal.pageSize.getHeight();
 
   autoTable(doc, {
     startY: tableStartY,
@@ -284,7 +290,7 @@ async function drawPosReceiptOnDoc(
     margin: { left: MARGIN, right: MARGIN },
   });
 
-  const tableBottomY = readAutoTableFinalY(doc, tableStartY, input.lines.length, pageHeightMm);
+  const tableBottomY = getTableBottomYMm(doc, tableStartY, input.lines.length);
   let totalsY = tableBottomY + 8;
 
   doc.setFont("helvetica", "normal");
@@ -337,22 +343,26 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
    * Measure on a tall throwaway doc, then render once at the exact height.
    */
   const measureDoc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, 2400] });
-  const bottomYRaw = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
+  const contentBottomRaw = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
 
-  const bottomPadMm = 12;
+  const bottomPadMm = 10;
+  const safetyMm = 6;
   const lines = Math.max(input.lines.length, 1);
   const policyChars = policyParas.reduce((n, p) => n + p.length, 0);
   const hardCapMm = Math.min(
     2400,
-    200 + lines * 28 + Math.ceil(policyChars / 48) * 3.5 + 140,
+    220 + lines * 30 + Math.ceil(policyChars / 44) * 3.4 + 160,
   );
-  const bottomY = Number.isFinite(bottomYRaw)
-    ? Math.min(bottomYRaw, hardCapMm)
+  const contentBottom = Number.isFinite(contentBottomRaw)
+    ? Math.min(contentBottomRaw, hardCapMm)
     : Math.min(hardCapMm, 400);
 
   const pageHeightMm = Math.min(
     2400,
-    Math.max(MARGIN + bottomPadMm + 10, Math.ceil((bottomY + bottomPadMm) * 10) / 10),
+    Math.max(
+      48,
+      Math.ceil((contentBottom + bottomPadMm + safetyMm) * 10) / 10,
+    ),
   );
 
   const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
