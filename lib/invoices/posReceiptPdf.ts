@@ -69,7 +69,15 @@ export function buildPosReceiptInputFromCalc(params: {
 
 const PAGE_W_MM = 80;
 const MARGIN = 4;
+/** Inset from physical right edge — thermal printers often clip the last few mm */
+const RIGHT_SAFE_INSET_MM = 6;
 const CONTENT_W = PAGE_W_MM - 2 * MARGIN;
+/** X where right-aligned money ends (left of non-printable zone) */
+const TOTALS_AMOUNT_RIGHT_X = PAGE_W_MM - MARGIN - RIGHT_SAFE_INSET_MM;
+
+function money(n: number): string {
+  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 /** Compact amounts for narrow columns (avoids wide locale strings breaking layout). */
 function moneyCompact(n: number): string {
@@ -80,34 +88,21 @@ function shortProductName(name: string, maxChars: number): string {
   return name.length > maxChars ? `${name.slice(0, maxChars - 1)}…` : name;
 }
 
-/**
- * Summary row: amount anchored at the right margin, label split to fit the remaining width.
- * Avoids jsPDF right-align + maxWidth quirks that can draw past the page edge.
- */
-function drawReceiptTotalRow(
+/** Label on the left, amount right-aligned inside the safe print zone */
+function drawTotalsLine(
   doc: import("jspdf").default,
   label: string,
-  valueStr: string,
-  yMm: number,
-  opts: { bold?: boolean; fontSize?: number; lineHeightMm?: number },
+  amountStr: string,
+  y: number,
+  opts: { bold?: boolean; fontSize?: number; lineGap?: number },
 ): number {
   const fontSize = opts.fontSize ?? 8;
-  const lineHeightMm = opts.lineHeightMm ?? 4.2;
-  doc.setFontSize(fontSize);
+  const lineGap = opts.lineGap ?? 4.2;
   doc.setFont("helvetica", opts.bold ? "bold" : "normal");
-
-  const rightEdge = PAGE_W_MM - MARGIN;
-  const valueW = doc.getTextWidth(valueStr);
-  const gapMm = 2;
-  const labelMaxW = Math.max(14, CONTENT_W - valueW - gapMm);
-
-  doc.text(valueStr, rightEdge, yMm, { align: "right" });
-
-  const labelLines = doc.splitTextToSize(label, labelMaxW);
-  doc.text(labelLines, MARGIN, yMm);
-
-  const lineCount = Array.isArray(labelLines) ? labelLines.length : 1;
-  return yMm + Math.max(lineCount, 1) * lineHeightMm;
+  doc.setFontSize(fontSize);
+  doc.text(label, MARGIN, y);
+  doc.text(amountStr, TOTALS_AMOUNT_RIGHT_X, y, { align: "right" });
+  return y + lineGap;
 }
 
 async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
@@ -262,22 +257,19 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   let totalsY = (lastAuto?.finalY ?? y) + 8;
 
   doc.setFont("helvetica", "normal");
-  totalsY = drawReceiptTotalRow(doc, "Subtotal", moneyCompact(input.subtotal_amount), totalsY, {
+  totalsY = drawTotalsLine(doc, "Subtotal", money(input.subtotal_amount), totalsY, {
     fontSize: 8,
-    lineHeightMm: 4.2,
   });
-  totalsY = drawReceiptTotalRow(doc, "Discount", moneyCompact(input.discount_amount), totalsY, {
+  totalsY = drawTotalsLine(doc, "Discount", money(input.discount_amount), totalsY, {
     fontSize: 8,
-    lineHeightMm: 4.2,
   });
-  totalsY = drawReceiptTotalRow(doc, "Delivery", moneyCompact(input.delivery_charge), totalsY, {
+  totalsY = drawTotalsLine(doc, "Delivery", money(input.delivery_charge), totalsY, {
     fontSize: 8,
-    lineHeightMm: 4.2,
   });
-  totalsY = drawReceiptTotalRow(doc, "TOTAL", moneyCompact(input.total_amount), totalsY, {
+  totalsY = drawTotalsLine(doc, "TOTAL", money(input.total_amount), totalsY, {
     bold: true,
     fontSize: 9,
-    lineHeightMm: 4.8,
+    lineGap: 5,
   });
   totalsY += 4;
 
