@@ -68,7 +68,6 @@ export function buildPosReceiptInputFromCalc(params: {
 }
 
 const PAGE_W_MM = 80;
-const PAGE_H_MM = 1000;
 const MARGIN = 4;
 const CONTENT_W = PAGE_W_MM - 2 * MARGIN;
 
@@ -76,9 +75,29 @@ function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function shortProductName(name: string): string {
-  const max = 56;
-  return name.length > max ? `${name.slice(0, max - 1)}…` : name;
+/** Compact amounts for narrow columns (avoids wide locale strings breaking layout). */
+function moneyCompact(n: number): string {
+  return n.toFixed(2);
+}
+
+function shortProductName(name: string, maxChars: number): string {
+  return name.length > maxChars ? `${name.slice(0, maxChars - 1)}…` : name;
+}
+
+/** Right-aligned lines that never exceed [MARGIN, PAGE_W_MM - MARGIN]. */
+function writeRightClamped(
+  doc: import("jspdf").default,
+  text: string,
+  startY: number,
+  lineHeightMm: number,
+): number {
+  const lines = doc.splitTextToSize(text, CONTENT_W);
+  let y = startY;
+  for (const line of lines) {
+    doc.text(line, PAGE_W_MM - MARGIN, y, { align: "right", maxWidth: CONTENT_W });
+    y += lineHeightMm;
+  }
+  return y;
 }
 
 async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
@@ -88,7 +107,12 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   ]);
   const autoTable = autoTableMod.default;
 
-  const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, PAGE_H_MM] });
+  const policyParas = getPosPolicyParagraphs();
+  const pageHeightMm = Math.min(
+    2500,
+    Math.max(320, 220 + input.lines.length * 6.5 + policyParas.length * 18),
+  );
+  const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
   const cx = PAGE_W_MM / 2;
   let y = MARGIN;
 
@@ -179,40 +203,47 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   ];
 
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name);
+    const name = shortProductName(l.product_name, wideTable ? 36 : 48);
     if (wideTable) {
       return [
         name,
         String(l.quantity),
-        money(l.unit_price),
-        anyLineDisc ? money(l.line_discount) : "—",
-        anyLineDeliv ? money(l.line_delivery_charge) : "—",
-        money(l.line_total),
+        moneyCompact(l.unit_price),
+        anyLineDisc ? moneyCompact(l.line_discount) : "—",
+        anyLineDeliv ? moneyCompact(l.line_delivery_charge) : "—",
+        moneyCompact(l.line_total),
       ];
     }
-    return [name, String(l.quantity), money(l.unit_price), money(l.line_total)];
+    return [name, String(l.quantity), moneyCompact(l.unit_price), moneyCompact(l.line_total)];
   });
 
+  // Sum of cellWidth must fit inside CONTENT_W; padding adds width — keep columns slightly under.
   autoTable(doc, {
     startY: y,
     head: head,
     body,
-    styles: { fontSize: 7, cellPadding: 0.8, overflow: "linebreak" },
-    headStyles: { fillColor: [55, 48, 120], textColor: 255, fontStyle: "bold" },
+    tableWidth: CONTENT_W,
+    styles: {
+      fontSize: 6.5,
+      cellPadding: 0.35,
+      overflow: "linebreak",
+      lineWidth: 0.1,
+    },
+    headStyles: { fillColor: [55, 48, 120], textColor: 255, fontStyle: "bold", fontSize: 6.5 },
     columnStyles: wideTable
       ? {
-          0: { cellWidth: 23 },
-          1: { cellWidth: 8, halign: "right" },
-          2: { cellWidth: 11, halign: "right" },
-          3: { cellWidth: 9, halign: "right" },
-          4: { cellWidth: 9, halign: "right" },
-          5: { cellWidth: 12, halign: "right" },
+          0: { cellWidth: 21, halign: "left" },
+          1: { cellWidth: 7, halign: "right" },
+          2: { cellWidth: 10, halign: "right" },
+          3: { cellWidth: 8, halign: "right" },
+          4: { cellWidth: 8, halign: "right" },
+          5: { cellWidth: 10, halign: "right" },
         }
       : {
-          0: { cellWidth: 36 },
-          1: { cellWidth: 10, halign: "right" },
-          2: { cellWidth: 12, halign: "right" },
-          3: { cellWidth: 14, halign: "right" },
+          0: { cellWidth: 33, halign: "left" },
+          1: { cellWidth: 9, halign: "right" },
+          2: { cellWidth: 11, halign: "right" },
+          3: { cellWidth: 11, halign: "right" },
         },
     margin: { left: MARGIN, right: MARGIN },
   });
@@ -220,24 +251,15 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const lastAuto = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable;
   let totalsY = (lastAuto?.finalY ?? y) + 8;
 
-  doc.setFontSize(8);
   doc.setFont("helvetica", "normal");
-  doc.text(`Subtotal ${money(input.subtotal_amount)}`, PAGE_W_MM - MARGIN, totalsY, {
-    align: "right",
-  });
-  totalsY += 5;
-  doc.text(`Invoice discount ${money(input.discount_amount)}`, PAGE_W_MM - MARGIN, totalsY, {
-    align: "right",
-  });
-  totalsY += 5;
-  doc.text(`Delivery ${money(input.delivery_charge)}`, PAGE_W_MM - MARGIN, totalsY, {
-    align: "right",
-  });
-  totalsY += 6;
+  doc.setFontSize(8);
+  totalsY = writeRightClamped(doc, `Subtotal ${money(input.subtotal_amount)}`, totalsY, 4);
+  totalsY = writeRightClamped(doc, `Discount ${money(input.discount_amount)}`, totalsY, 4);
+  totalsY = writeRightClamped(doc, `Delivery ${money(input.delivery_charge)}`, totalsY, 4);
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.text(`TOTAL ${money(input.total_amount)}`, PAGE_W_MM - MARGIN, totalsY, { align: "right" });
-  totalsY += 10;
+  doc.setFontSize(9);
+  totalsY = writeRightClamped(doc, `TOTAL ${money(input.total_amount)}`, totalsY, 4.5);
+  totalsY += 6;
 
   doc.setDrawColor(40);
   doc.line(MARGIN, totalsY, PAGE_W_MM - MARGIN, totalsY);
@@ -245,12 +267,13 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
-  doc.text(getPosThankYouLine(), cx, totalsY, { align: "center" });
-  totalsY += 5;
+  const thanksParts = doc.splitTextToSize(getPosThankYouLine(), CONTENT_W);
+  doc.text(thanksParts, cx, totalsY, { align: "center" });
+  totalsY += thanksParts.length * 3.8 + 2;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);
-  for (const para of getPosPolicyParagraphs()) {
+  for (const para of policyParas) {
     const parts = doc.splitTextToSize(para, CONTENT_W);
     doc.text(parts, MARGIN, totalsY);
     totalsY += parts.length * 3.2 + 2;
