@@ -68,6 +68,8 @@ export function buildPosReceiptInputFromCalc(params: {
 }
 
 const PAGE_W_MM = 80;
+/** Chrome print uses `height_microns`; 1 mm ≈ 1000 µm. Cap page height so drivers do not feed meters of paper. */
+const MAX_RECEIPT_PAGE_HEIGHT_MM = 1200;
 const MARGIN = 4;
 /** Inset from physical right edge — thermal printers often clip the last few mm */
 const RIGHT_SAFE_INSET_MM = 6;
@@ -342,27 +344,27 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
    * `doc.internal.pageSize.setHeight()` after drawing breaks many PDF viewers (blank page).
    * Measure on a tall throwaway doc, then render once at the exact height.
    */
-  const measureDoc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, 2400] });
+  const measureDoc = new jsPDF({
+    unit: "mm",
+    format: [PAGE_W_MM, Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM + 400, 1600)],
+  });
   const contentBottomRaw = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
 
   const bottomPadMm = 10;
   const safetyMm = 6;
   const lines = Math.max(input.lines.length, 1);
   const policyChars = policyParas.reduce((n, p) => n + p.length, 0);
-  const hardCapMm = Math.min(
-    2400,
-    220 + lines * 30 + Math.ceil(policyChars / 44) * 3.4 + 160,
-  );
+  /** Soft ceiling from line count — must stay well below MAX or it becomes the print page height (see height_microns). */
+  const softEstimateMm =
+    180 + lines * 10 + Math.ceil(policyChars / 46) * 3.4 + 120;
+  const hardCapMm = Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM - bottomPadMm - safetyMm, softEstimateMm);
   const contentBottom = Number.isFinite(contentBottomRaw)
     ? Math.min(contentBottomRaw, hardCapMm)
     : Math.min(hardCapMm, 400);
 
   const pageHeightMm = Math.min(
-    2400,
-    Math.max(
-      48,
-      Math.ceil((contentBottom + bottomPadMm + safetyMm) * 10) / 10,
-    ),
+    MAX_RECEIPT_PAGE_HEIGHT_MM,
+    Math.max(48, Math.ceil((contentBottom + bottomPadMm + safetyMm) * 10) / 10),
   );
 
   const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
