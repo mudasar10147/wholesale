@@ -10,8 +10,10 @@ import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, markInvoicePaid, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
+import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
 import { downloadInvoicePdf } from "@/lib/invoices/invoicePdf";
 import { buildInvoicePlainText, downloadTextFile } from "@/lib/invoices/invoiceText";
+import { buildPosReceiptInputFromCalc, printPosReceipt } from "@/lib/invoices/posReceiptPdf";
 import { normalizeOrderId } from "@/lib/validation/contracts";
 import type { CustomerDoc, InvoiceDoc, InvoiceItemDoc, ProductDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
@@ -256,6 +258,44 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     }
   }
 
+  async function handlePrintPosReceipt() {
+    if (!invoice || items.length === 0) return;
+    setActionError(null);
+    setReceiptPrintNotice(null);
+    const linePayload = items.map(({ data }) => ({
+      product_id: data.product_id,
+      quantity: data.quantity,
+      unit_price: data.unit_price,
+      line_discount: data.line_discount,
+    }));
+    try {
+      const calc = calculateInvoiceSummary({
+        lines: linePayload,
+        delivery_charge: invoice.delivery_charge ?? 0,
+        discount_amount: invoice.discount_amount ?? 0,
+      });
+      await printPosReceipt(
+        buildPosReceiptInputFromCalc({
+          order_id: invoice.order_id,
+          status: invoice.status,
+          customer_name: customerDetails.name || invoice.customer_id,
+          customer_phone: customerDetails.phone?.trim() || undefined,
+          customer_address: customerDetails.address?.trim() || undefined,
+          customer_email: customerDetails.email?.trim() || undefined,
+          notes: invoice.notes?.trim() || undefined,
+          created_at_label: formatDate(invoice.created_at),
+          calc,
+          productNames: productMap,
+        }),
+      );
+    } catch (printErr) {
+      console.error(printErr);
+      setReceiptPrintNotice(
+        `POS receipt did not open: ${printErr instanceof Error ? printErr.message : "unknown error"}.`,
+      );
+    }
+  }
+
   async function runAction(label: string, fn: () => Promise<void>) {
     setActionError(null);
     setWorking(label);
@@ -366,6 +406,17 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               }}
             >
               {editing ? "Close editor" : "Edit draft"}
+            </Button>
+          ) : null}
+          {(isDraft || isPosted) && items.length > 0 ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="px-3 py-1.5 text-xs"
+              disabled={working !== null}
+              onClick={() => void handlePrintPosReceipt()}
+            >
+              Print receipt
             </Button>
           ) : null}
           {isDraft && isAdmin ? (

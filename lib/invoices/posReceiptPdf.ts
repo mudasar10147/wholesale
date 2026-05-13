@@ -98,9 +98,10 @@ function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** Compact amounts for narrow columns (avoids wide locale strings breaking layout). */
-function moneyCompact(n: number): string {
-  return n.toFixed(2);
+/** Table cells: trim trailing zeros (e.g. 12.00 → 12, 12.50 → 12.5). */
+function moneyTableCell(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  return String(parseFloat(n.toFixed(2)));
 }
 
 function shortProductName(name: string, maxChars: number): string {
@@ -273,18 +274,18 @@ async function drawPosReceiptOnDoc(
   ];
 
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 44 : 52);
+    const name = shortProductName(l.product_name, wideTable ? 45 : 53);
     if (wideTable) {
       return [
         name,
         String(l.quantity),
-        moneyCompact(l.unit_price),
-        anyLineDisc ? moneyCompact(l.line_discount) : "—",
-        anyLineDeliv ? moneyCompact(l.line_delivery_charge) : "—",
-        moneyCompact(l.line_total),
+        moneyTableCell(l.unit_price),
+        anyLineDisc ? moneyTableCell(l.line_discount) : "—",
+        anyLineDeliv ? moneyTableCell(l.line_delivery_charge) : "—",
+        moneyTableCell(l.line_total),
       ];
     }
-    return [name, String(l.quantity), moneyCompact(l.unit_price), moneyCompact(l.line_total)];
+    return [name, String(l.quantity), moneyTableCell(l.unit_price), moneyTableCell(l.line_total)];
   });
 
   const tableStartY = y;
@@ -327,12 +328,12 @@ async function drawPosReceiptOnDoc(
      */
     columnStyles: wideTable
       ? {
-          0: { cellWidth: 26, halign: "left" },
-          1: { cellWidth: 6, halign: "right" },
-          2: { cellWidth: 9, halign: "right" },
+          0: { cellWidth: 27, halign: "left" },
+          1: { cellWidth: 4, halign: "right" },
+          2: { cellWidth: 7, halign: "right" },
           3: { cellWidth: 7, halign: "right" },
           4: { cellWidth: 7, halign: "right" },
-          5: { cellWidth: 10, halign: "right" },
+          5: { cellWidth: 11, halign: "right" },
         }
       : {
           0: { cellWidth: 37, halign: "left" },
