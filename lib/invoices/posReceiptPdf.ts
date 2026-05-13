@@ -72,17 +72,6 @@ const PAGE_W_MM = 80;
 /** Chrome print uses `height_microns`; 1 mm ≈ 1000 µm. Cap page height so drivers do not feed meters of paper. */
 const MAX_RECEIPT_PAGE_HEIGHT_MM = 1200;
 
-/** Extra left inset — thermal printers often clip the first few mm. */
-const LEFT_MARGIN_MM = 7;
-const RIGHT_MARGIN_MM = 4;
-/** Inset from physical right edge — thermal printers often clip the last few mm */
-const RIGHT_SAFE_INSET_MM = 6;
-const CONTENT_W = PAGE_W_MM - LEFT_MARGIN_MM - RIGHT_MARGIN_MM;
-/** X where right-aligned money ends (left of non-printable zone) */
-const TOTALS_AMOUNT_RIGHT_X = PAGE_W_MM - RIGHT_MARGIN_MM - RIGHT_SAFE_INSET_MM;
-/** Top padding before logo */
-const TOP_MARGIN_MM = 3;
-
 /** Dev logs + optional `localStorage.setItem("POS_RECEIPT_DEBUG", "1")` for a prod build on localhost. */
 function posReceiptDebugEnabled(): boolean {
   if (typeof window !== "undefined" && window.localStorage?.getItem("POS_RECEIPT_DEBUG") === "1") {
@@ -95,6 +84,15 @@ function logPosReceiptPdf(stage: string, payload: Record<string, unknown>): void
   if (!posReceiptDebugEnabled()) return;
   console.log("[POS receipt PDF]", stage, payload);
 }
+const MARGIN_TOP_MM = 4;
+const MARGIN_LEFT_MM = 4;
+/** Extra right inset — thermal printers often clip the last few mm of the roll. */
+const MARGIN_RIGHT_MM = 11;
+/** Inset from physical right edge inside the content area for right-aligned amounts */
+const RIGHT_SAFE_INSET_MM = 10;
+const CONTENT_W = PAGE_W_MM - MARGIN_LEFT_MM - MARGIN_RIGHT_MM;
+/** X where right-aligned money ends (left of non-printable zone) */
+const TOTALS_AMOUNT_RIGHT_X = PAGE_W_MM - MARGIN_RIGHT_MM - RIGHT_SAFE_INSET_MM;
 
 function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -121,7 +119,7 @@ function drawTotalsLine(
   const lineGap = opts.lineGap ?? 4.2;
   doc.setFont("helvetica", opts.bold ? "bold" : "normal");
   doc.setFontSize(fontSize);
-  doc.text(label, LEFT_MARGIN_MM, y);
+  doc.text(label, MARGIN_LEFT_MM, y);
   doc.text(amountStr, TOTALS_AMOUNT_RIGHT_X, y, { align: "right" });
   return y + lineGap;
 }
@@ -151,7 +149,7 @@ function getTableBottomYMm(
 ): number {
   const raw = (doc as { lastAutoTable?: unknown }).lastAutoTable;
   if (!raw || typeof raw !== "object") {
-    return tableStartY + 16 + Math.max(lineCount, 1) * 9 + 10;
+    return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
   }
   const t = raw as AutoTableLast;
   const inner = sumRowHeightsMm(t.head) + sumRowHeightsMm(t.body) + sumRowHeightsMm(t.foot);
@@ -161,7 +159,7 @@ function getTableBottomYMm(
   if (typeof t.finalY === "number" && Number.isFinite(t.finalY) && t.finalY > tableStartY + 2) {
     return t.finalY;
   }
-  return tableStartY + 16 + Math.max(lineCount, 1) * 9 + 10;
+  return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
 }
 
 type AutoTableFn = (d: import("jspdf").default, options: Record<string, unknown>) => void;
@@ -177,18 +175,7 @@ async function drawPosReceiptOnDoc(
   autoTable: AutoTableFn,
 ): Promise<number> {
   const cx = PAGE_W_MM / 2;
-  const lineX1 = LEFT_MARGIN_MM;
-  const lineX2 = PAGE_W_MM - RIGHT_MARGIN_MM;
-  doc.setTextColor(0, 0, 0);
-  let y = TOP_MARGIN_MM;
-
-  const shopNo = getPosShopNumber();
-  if (shopNo?.trim()) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8);
-    doc.text(`Shop No. ${shopNo.trim()}`, cx, y, { align: "center" });
-    y += 4.5;
-  }
+  let y = MARGIN_TOP_MM;
 
   const logoMaxW = 50;
   const imgProps = doc.getImageProperties(logoDataUrl);
@@ -197,13 +184,16 @@ async function drawPosReceiptOnDoc(
   doc.addImage(logoDataUrl, "PNG", cx - logoW / 2, y, logoW, logoH);
   y += logoH + 3;
 
-  if (shopNo?.trim()) {
+  const shopNo = getPosShopNumber();
+  if (shopNo) {
+    doc.setTextColor(0);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
-    doc.text(`Shop No. ${shopNo.trim()}`, cx, y, { align: "center" });
+    doc.text(`Shop No. ${shopNo}`, cx, y, { align: "center" });
     y += 5;
   }
 
+  doc.setTextColor(0);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
   doc.text(getPosBusinessName(), cx, y, { align: "center" });
@@ -227,8 +217,8 @@ async function drawPosReceiptOnDoc(
   }
   y += 2;
 
-  doc.setDrawColor(35);
-  doc.line(lineX1, y, lineX2, y);
+  doc.setDrawColor(0);
+  doc.line(MARGIN_LEFT_MM, y, PAGE_W_MM - MARGIN_RIGHT_MM, y);
   y += 5;
 
   doc.setFont("helvetica", "bold");
@@ -249,7 +239,7 @@ async function drawPosReceiptOnDoc(
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
-  doc.text("Bill to", LEFT_MARGIN_MM, y);
+  doc.text("Bill to", MARGIN_LEFT_MM, y);
   y += 4;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
@@ -261,7 +251,7 @@ async function drawPosReceiptOnDoc(
   ].filter(Boolean) as string[];
   for (const bit of custBits) {
     const parts = doc.splitTextToSize(bit, CONTENT_W);
-    doc.text(parts, LEFT_MARGIN_MM, y);
+    doc.text(parts, MARGIN_LEFT_MM, y);
     y += parts.length * 3.6;
   }
   y += 2;
@@ -269,7 +259,7 @@ async function drawPosReceiptOnDoc(
   if (input.notes?.trim()) {
     doc.setFont("helvetica", "italic");
     const noteParts = doc.splitTextToSize(`Notes: ${input.notes.trim()}`, CONTENT_W);
-    doc.text(noteParts, LEFT_MARGIN_MM, y);
+    doc.text(noteParts, MARGIN_LEFT_MM, y);
     y += noteParts.length * 3.6 + 2;
     doc.setFont("helvetica", "normal");
   }
@@ -282,9 +272,8 @@ async function drawPosReceiptOnDoc(
     wideTable ? ["Item", "Qty", "Unit", "Disc", "Del", "Total"] : ["Item", "Qty", "Unit", "Total"],
   ];
 
-  const tableFont = 7.8;
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 46 : 55);
+    const name = shortProductName(l.product_name, wideTable ? 44 : 52);
     if (wideTable) {
       return [
         name,
@@ -304,15 +293,15 @@ async function drawPosReceiptOnDoc(
     startY: tableStartY,
     head: head,
     body,
-    tableWidth: CONTENT_W,
     theme: "plain",
+    tableWidth: CONTENT_W,
     styles: {
+      fontSize: 8,
       font: "helvetica",
-      fontSize: tableFont,
       cellPadding: 0.55,
       overflow: "linebreak",
-      lineWidth: 0.08,
-      lineColor: 35,
+      lineWidth: 0.12,
+      lineColor: 0,
       textColor: 0,
       fillColor: 255,
     },
@@ -320,19 +309,17 @@ async function drawPosReceiptOnDoc(
       fillColor: 255,
       textColor: 0,
       fontStyle: "bold",
-      fontSize: tableFont,
-      lineColor: 35,
-      lineWidth: 0.1,
+      fontSize: 8,
+      lineWidth: 0.12,
+      lineColor: 0,
     },
     bodyStyles: {
       fillColor: 255,
       textColor: 0,
-      fontSize: tableFont,
+      fontSize: 8,
+      lineColor: 40,
     },
-    alternateRowStyles: {
-      fillColor: 255,
-      textColor: 0,
-    },
+    alternateRowStyles: { fillColor: 255, textColor: 0 },
     /**
      * Explicit widths must sum to `tableWidth` (CONTENT_W). If the sum is even
      * slightly low, every column is treated as fixed and autotable cannot absorb
@@ -341,45 +328,47 @@ async function drawPosReceiptOnDoc(
     columnStyles: wideTable
       ? {
           0: { cellWidth: 26, halign: "left" },
-          1: { cellWidth: 7, halign: "right" },
-          2: { cellWidth: 10, halign: "right" },
-          3: { cellWidth: 8, halign: "right" },
-          4: { cellWidth: 8, halign: "right" },
+          1: { cellWidth: 6, halign: "right" },
+          2: { cellWidth: 9, halign: "right" },
+          3: { cellWidth: 7, halign: "right" },
+          4: { cellWidth: 7, halign: "right" },
           5: { cellWidth: 10, halign: "right" },
         }
       : {
-          0: { cellWidth: 38, halign: "left" },
+          0: { cellWidth: 37, halign: "left" },
           1: { cellWidth: 9, halign: "right" },
-          2: { cellWidth: 11, halign: "right" },
-          3: { cellWidth: 11, halign: "right" },
+          2: { cellWidth: 10, halign: "right" },
+          3: { cellWidth: 9, halign: "right" },
         },
-    margin: { left: LEFT_MARGIN_MM, right: RIGHT_MARGIN_MM },
+    margin: { left: MARGIN_LEFT_MM, right: MARGIN_RIGHT_MM },
   });
 
   const tableBottomY = getTableBottomYMm(doc, tableStartY, input.lines.length);
   let totalsY = tableBottomY + 8;
 
+  doc.setTextColor(0);
   doc.setFont("helvetica", "normal");
   totalsY = drawTotalsLine(doc, "Subtotal", money(input.subtotal_amount), totalsY, {
-    fontSize: 8.5,
+    fontSize: 8,
   });
   totalsY = drawTotalsLine(doc, "Discount", money(input.discount_amount), totalsY, {
-    fontSize: 8.5,
+    fontSize: 8,
   });
   totalsY = drawTotalsLine(doc, "Delivery", money(input.delivery_charge), totalsY, {
-    fontSize: 8.5,
+    fontSize: 8,
   });
   totalsY = drawTotalsLine(doc, "TOTAL", money(input.total_amount), totalsY, {
     bold: true,
-    fontSize: 9.5,
+    fontSize: 9,
     lineGap: 5,
   });
   totalsY += 4;
 
-  doc.setDrawColor(35);
-  doc.line(lineX1, totalsY, lineX2, totalsY);
+  doc.setDrawColor(0);
+  doc.line(MARGIN_LEFT_MM, totalsY, PAGE_W_MM - MARGIN_RIGHT_MM, totalsY);
   totalsY += 6;
 
+  doc.setTextColor(0);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   const thanksParts = doc.splitTextToSize(getPosThankYouLine(), CONTENT_W);
@@ -390,7 +379,7 @@ async function drawPosReceiptOnDoc(
   doc.setFontSize(7);
   for (const para of policyParas) {
     const parts = doc.splitTextToSize(para, CONTENT_W);
-    doc.text(parts, LEFT_MARGIN_MM, totalsY);
+    doc.text(parts, MARGIN_LEFT_MM, totalsY);
     totalsY += parts.length * 3.2 + 2;
   }
 
@@ -433,7 +422,7 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const policyChars = policyParas.reduce((n, p) => n + p.length, 0);
   /** Soft ceiling from line count — must stay well below MAX or it becomes the print page height (see height_microns). */
   const softEstimateMm =
-    200 + lines * 12 + Math.ceil(policyChars / 46) * 3.4 + 120;
+    180 + lines * 10 + Math.ceil(policyChars / 46) * 3.4 + 120;
   const hardCapMm = Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM - bottomPadMm - safetyMm, softEstimateMm);
   const contentBottom = Number.isFinite(contentBottomRaw)
     ? Math.min(contentBottomRaw, hardCapMm)
