@@ -274,7 +274,7 @@ async function drawPosReceiptOnDoc(
   ];
 
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 45 : 53);
+    const name = shortProductName(l.product_name, wideTable ? 48 : 55);
     if (wideTable) {
       return [
         name,
@@ -328,17 +328,17 @@ async function drawPosReceiptOnDoc(
      */
     columnStyles: wideTable
       ? {
-          0: { cellWidth: 27, halign: "left" },
-          1: { cellWidth: 4, halign: "right" },
-          2: { cellWidth: 7, halign: "right" },
+          0: { cellWidth: 31, halign: "left" },
+          1: { cellWidth: 2, halign: "right" },
+          2: { cellWidth: 5, halign: "right" },
           3: { cellWidth: 7, halign: "right" },
           4: { cellWidth: 7, halign: "right" },
-          5: { cellWidth: 11, halign: "right" },
+          5: { cellWidth: 13, halign: "right" },
         }
       : {
-          0: { cellWidth: 37, halign: "left" },
-          1: { cellWidth: 9, halign: "right" },
-          2: { cellWidth: 10, halign: "right" },
+          0: { cellWidth: 41, halign: "left" },
+          1: { cellWidth: 7, halign: "right" },
+          2: { cellWidth: 8, halign: "right" },
           3: { cellWidth: 9, halign: "right" },
         },
     margin: { left: MARGIN_LEFT_MM, right: MARGIN_RIGHT_MM },
