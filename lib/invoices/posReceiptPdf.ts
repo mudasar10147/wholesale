@@ -94,7 +94,7 @@ const MARGIN_TOP_MM = 4;
  * Invariant: CONTENT_X1 - CONTENT_X0 === CONTENT_W_MM; autoTable uses CONTENT_W_MM
  * with margin.left CONTENT_X0 and margin.right PAGE_W_MM - CONTENT_X1.
  */
-const CONTENT_W_MM = 70;
+const CONTENT_W_MM = 65;
 /** Minimal clearance from physical left edge of the roll (mm). */
 const GUTTER_L_MM = 2;
 const GUTTER_R_MM = PAGE_W_MM - CONTENT_W_MM - GUTTER_L_MM;
@@ -102,7 +102,7 @@ const CONTENT_X0 = GUTTER_L_MM;
 const CONTENT_X1 = PAGE_W_MM - GUTTER_R_MM;
 const CONTENT_CX = (CONTENT_X0 + CONTENT_X1) / 2;
 /** Inset inside right edge of content box for right-aligned totals amounts */
-const TOTALS_AMOUNT_RIGHT_X = CONTENT_X1 - 2;
+const TOTALS_AMOUNT_RIGHT_X = CONTENT_X1 - 3;
 
 function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -285,7 +285,7 @@ async function drawPosReceiptOnDoc(
 
   const tableFontSize = wideTable ? 7 : 8;
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 36 : 42);
+    const name = shortProductName(l.product_name, wideTable ? 38 : 44);
     if (wideTable) {
       return [
         name,
@@ -339,17 +339,17 @@ async function drawPosReceiptOnDoc(
     columnStyles: wideTable
       ? {
           0: { halign: "left" },
-          1: { cellWidth: 7, halign: "right" },
-          2: { cellWidth: 11, halign: "right" },
-          3: { cellWidth: 9, halign: "right" },
-          4: { cellWidth: 9, halign: "right" },
-          5: { cellWidth: 13, halign: "right" },
+          1: { cellWidth: 6, halign: "right" },
+          2: { cellWidth: 10, halign: "right" },
+          3: { cellWidth: 8, halign: "right" },
+          4: { cellWidth: 8, halign: "right" },
+          5: { cellWidth: 11, halign: "right" },
         }
       : {
           0: { halign: "left" },
-          1: { cellWidth: 10, halign: "right" },
-          2: { cellWidth: 14, halign: "right" },
-          3: { cellWidth: 16, halign: "right" },
+          1: { cellWidth: 7, halign: "right" },
+          2: { cellWidth: 8, halign: "right" },
+          3: { cellWidth: 9, halign: "right" },
         },
     margin: { left: CONTENT_X0, right: PAGE_W_MM - CONTENT_X1 },
   });
