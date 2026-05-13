@@ -85,6 +85,11 @@ export function AddInvoiceForm() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
+  const [stockGateMessage, setStockGateMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStockGateMessage(null);
+  }, [items, customerId, orderId, invoiceDiscount, deliveryCharge, notes]);
 
   useEffect(() => {
     const db = getDb();
@@ -180,10 +185,12 @@ export function AddInvoiceForm() {
     setItems((prev) => (prev.length <= 1 ? prev : prev.filter((line) => line.id !== id)));
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function performSave(allowInsufficientStockForDraft: boolean) {
     setError(null);
     setSuccess(null);
+    if (!allowInsufficientStockForDraft) {
+      setStockGateMessage(null);
+    }
 
     if (!customerId) {
       setError("Select a customer.");
@@ -204,6 +211,8 @@ export function AddInvoiceForm() {
       unit_price: number;
       line_discount: number;
     }[] = [];
+
+    const stockIssues: string[] = [];
 
     for (const line of items) {
       if (!line.productId) {
@@ -227,10 +236,11 @@ export function AddInvoiceForm() {
         setError("One or more selected products are missing.");
         return;
       }
-      const stock = validateQuantityAgainstStock(qty.value, selected.stock_quantity);
-      if (!stock.ok) {
-        setError(`${selected.name}: ${stock.message}`);
-        return;
+      if (!allowInsufficientStockForDraft) {
+        const stock = validateQuantityAgainstStock(qty.value, selected.stock_quantity);
+        if (!stock.ok) {
+          stockIssues.push(`${selected.name}: ${stock.message}`);
+        }
       }
       linePayload.push({
         product_id: line.productId,
@@ -238,6 +248,11 @@ export function AddInvoiceForm() {
         unit_price: price.value,
         line_discount: discount.value,
       });
+    }
+
+    if (stockIssues.length > 0 && !allowInsufficientStockForDraft) {
+      setStockGateMessage(stockIssues.join(" · "));
+      return;
     }
 
     const seen = new Set<string>();
@@ -263,14 +278,19 @@ export function AddInvoiceForm() {
         delivery_charge: delivery.value,
         discount_amount: invDiscount.value,
       });
-      const result = await createDraftInvoice(getDb(), {
-        customer_id: customerId,
-        order_id: orderId,
-        discount_amount: invDiscount.value,
-        delivery_charge: delivery.value,
-        notes,
-        lines: linePayload,
-      });
+      const result = await createDraftInvoice(
+        getDb(),
+        {
+          customer_id: customerId,
+          order_id: orderId,
+          discount_amount: invDiscount.value,
+          delivery_charge: delivery.value,
+          notes,
+          lines: linePayload,
+        },
+        { allowInsufficientStockForDraft },
+      );
+      setStockGateMessage(null);
       const customer = customers.find((c) => c.id === customerId);
       if (customer) {
         const productNames = new Map(products.map((p) => [p.id, p.name] as const));
@@ -319,6 +339,11 @@ export function AddInvoiceForm() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    void performSave(false);
   }
 
   return (
@@ -508,6 +533,24 @@ export function AddInvoiceForm() {
         <InlineAlert variant="error" id={ALERT_ID}>
           {error}
         </InlineAlert>
+      ) : null}
+      {stockGateMessage ? (
+        <div className="space-y-2">
+          <InlineAlert variant="info">
+            <span className="font-medium text-foreground">Stock is lower than the quantities on this invoice.</span>{" "}
+            You can force-save a draft and print it; inventory does not change until you post when enough stock is
+            available. Posting and marking paid stay blocked until stock covers all lines.
+            <p className="mt-2 text-xs text-muted-foreground">{stockGateMessage}</p>
+          </InlineAlert>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={submitting || loadingCustomers || loadingProducts}
+            onClick={() => void performSave(true)}
+          >
+            {submitting ? "Saving…" : "Force save draft & print"}
+          </Button>
+        </div>
       ) : null}
       {success ? (
         <InlineAlert variant="success">

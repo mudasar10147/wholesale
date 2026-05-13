@@ -47,6 +47,15 @@ export type CreateInvoiceInput = {
   lines: InvoiceCalcLineInput[];
 };
 
+/** Options for saving a draft only. Posting always re-checks stock and FIFO. */
+export type DraftSaveOptions = {
+  /**
+   * When true, skips the preflight check that line quantities must not exceed current
+   * `product.stock_quantity`. Use only after explicit user confirmation (oversell draft).
+   */
+  allowInsufficientStockForDraft?: boolean;
+};
+
 /** Firestore allows at most ~500 document reads+writes per transaction. */
 const FIRESTORE_TXN_DOC_CAP = 500;
 
@@ -180,11 +189,13 @@ function buildLotsMapsForPost(
 /**
  * Load customer + products outside a transaction, matching previous server checks.
  * Drafts do not reserve stock; posting still enforces real stock/FIFO.
+ * When `skipStockCheck` is true, product existence is still validated but quantities may exceed stock (oversell draft).
  */
 async function preflightValidateDraftInvoiceLines(
   db: Firestore,
   customerId: string,
   lines: InvoiceCalcLineInput[],
+  opts?: { skipStockCheck?: boolean },
 ): Promise<void> {
   const customerRef = doc(db, COLLECTIONS.customers, customerId);
   const customerSnap = await getDoc(customerRef);
@@ -203,6 +214,10 @@ async function preflightValidateDraftInvoiceLines(
     }),
   );
 
+  if (opts?.skipStockCheck) {
+    return;
+  }
+
   for (const line of lines) {
     const product = productMap.get(line.product_id.trim());
     if (!product) throw new Error("Invalid product in invoice line.");
@@ -216,6 +231,7 @@ async function preflightValidateDraftInvoiceLines(
 export async function createDraftInvoice(
   db: Firestore,
   input: CreateInvoiceInput,
+  options?: DraftSaveOptions,
 ): Promise<{ invoiceId: string }> {
   const customerId = input.customer_id.trim();
   const orderId = normalizeOrderId(input.order_id);
@@ -224,7 +240,9 @@ export async function createDraftInvoice(
   assertValidCreateInvoiceInput(input);
   assertValidOrderId(orderId);
 
-  await preflightValidateDraftInvoiceLines(db, customerId, input.lines);
+  await preflightValidateDraftInvoiceLines(db, customerId, input.lines, {
+    skipStockCheck: options?.allowInsufficientStockForDraft === true,
+  });
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, orderId);
   const itemRefs = input.lines.map(() => doc(collection(db, COLLECTIONS.invoiceItems)));
@@ -322,11 +340,12 @@ export async function deleteDraftInvoice(db: Firestore, invoiceId: string): Prom
 
 export type UpdateDraftInvoiceInput = CreateInvoiceInput;
 
-/** Replaces draft line items and totals. Stock is re-validated against current product quantities (drafts do not reserve stock). */
+/** Replaces draft line items and totals. By default stock is re-validated; use `allowInsufficientStockForDraft` to save an oversell draft (posting still enforces stock). */
 export async function updateDraftInvoice(
   db: Firestore,
   invoiceId: string,
   input: UpdateDraftInvoiceInput,
+  options?: DraftSaveOptions,
 ): Promise<void> {
   const trimmedId = normalizeOrderId(invoiceId);
   const customerId = input.customer_id.trim();
@@ -339,7 +358,9 @@ export async function updateDraftInvoice(
     throw new Error("Order ID cannot be changed.");
   }
 
-  await preflightValidateDraftInvoiceLines(db, customerId, input.lines);
+  await preflightValidateDraftInvoiceLines(db, customerId, input.lines, {
+    skipStockCheck: options?.allowInsufficientStockForDraft === true,
+  });
 
   if (3 + input.lines.length > FIRESTORE_TXN_DOC_CAP) {
     throw new Error(

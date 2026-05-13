@@ -108,6 +108,11 @@ export function EditDraftInvoiceForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [stockGateMessage, setStockGateMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setStockGateMessage(null);
+  }, [items, customerId, invoiceDiscount, deliveryCharge, notes]);
 
   useEffect(() => {
     const db = getDb();
@@ -203,9 +208,11 @@ export function EditDraftInvoiceForm({
     setItems((prev) => (prev.length <= 1 ? prev : prev.filter((line) => line.id !== id)));
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function performSave(allowInsufficientStockForDraft: boolean) {
     setError(null);
+    if (!allowInsufficientStockForDraft) {
+      setStockGateMessage(null);
+    }
 
     if (!customerId) {
       setError("Select a customer.");
@@ -222,6 +229,8 @@ export function EditDraftInvoiceForm({
       unit_price: number;
       line_discount: number;
     }[] = [];
+
+    const stockIssues: string[] = [];
 
     for (const line of items) {
       if (!line.productId) {
@@ -245,10 +254,11 @@ export function EditDraftInvoiceForm({
         setError("One or more selected products are missing.");
         return;
       }
-      const stock = validateQuantityAgainstStock(qty.value, selected.stock_quantity);
-      if (!stock.ok) {
-        setError(`${selected.name}: ${stock.message}`);
-        return;
+      if (!allowInsufficientStockForDraft) {
+        const stock = validateQuantityAgainstStock(qty.value, selected.stock_quantity);
+        if (!stock.ok) {
+          stockIssues.push(`${selected.name}: ${stock.message}`);
+        }
       }
       linePayload.push({
         product_id: line.productId,
@@ -256,6 +266,11 @@ export function EditDraftInvoiceForm({
         unit_price: price.value,
         line_discount: discount.value,
       });
+    }
+
+    if (stockIssues.length > 0 && !allowInsufficientStockForDraft) {
+      setStockGateMessage(stockIssues.join(" · "));
+      return;
     }
 
     const seen = new Set<string>();
@@ -276,14 +291,20 @@ export function EditDraftInvoiceForm({
 
     setSubmitting(true);
     try {
-      await updateDraftInvoice(getDb(), invoiceId, {
-        customer_id: customerId,
-        order_id: orderId,
-        discount_amount: invDiscount.value,
-        delivery_charge: delivery.value,
-        notes,
-        lines: linePayload,
-      });
+      await updateDraftInvoice(
+        getDb(),
+        invoiceId,
+        {
+          customer_id: customerId,
+          order_id: orderId,
+          discount_amount: invDiscount.value,
+          delivery_charge: delivery.value,
+          notes,
+          lines: linePayload,
+        },
+        { allowInsufficientStockForDraft },
+      );
+      setStockGateMessage(null);
 
       const calc = calculateInvoiceSummary({
         lines: linePayload,
@@ -327,6 +348,11 @@ export function EditDraftInvoiceForm({
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    void performSave(false);
   }
 
   return (
@@ -504,6 +530,23 @@ export function EditDraftInvoiceForm({
       ) : null}
 
       {error ? <InlineAlert variant="error">{error}</InlineAlert> : null}
+      {stockGateMessage ? (
+        <div className="space-y-2">
+          <InlineAlert variant="info">
+            <span className="font-medium text-foreground">Stock is lower than the quantities on this invoice.</span>{" "}
+            Force-save updates the draft for printing; you cannot post until stock covers all lines.
+            <p className="mt-2 text-xs text-muted-foreground">{stockGateMessage}</p>
+          </InlineAlert>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={submitting || loadingCustomers || loadingProducts}
+            onClick={() => void performSave(true)}
+          >
+            {submitting ? "Saving…" : "Force save draft & print"}
+          </Button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button type="submit" disabled={submitting || loadingCustomers || loadingProducts}>

@@ -11,6 +11,7 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, markInvoicePaid, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import { listStockShortfallsForDraft } from "@/lib/invoices/draftStockGate";
 import { downloadInvoicePdf } from "@/lib/invoices/invoicePdf";
 import { buildInvoicePlainText, downloadTextFile } from "@/lib/invoices/invoiceText";
 import { buildPosReceiptInputFromCalc, printPosReceipt } from "@/lib/invoices/posReceiptPdf";
@@ -73,6 +74,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     email: "",
   });
   const [productMap, setProductMap] = useState<Map<string, string>>(new Map());
+  const [productStockById, setProductStockById] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -144,12 +146,15 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
   useEffect(() => {
     const db = getDb();
     const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const m = new Map<string, string>();
+      const names = new Map<string, string>();
+      const stocks = new Map<string, number>();
       snap.forEach((d) => {
         const data = d.data() as ProductDoc;
-        m.set(d.id, data.name);
+        names.set(d.id, data.name);
+        stocks.set(d.id, typeof data.stock_quantity === "number" ? data.stock_quantity : 0);
       });
-      setProductMap(m);
+      setProductMap(names);
+      setProductStockById(stocks);
     });
     return () => unsub();
   }, []);
@@ -207,6 +212,19 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
       lines,
     });
   }, [invoice, items, customerDetails, productMap]);
+
+  const draftStockShortfallMessages = useMemo(() => {
+    if (!invoice || invoice.status !== "draft" || items.length === 0) return [];
+    return listStockShortfallsForDraft(
+      items.map(({ data }) => ({
+        product_id: data.product_id,
+        quantity: data.quantity,
+      })),
+      productStockById,
+      productMap,
+    );
+  }, [invoice, items, productStockById, productMap]);
+  const draftHasStockShortfall = draftStockShortfallMessages.length > 0;
 
   async function handleCopy() {
     setActionError(null);
@@ -423,7 +441,12 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             <Button
               type="button"
               className="px-3 py-1.5 text-xs"
-              disabled={working !== null || editing}
+              disabled={working !== null || editing || draftHasStockShortfall}
+              title={
+                draftHasStockShortfall
+                  ? "Resolve stock shortfalls before posting (quantities must not exceed available stock)."
+                  : undefined
+              }
               onClick={() =>
                 void runAction("post", () => postInvoice(getDb(), invoice.id))
               }
@@ -487,6 +510,18 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
       {editBanner ? <InlineAlert variant="success">{editBanner}</InlineAlert> : null}
       {receiptPrintNotice ? (
         <InlineAlert variant="info">{receiptPrintNotice}</InlineAlert>
+      ) : null}
+      {isDraft && draftHasStockShortfall ? (
+        <InlineAlert variant="info">
+          <span className="font-medium text-foreground">Stock does not cover this draft.</span> You can print and edit
+          the draft, but posting is disabled until quantities are within available stock. Mark as paid is only available
+          after posting with sufficient stock.
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+            {draftStockShortfallMessages.map((msg) => (
+              <li key={msg}>{msg}</li>
+            ))}
+          </ul>
+        </InlineAlert>
       ) : null}
 
       {editing && isDraft ? (
