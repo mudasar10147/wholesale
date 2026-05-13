@@ -70,6 +70,19 @@ export function buildPosReceiptInputFromCalc(params: {
 const PAGE_W_MM = 80;
 /** Chrome print uses `height_microns`; 1 mm ≈ 1000 µm. Cap page height so drivers do not feed meters of paper. */
 const MAX_RECEIPT_PAGE_HEIGHT_MM = 1200;
+
+/** Dev logs + optional `localStorage.setItem("POS_RECEIPT_DEBUG", "1")` for a prod build on localhost. */
+function posReceiptDebugEnabled(): boolean {
+  if (typeof window !== "undefined" && window.localStorage?.getItem("POS_RECEIPT_DEBUG") === "1") {
+    return true;
+  }
+  return process.env.NODE_ENV === "development";
+}
+
+function logPosReceiptPdf(stage: string, payload: Record<string, unknown>): void {
+  if (!posReceiptDebugEnabled()) return;
+  console.log("[POS receipt PDF]", stage, payload);
+}
 const MARGIN = 4;
 /** Inset from physical right edge — thermal printers often clip the last few mm */
 const RIGHT_SAFE_INSET_MM = 6;
@@ -246,7 +259,7 @@ async function drawPosReceiptOnDoc(
   ];
 
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 36 : 48);
+    const name = shortProductName(l.product_name, wideTable ? 50 : 60);
     if (wideTable) {
       return [
         name,
@@ -274,9 +287,14 @@ async function drawPosReceiptOnDoc(
       lineWidth: 0.1,
     },
     headStyles: { fillColor: [55, 48, 120], textColor: 255, fontStyle: "bold", fontSize: 6.5 },
+    /**
+     * Explicit widths must sum to `tableWidth` (CONTENT_W). If the sum is even
+     * slightly low, every column is treated as fixed and autotable cannot absorb
+     * the remainder → console.warn("… units width could not fit page").
+     */
     columnStyles: wideTable
       ? {
-          0: { cellWidth: 21, halign: "left" },
+          0: { cellWidth: 29, halign: "left" },
           1: { cellWidth: 7, halign: "right" },
           2: { cellWidth: 10, halign: "right" },
           3: { cellWidth: 8, halign: "right" },
@@ -284,7 +302,7 @@ async function drawPosReceiptOnDoc(
           5: { cellWidth: 10, halign: "right" },
         }
       : {
-          0: { cellWidth: 33, halign: "left" },
+          0: { cellWidth: 41, halign: "left" },
           1: { cellWidth: 9, halign: "right" },
           2: { cellWidth: 11, halign: "right" },
           3: { cellWidth: 11, halign: "right" },
@@ -338,17 +356,27 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const { default: autoTable } = await import("jspdf-autotable");
 
   const policyParas = getPosPolicyParagraphs();
-  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png");
+  /** Logo source is very large (e.g. 2800px wide); downscale so the PDF stays small for print/iframe. */
+  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png", { maxWidthPx: 560 });
 
   /**
    * `doc.internal.pageSize.setHeight()` after drawing breaks many PDF viewers (blank page).
    * Measure on a tall throwaway doc, then render once at the exact height.
    */
+  const measurePageHeightMm = Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM + 400, 1600);
   const measureDoc = new jsPDF({
     unit: "mm",
-    format: [PAGE_W_MM, Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM + 400, 1600)],
+    format: [PAGE_W_MM, measurePageHeightMm],
   });
   const contentBottomRaw = await drawPosReceiptOnDoc(measureDoc, input, policyParas, logoDataUrl, autoTable);
+
+  const lastAt = (measureDoc as { lastAutoTable?: AutoTableLast }).lastAutoTable;
+  const rowHeightsSumMm =
+    lastAt && typeof lastAt === "object"
+      ? sumRowHeightsMm(lastAt.head) + sumRowHeightsMm(lastAt.body) + sumRowHeightsMm(lastAt.foot)
+      : null;
+  const lastAutoTableFinalY =
+    lastAt && typeof lastAt === "object" && typeof lastAt.finalY === "number" ? lastAt.finalY : null;
 
   const bottomPadMm = 10;
   const safetyMm = 6;
@@ -367,10 +395,39 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     Math.max(48, Math.ceil((contentBottom + bottomPadMm + safetyMm) * 10) / 10),
   );
 
+  logPosReceiptPdf("buildPosReceiptPdfBlob", {
+    order_id: input.order_id,
+    lineCount: input.lines.length,
+    policyParagraphs: policyParas.length,
+    policyChars,
+    measurePageHeightMm,
+    contentBottomRaw,
+    contentBottomRawFinite: Number.isFinite(contentBottomRaw),
+    softEstimateMm,
+    hardCapMm,
+    contentBottom,
+    pageWidthMm: PAGE_W_MM,
+    pageHeightMm,
+    /** If raw >> hardCap, clamp hid inflated measure (compare to Acrobat page height). */
+    clampedByHardCap: Number.isFinite(contentBottomRaw) && contentBottomRaw > hardCapMm + 0.5,
+    lastAutoTable: {
+      rowHeightsSumMm,
+      finalY: lastAutoTableFinalY,
+      bodyRowCount: lastAt?.body?.length ?? null,
+    },
+  });
+
   const doc = new jsPDF({ unit: "mm", format: [PAGE_W_MM, pageHeightMm] });
   await drawPosReceiptOnDoc(doc, input, policyParas, logoDataUrl, autoTable);
 
-  return doc.output("blob");
+  const blob = doc.output("blob");
+  logPosReceiptPdf("buildPosReceiptPdfBlob:done", {
+    order_id: input.order_id,
+    blobBytes: blob.size,
+    pageSizeMm: `${PAGE_W_MM}×${pageHeightMm}`,
+  });
+
+  return blob;
 }
 
 /**
@@ -382,8 +439,16 @@ export async function printPosReceipt(input: PosReceiptInput): Promise<void> {
     throw new Error("printPosReceipt is only available in the browser.");
   }
 
+  logPosReceiptPdf("printPosReceipt:start", {
+    order_id: input.order_id,
+    lineCount: input.lines.length,
+    hint: 'Force logs: localStorage.setItem("POS_RECEIPT_DEBUG","1") then reload',
+  });
+
   const blob = await buildPosReceiptPdfBlob(input);
   const url = URL.createObjectURL(blob);
+
+  logPosReceiptPdf("printPosReceipt:iframe", { blobUrlCreated: true, blobBytes: blob.size });
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
@@ -413,6 +478,9 @@ export async function printPosReceipt(input: PosReceiptInput): Promise<void> {
       }
       win.focus();
       window.requestAnimationFrame(() => {
+        logPosReceiptPdf("printPosReceipt: invoking win.print()", {
+          order_id: input.order_id,
+        });
         win.print();
       });
       window.setTimeout(cleanup, 2_000);

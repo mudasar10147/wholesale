@@ -34,7 +34,7 @@ export async function downloadSalesCatalogPdf(rows: SalesCatalogPdfRow[]): Promi
   const margin = 14;
   let y = margin;
 
-  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png");
+  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png", { maxWidthPx: 720 });
   const logoWidth = 58;
   const logoProps = doc.getImageProperties(logoDataUrl);
   const logoHeight = (logoWidth * logoProps.height) / logoProps.width;
@@ -161,7 +161,7 @@ export async function downloadRetailRateListPdf(rows: SalesCatalogPdfRow[]): Pro
   const margin = 14;
   let y = margin;
 
-  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png");
+  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png", { maxWidthPx: 720 });
   const logoWidth = 58;
   const logoProps = doc.getImageProperties(logoDataUrl);
   const logoHeight = (logoWidth * logoProps.height) / logoProps.width;

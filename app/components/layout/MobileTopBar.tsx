@@ -23,9 +23,11 @@ export function MobileTopBar({ menuOpen, onMenuClick, menuContentId }: MobileTop
         <Image
           src="/wholesale_logo.png"
           alt="Wholesale"
-          width={96}
-          height={32}
+          width={804}
+          height={200}
           className="h-8 w-auto shrink-0 object-contain"
+          style={{ width: "auto" }}
+          priority
         />
       </Link>
       <button

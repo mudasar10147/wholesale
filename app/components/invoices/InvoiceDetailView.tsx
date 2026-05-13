@@ -315,9 +315,10 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           <Image
             src="/wholesale_logo.png"
             alt="Wholesale"
-            width={160}
-            height={48}
+            width={804}
+            height={200}
             className="h-10 w-auto object-contain sm:h-11"
+            style={{ width: "auto" }}
             priority
           />
           <Link

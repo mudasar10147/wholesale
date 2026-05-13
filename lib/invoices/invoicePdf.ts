@@ -38,7 +38,7 @@ export async function downloadInvoicePdf(input: InvoicePdfInput): Promise<void> 
   const margin = 14;
   let y = margin;
 
-  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png");
+  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png", { maxWidthPx: 720 });
   const logoW = 55;
   const imgProps = doc.getImageProperties(logoDataUrl);
   const logoH = (logoW * imgProps.height) / imgProps.width;

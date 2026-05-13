@@ -11,9 +11,10 @@ export default function LoginPage() {
           <Image
             src="/wholesale_logo.png"
             alt="Wholesale"
-            width={180}
-            height={56}
+            width={804}
+            height={200}
             className="h-14 w-auto object-contain"
+            style={{ width: "auto" }}
             priority
           />
           <div>

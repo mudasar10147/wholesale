@@ -15,9 +15,10 @@ export function AppBrand() {
         <Image
           src="/wholesale_logo.png"
           alt="Wholesale"
-          width={160}
-          height={48}
+          width={804}
+          height={200}
           className="h-12 max-h-12 w-auto object-contain"
+          style={{ width: "auto" }}
           priority
         />
       </span>
