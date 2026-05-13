@@ -6,6 +6,7 @@ import {
   getPosBusinessName,
   getPosBusinessPhone,
   getPosPolicyParagraphs,
+  getPosShopNumber,
   getPosTaxId,
   getPosThankYouLine,
 } from "@/lib/invoices/posReceiptBranding";
@@ -71,6 +72,17 @@ const PAGE_W_MM = 80;
 /** Chrome print uses `height_microns`; 1 mm ≈ 1000 µm. Cap page height so drivers do not feed meters of paper. */
 const MAX_RECEIPT_PAGE_HEIGHT_MM = 1200;
 
+/** Extra left inset — thermal printers often clip the first few mm. */
+const LEFT_MARGIN_MM = 7;
+const RIGHT_MARGIN_MM = 4;
+/** Inset from physical right edge — thermal printers often clip the last few mm */
+const RIGHT_SAFE_INSET_MM = 6;
+const CONTENT_W = PAGE_W_MM - LEFT_MARGIN_MM - RIGHT_MARGIN_MM;
+/** X where right-aligned money ends (left of non-printable zone) */
+const TOTALS_AMOUNT_RIGHT_X = PAGE_W_MM - RIGHT_MARGIN_MM - RIGHT_SAFE_INSET_MM;
+/** Top padding before logo */
+const TOP_MARGIN_MM = 3;
+
 /** Dev logs + optional `localStorage.setItem("POS_RECEIPT_DEBUG", "1")` for a prod build on localhost. */
 function posReceiptDebugEnabled(): boolean {
   if (typeof window !== "undefined" && window.localStorage?.getItem("POS_RECEIPT_DEBUG") === "1") {
@@ -83,12 +95,6 @@ function logPosReceiptPdf(stage: string, payload: Record<string, unknown>): void
   if (!posReceiptDebugEnabled()) return;
   console.log("[POS receipt PDF]", stage, payload);
 }
-const MARGIN = 4;
-/** Inset from physical right edge — thermal printers often clip the last few mm */
-const RIGHT_SAFE_INSET_MM = 6;
-const CONTENT_W = PAGE_W_MM - 2 * MARGIN;
-/** X where right-aligned money ends (left of non-printable zone) */
-const TOTALS_AMOUNT_RIGHT_X = PAGE_W_MM - MARGIN - RIGHT_SAFE_INSET_MM;
 
 function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -115,7 +121,7 @@ function drawTotalsLine(
   const lineGap = opts.lineGap ?? 4.2;
   doc.setFont("helvetica", opts.bold ? "bold" : "normal");
   doc.setFontSize(fontSize);
-  doc.text(label, MARGIN, y);
+  doc.text(label, LEFT_MARGIN_MM, y);
   doc.text(amountStr, TOTALS_AMOUNT_RIGHT_X, y, { align: "right" });
   return y + lineGap;
 }
@@ -145,7 +151,7 @@ function getTableBottomYMm(
 ): number {
   const raw = (doc as { lastAutoTable?: unknown }).lastAutoTable;
   if (!raw || typeof raw !== "object") {
-    return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
+    return tableStartY + 16 + Math.max(lineCount, 1) * 9 + 10;
   }
   const t = raw as AutoTableLast;
   const inner = sumRowHeightsMm(t.head) + sumRowHeightsMm(t.body) + sumRowHeightsMm(t.foot);
@@ -155,7 +161,7 @@ function getTableBottomYMm(
   if (typeof t.finalY === "number" && Number.isFinite(t.finalY) && t.finalY > tableStartY + 2) {
     return t.finalY;
   }
-  return tableStartY + 12 + Math.max(lineCount, 1) * 7 + 8;
+  return tableStartY + 16 + Math.max(lineCount, 1) * 9 + 10;
 }
 
 type AutoTableFn = (d: import("jspdf").default, options: Record<string, unknown>) => void;
@@ -171,14 +177,32 @@ async function drawPosReceiptOnDoc(
   autoTable: AutoTableFn,
 ): Promise<number> {
   const cx = PAGE_W_MM / 2;
-  let y = MARGIN;
+  const lineX1 = LEFT_MARGIN_MM;
+  const lineX2 = PAGE_W_MM - RIGHT_MARGIN_MM;
+  doc.setTextColor(0, 0, 0);
+  let y = TOP_MARGIN_MM;
 
-  const logoMaxW = 36;
+  const shopNo = getPosShopNumber();
+  if (shopNo?.trim()) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(8);
+    doc.text(`Shop No. ${shopNo.trim()}`, cx, y, { align: "center" });
+    y += 4.5;
+  }
+
+  const logoMaxW = 50;
   const imgProps = doc.getImageProperties(logoDataUrl);
   const logoW = logoMaxW;
   const logoH = (logoW * imgProps.height) / imgProps.width;
   doc.addImage(logoDataUrl, "PNG", cx - logoW / 2, y, logoW, logoH);
-  y += logoH + 4;
+  y += logoH + 3;
+
+  if (shopNo?.trim()) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text(`Shop No. ${shopNo.trim()}`, cx, y, { align: "center" });
+    y += 5;
+  }
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(11);
@@ -203,8 +227,8 @@ async function drawPosReceiptOnDoc(
   }
   y += 2;
 
-  doc.setDrawColor(40);
-  doc.line(MARGIN, y, PAGE_W_MM - MARGIN, y);
+  doc.setDrawColor(35);
+  doc.line(lineX1, y, lineX2, y);
   y += 5;
 
   doc.setFont("helvetica", "bold");
@@ -225,7 +249,7 @@ async function drawPosReceiptOnDoc(
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
-  doc.text("Bill to", MARGIN, y);
+  doc.text("Bill to", LEFT_MARGIN_MM, y);
   y += 4;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
@@ -237,7 +261,7 @@ async function drawPosReceiptOnDoc(
   ].filter(Boolean) as string[];
   for (const bit of custBits) {
     const parts = doc.splitTextToSize(bit, CONTENT_W);
-    doc.text(parts, MARGIN, y);
+    doc.text(parts, LEFT_MARGIN_MM, y);
     y += parts.length * 3.6;
   }
   y += 2;
@@ -245,7 +269,7 @@ async function drawPosReceiptOnDoc(
   if (input.notes?.trim()) {
     doc.setFont("helvetica", "italic");
     const noteParts = doc.splitTextToSize(`Notes: ${input.notes.trim()}`, CONTENT_W);
-    doc.text(noteParts, MARGIN, y);
+    doc.text(noteParts, LEFT_MARGIN_MM, y);
     y += noteParts.length * 3.6 + 2;
     doc.setFont("helvetica", "normal");
   }
@@ -258,8 +282,9 @@ async function drawPosReceiptOnDoc(
     wideTable ? ["Item", "Qty", "Unit", "Disc", "Del", "Total"] : ["Item", "Qty", "Unit", "Total"],
   ];
 
+  const tableFont = 7.8;
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 50 : 60);
+    const name = shortProductName(l.product_name, wideTable ? 46 : 55);
     if (wideTable) {
       return [
         name,
@@ -280,13 +305,34 @@ async function drawPosReceiptOnDoc(
     head: head,
     body,
     tableWidth: CONTENT_W,
+    theme: "plain",
     styles: {
-      fontSize: 6.5,
-      cellPadding: 0.35,
+      font: "helvetica",
+      fontSize: tableFont,
+      cellPadding: 0.55,
       overflow: "linebreak",
+      lineWidth: 0.08,
+      lineColor: 35,
+      textColor: 0,
+      fillColor: 255,
+    },
+    headStyles: {
+      fillColor: 255,
+      textColor: 0,
+      fontStyle: "bold",
+      fontSize: tableFont,
+      lineColor: 35,
       lineWidth: 0.1,
     },
-    headStyles: { fillColor: [55, 48, 120], textColor: 255, fontStyle: "bold", fontSize: 6.5 },
+    bodyStyles: {
+      fillColor: 255,
+      textColor: 0,
+      fontSize: tableFont,
+    },
+    alternateRowStyles: {
+      fillColor: 255,
+      textColor: 0,
+    },
     /**
      * Explicit widths must sum to `tableWidth` (CONTENT_W). If the sum is even
      * slightly low, every column is treated as fixed and autotable cannot absorb
@@ -294,7 +340,7 @@ async function drawPosReceiptOnDoc(
      */
     columnStyles: wideTable
       ? {
-          0: { cellWidth: 29, halign: "left" },
+          0: { cellWidth: 26, halign: "left" },
           1: { cellWidth: 7, halign: "right" },
           2: { cellWidth: 10, halign: "right" },
           3: { cellWidth: 8, halign: "right" },
@@ -302,12 +348,12 @@ async function drawPosReceiptOnDoc(
           5: { cellWidth: 10, halign: "right" },
         }
       : {
-          0: { cellWidth: 41, halign: "left" },
+          0: { cellWidth: 38, halign: "left" },
           1: { cellWidth: 9, halign: "right" },
           2: { cellWidth: 11, halign: "right" },
           3: { cellWidth: 11, halign: "right" },
         },
-    margin: { left: MARGIN, right: MARGIN },
+    margin: { left: LEFT_MARGIN_MM, right: RIGHT_MARGIN_MM },
   });
 
   const tableBottomY = getTableBottomYMm(doc, tableStartY, input.lines.length);
@@ -315,23 +361,23 @@ async function drawPosReceiptOnDoc(
 
   doc.setFont("helvetica", "normal");
   totalsY = drawTotalsLine(doc, "Subtotal", money(input.subtotal_amount), totalsY, {
-    fontSize: 8,
+    fontSize: 8.5,
   });
   totalsY = drawTotalsLine(doc, "Discount", money(input.discount_amount), totalsY, {
-    fontSize: 8,
+    fontSize: 8.5,
   });
   totalsY = drawTotalsLine(doc, "Delivery", money(input.delivery_charge), totalsY, {
-    fontSize: 8,
+    fontSize: 8.5,
   });
   totalsY = drawTotalsLine(doc, "TOTAL", money(input.total_amount), totalsY, {
     bold: true,
-    fontSize: 9,
+    fontSize: 9.5,
     lineGap: 5,
   });
   totalsY += 4;
 
-  doc.setDrawColor(40);
-  doc.line(MARGIN, totalsY, PAGE_W_MM - MARGIN, totalsY);
+  doc.setDrawColor(35);
+  doc.line(lineX1, totalsY, lineX2, totalsY);
   totalsY += 6;
 
   doc.setFont("helvetica", "bold");
@@ -344,7 +390,7 @@ async function drawPosReceiptOnDoc(
   doc.setFontSize(7);
   for (const para of policyParas) {
     const parts = doc.splitTextToSize(para, CONTENT_W);
-    doc.text(parts, MARGIN, totalsY);
+    doc.text(parts, LEFT_MARGIN_MM, totalsY);
     totalsY += parts.length * 3.2 + 2;
   }
 
@@ -357,7 +403,10 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
 
   const policyParas = getPosPolicyParagraphs();
   /** Logo source is very large (e.g. 2800px wide); downscale so the PDF stays small for print/iframe. */
-  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png", { maxWidthPx: 560 });
+  const logoDataUrl = await loadPublicPngAsDataUrl("/wholesale_logo.png", {
+    maxWidthPx: 720,
+    grayscale: true,
+  });
 
   /**
    * `doc.internal.pageSize.setHeight()` after drawing breaks many PDF viewers (blank page).
@@ -384,7 +433,7 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const policyChars = policyParas.reduce((n, p) => n + p.length, 0);
   /** Soft ceiling from line count — must stay well below MAX or it becomes the print page height (see height_microns). */
   const softEstimateMm =
-    180 + lines * 10 + Math.ceil(policyChars / 46) * 3.4 + 120;
+    200 + lines * 12 + Math.ceil(policyChars / 46) * 3.4 + 120;
   const hardCapMm = Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM - bottomPadMm - safetyMm, softEstimateMm);
   const contentBottom = Number.isFinite(contentBottomRaw)
     ? Math.min(contentBottomRaw, hardCapMm)

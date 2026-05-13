@@ -8,6 +8,12 @@ export function getPosBusinessName(): string {
   return env("NEXT_PUBLIC_POS_BUSINESS_NAME") ?? "Wholesale";
 }
 
+/** Shop / unit number printed on POS slips (e.g. market stall no.). Optional. */
+export function getPosShopNumber(): string | undefined {
+  const v = env("NEXT_PUBLIC_POS_SHOP_NUMBER");
+  return v && v.length > 0 ? v : undefined;
+}
+
 export function getPosBusinessAddress(): string | undefined {
   return env("NEXT_PUBLIC_POS_BUSINESS_ADDRESS");
 }
