@@ -93,8 +93,8 @@ const MARGIN_TOP_MM = 4;
  * Invariant: CONTENT_X1 - CONTENT_X0 === CONTENT_W_MM; autoTable tableWidth uses CONTENT_W_MM
  * with margin.left CONTENT_X0 and margin.right PAGE_W_MM - CONTENT_X1.
  */
-const CONTENT_W_MM = 75;
-const GUTTER_R_MM = (PAGE_W_MM - CONTENT_W_MM) / 2 + 2;
+const CONTENT_W_MM = 70;
+const GUTTER_R_MM = (PAGE_W_MM - CONTENT_W_MM) / 2 + 0.75;
 const GUTTER_L_MM = PAGE_W_MM - CONTENT_W_MM - GUTTER_R_MM;
 const CONTENT_X0 = GUTTER_L_MM;
 const CONTENT_X1 = PAGE_W_MM - GUTTER_R_MM;
