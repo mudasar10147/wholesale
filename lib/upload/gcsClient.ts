@@ -3,8 +3,40 @@ import { logger } from '../utils/logger';
 
 let storageClient: Storage | null = null;
 
+/** Minimal shape for `Storage({ credentials })` — full SA JSON from GCP. */
+type ServiceAccountCredentials = {
+  client_email: string;
+  private_key: string;
+  project_id?: string;
+};
+
+function parseServiceAccountFromEnv(): ServiceAccountCredentials | null {
+  const raw = process.env.GCS_SERVICE_ACCOUNT_JSON?.trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const client_email = parsed.client_email;
+    const private_key = parsed.private_key;
+    if (typeof client_email !== 'string' || typeof private_key !== 'string') {
+      logger.warn(
+        'GCS_SERVICE_ACCOUNT_JSON is set but JSON is missing client_email or private_key (wrong file type?)',
+      );
+      return null;
+    }
+    return {
+      client_email,
+      private_key,
+      project_id: typeof parsed.project_id === 'string' ? parsed.project_id : undefined,
+    };
+  } catch (error) {
+    logger.error('GCS_SERVICE_ACCOUNT_JSON is not valid JSON', { err: error });
+    return null;
+  }
+}
+
 // Returns a cached GCS client, or null if env vars are missing.
-// Auth is via ADC — no key file needed when a service account is attached to the instance.
+// Auth (in order): `GCS_SERVICE_ACCOUNT_JSON` (Vercel / serverless), else Application Default Credentials
+// (e.g. `GOOGLE_APPLICATION_CREDENTIALS` path on a laptop or SA attached to a GCP VM).
 export function getGCSClient(): Storage | null {
   if (storageClient !== null) {
     return storageClient;
@@ -18,9 +50,23 @@ export function getGCSClient(): Storage | null {
     return null;
   }
 
+  const credentials = parseServiceAccountFromEnv();
+
   try {
-    storageClient = new Storage({ projectId });
-    logger.info('GCS client initialized with Application Default Credentials');
+    storageClient = credentials
+      ? new Storage({
+          projectId,
+          credentials: {
+            client_email: credentials.client_email,
+            private_key: credentials.private_key.replace(/\\n/g, '\n'),
+          },
+        })
+      : new Storage({ projectId });
+    logger.info(
+      credentials
+        ? 'GCS client initialized with GCS_SERVICE_ACCOUNT_JSON'
+        : 'GCS client initialized with Application Default Credentials',
+    );
     return storageClient;
   } catch (error) {
     logger.error('Failed to initialize GCS client', { err: error });

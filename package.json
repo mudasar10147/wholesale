@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test:gcs": "node scripts/test-gcs-upload.mjs",
     "lint": "eslint",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"
