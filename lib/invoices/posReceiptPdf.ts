@@ -85,14 +85,22 @@ function logPosReceiptPdf(stage: string, payload: Record<string, unknown>): void
   console.log("[POS receipt PDF]", stage, payload);
 }
 const MARGIN_TOP_MM = 4;
-const MARGIN_LEFT_MM = 4;
-/** Extra right inset — thermal printers often clip the last few mm of the roll. */
-const MARGIN_RIGHT_MM = 11;
-/** Inset from physical right edge inside the content area for right-aligned amounts */
-const RIGHT_SAFE_INSET_MM = 10;
-const CONTENT_W = PAGE_W_MM - MARGIN_LEFT_MM - MARGIN_RIGHT_MM;
-/** X where right-aligned money ends (left of non-printable zone) */
-const TOTALS_AMOUNT_RIGHT_X = PAGE_W_MM - MARGIN_RIGHT_MM - RIGHT_SAFE_INSET_MM;
+
+/**
+ * Single content band on 80 mm stock: 75 mm live width, biased slightly right so
+ * text stays off the clipped edge of common thermal drivers.
+ * CONTENT_X0/CONTENT_X1 — use for lines, splitTextToSize width, autoTable margins.
+ * Invariant: CONTENT_X1 - CONTENT_X0 === CONTENT_W_MM; autoTable tableWidth uses CONTENT_W_MM
+ * with margin.left CONTENT_X0 and margin.right PAGE_W_MM - CONTENT_X1.
+ */
+const CONTENT_W_MM = 75;
+const GUTTER_R_MM = (PAGE_W_MM - CONTENT_W_MM) / 2 + 0.75;
+const GUTTER_L_MM = PAGE_W_MM - CONTENT_W_MM - GUTTER_R_MM;
+const CONTENT_X0 = GUTTER_L_MM;
+const CONTENT_X1 = PAGE_W_MM - GUTTER_R_MM;
+const CONTENT_CX = (CONTENT_X0 + CONTENT_X1) / 2;
+/** One inset inside the right edge of the content box for right-aligned amounts */
+const TOTALS_AMOUNT_RIGHT_X = CONTENT_X1 - 1;
 
 function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -120,7 +128,7 @@ function drawTotalsLine(
   const lineGap = opts.lineGap ?? 4.2;
   doc.setFont("helvetica", opts.bold ? "bold" : "normal");
   doc.setFontSize(fontSize);
-  doc.text(label, MARGIN_LEFT_MM, y);
+  doc.text(label, CONTENT_X0, y);
   doc.text(amountStr, TOTALS_AMOUNT_RIGHT_X, y, { align: "right" });
   return y + lineGap;
 }
@@ -175,10 +183,10 @@ async function drawPosReceiptOnDoc(
   logoDataUrl: string,
   autoTable: AutoTableFn,
 ): Promise<number> {
-  const cx = PAGE_W_MM / 2;
+  const cx = CONTENT_CX;
   let y = MARGIN_TOP_MM;
 
-  const logoMaxW = 50;
+  const logoMaxW = Math.min(50, CONTENT_W_MM - 2);
   const imgProps = doc.getImageProperties(logoDataUrl);
   const logoW = logoMaxW;
   const logoH = (logoW * imgProps.height) / imgProps.width;
@@ -212,14 +220,14 @@ async function drawPosReceiptOnDoc(
   if (email) bizLines.push(email);
   if (taxId) bizLines.push(`Tax ID: ${taxId}`);
   for (const bl of bizLines) {
-    const parts = doc.splitTextToSize(bl, CONTENT_W);
+    const parts = doc.splitTextToSize(bl, CONTENT_W_MM);
     doc.text(parts, cx, y, { align: "center" });
     y += parts.length * 3.6;
   }
   y += 2;
 
   doc.setDrawColor(0);
-  doc.line(MARGIN_LEFT_MM, y, PAGE_W_MM - MARGIN_RIGHT_MM, y);
+  doc.line(CONTENT_X0, y, CONTENT_X1, y);
   y += 5;
 
   doc.setFont("helvetica", "bold");
@@ -240,7 +248,7 @@ async function drawPosReceiptOnDoc(
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
-  doc.text("Bill to", MARGIN_LEFT_MM, y);
+  doc.text("Bill to", CONTENT_X0, y);
   y += 4;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8);
@@ -251,16 +259,16 @@ async function drawPosReceiptOnDoc(
     input.customer_email?.trim() ? `Email: ${input.customer_email.trim()}` : null,
   ].filter(Boolean) as string[];
   for (const bit of custBits) {
-    const parts = doc.splitTextToSize(bit, CONTENT_W);
-    doc.text(parts, MARGIN_LEFT_MM, y);
+    const parts = doc.splitTextToSize(bit, CONTENT_W_MM);
+    doc.text(parts, CONTENT_X0, y);
     y += parts.length * 3.6;
   }
   y += 2;
 
   if (input.notes?.trim()) {
     doc.setFont("helvetica", "italic");
-    const noteParts = doc.splitTextToSize(`Notes: ${input.notes.trim()}`, CONTENT_W);
-    doc.text(noteParts, MARGIN_LEFT_MM, y);
+    const noteParts = doc.splitTextToSize(`Notes: ${input.notes.trim()}`, CONTENT_W_MM);
+    doc.text(noteParts, CONTENT_X0, y);
     y += noteParts.length * 3.6 + 2;
     doc.setFont("helvetica", "normal");
   }
@@ -273,8 +281,9 @@ async function drawPosReceiptOnDoc(
     wideTable ? ["Item", "Qty", "Unit", "Disc", "Del", "Total"] : ["Item", "Qty", "Unit", "Total"],
   ];
 
+  const tableFontSize = wideTable ? 7 : 8;
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 48 : 55);
+    const name = shortProductName(l.product_name, wideTable ? 36 : 42);
     if (wideTable) {
       return [
         name,
@@ -295,11 +304,11 @@ async function drawPosReceiptOnDoc(
     head: head,
     body,
     theme: "plain",
-    tableWidth: CONTENT_W,
+    tableWidth: CONTENT_W_MM,
     styles: {
-      fontSize: 8,
+      fontSize: tableFontSize,
       font: "helvetica",
-      cellPadding: 0.55,
+      cellPadding: 0.45,
       overflow: "linebreak",
       lineWidth: 0.12,
       lineColor: 0,
@@ -310,38 +319,37 @@ async function drawPosReceiptOnDoc(
       fillColor: 255,
       textColor: 0,
       fontStyle: "bold",
-      fontSize: 8,
+      fontSize: tableFontSize,
       lineWidth: 0.12,
       lineColor: 0,
     },
     bodyStyles: {
       fillColor: 255,
       textColor: 0,
-      fontSize: 8,
+      fontSize: tableFontSize,
       lineColor: 40,
     },
     alternateRowStyles: { fillColor: 255, textColor: 0 },
     /**
-     * Explicit widths must sum to `tableWidth` (CONTENT_W). If the sum is even
-     * slightly low, every column is treated as fixed and autotable cannot absorb
-     * the remainder → console.warn("… units width could not fit page").
+     * Column 0 (Item) has no fixed cellWidth so autotable fills the remainder of
+     * CONTENT_W_MM after numeric Qty/Unit/(Disc/Del)/Total — avoids width warnings.
      */
     columnStyles: wideTable
       ? {
-          0: { cellWidth: 31, halign: "left" },
-          1: { cellWidth: 2, halign: "right" },
-          2: { cellWidth: 5, halign: "right" },
-          3: { cellWidth: 7, halign: "right" },
-          4: { cellWidth: 7, halign: "right" },
+          0: { halign: "left" },
+          1: { cellWidth: 7, halign: "right" },
+          2: { cellWidth: 11, halign: "right" },
+          3: { cellWidth: 9, halign: "right" },
+          4: { cellWidth: 9, halign: "right" },
           5: { cellWidth: 13, halign: "right" },
         }
       : {
-          0: { cellWidth: 41, halign: "left" },
-          1: { cellWidth: 7, halign: "right" },
-          2: { cellWidth: 8, halign: "right" },
-          3: { cellWidth: 9, halign: "right" },
+          0: { halign: "left" },
+          1: { cellWidth: 10, halign: "right" },
+          2: { cellWidth: 14, halign: "right" },
+          3: { cellWidth: 16, halign: "right" },
         },
-    margin: { left: MARGIN_LEFT_MM, right: MARGIN_RIGHT_MM },
+    margin: { left: CONTENT_X0, right: PAGE_W_MM - CONTENT_X1 },
   });
 
   const tableBottomY = getTableBottomYMm(doc, tableStartY, input.lines.length);
@@ -366,21 +374,21 @@ async function drawPosReceiptOnDoc(
   totalsY += 4;
 
   doc.setDrawColor(0);
-  doc.line(MARGIN_LEFT_MM, totalsY, PAGE_W_MM - MARGIN_RIGHT_MM, totalsY);
+  doc.line(CONTENT_X0, totalsY, CONTENT_X1, totalsY);
   totalsY += 6;
 
   doc.setTextColor(0);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
-  const thanksParts = doc.splitTextToSize(getPosThankYouLine(), CONTENT_W);
+  const thanksParts = doc.splitTextToSize(getPosThankYouLine(), CONTENT_W_MM);
   doc.text(thanksParts, cx, totalsY, { align: "center" });
   totalsY += thanksParts.length * 3.8 + 2;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7);
   for (const para of policyParas) {
-    const parts = doc.splitTextToSize(para, CONTENT_W);
-    doc.text(parts, MARGIN_LEFT_MM, totalsY);
+    const parts = doc.splitTextToSize(para, CONTENT_W_MM);
+    doc.text(parts, CONTENT_X0, totalsY);
     totalsY += parts.length * 3.2 + 2;
   }
 
@@ -440,6 +448,14 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
     policyParagraphs: policyParas.length,
     policyChars,
     measurePageHeightMm,
+    contentBox: {
+      CONTENT_X0,
+      CONTENT_X1,
+      CONTENT_W_MM,
+      CONTENT_CX,
+      GUTTER_L_MM,
+      GUTTER_R_MM,
+    },
     contentBottomRaw,
     contentBottomRawFinite: Number.isFinite(contentBottomRaw),
     softEstimateMm,
