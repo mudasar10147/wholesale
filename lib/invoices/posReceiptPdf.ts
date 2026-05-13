@@ -87,20 +87,22 @@ function logPosReceiptPdf(stage: string, payload: Record<string, unknown>): void
 const MARGIN_TOP_MM = 4;
 
 /**
- * Single content band on 80 mm stock: 75 mm live width, biased slightly right so
- * text stays off the clipped edge of common thermal drivers.
- * CONTENT_X0/CONTENT_X1 — use for lines, splitTextToSize width, autoTable margins.
- * Invariant: CONTENT_X1 - CONTENT_X0 === CONTENT_W_MM; autoTable tableWidth uses CONTENT_W_MM
+ * 80 mm PDF page: ink lives in a narrower band (`CONTENT_W_MM`) so thermal heads
+ * that cannot print full width do not clip. **Fixed small left gutter** — all
+ * remaining side space goes to the **right** so narrowing the band does not
+ * balloon left padding symmetrically.
+ * Invariant: CONTENT_X1 - CONTENT_X0 === CONTENT_W_MM; autoTable uses CONTENT_W_MM
  * with margin.left CONTENT_X0 and margin.right PAGE_W_MM - CONTENT_X1.
  */
 const CONTENT_W_MM = 70;
-const GUTTER_R_MM = (PAGE_W_MM - CONTENT_W_MM) / 2 + 0.75;
-const GUTTER_L_MM = PAGE_W_MM - CONTENT_W_MM - GUTTER_R_MM;
+/** Minimal clearance from physical left edge of the roll (mm). */
+const GUTTER_L_MM = 2;
+const GUTTER_R_MM = PAGE_W_MM - CONTENT_W_MM - GUTTER_L_MM;
 const CONTENT_X0 = GUTTER_L_MM;
 const CONTENT_X1 = PAGE_W_MM - GUTTER_R_MM;
 const CONTENT_CX = (CONTENT_X0 + CONTENT_X1) / 2;
-/** One inset inside the right edge of the content box for right-aligned amounts */
-const TOTALS_AMOUNT_RIGHT_X = CONTENT_X1 - 1;
+/** Inset inside right edge of content box for right-aligned totals amounts */
+const TOTALS_AMOUNT_RIGHT_X = CONTENT_X1 - 2;
 
 function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
