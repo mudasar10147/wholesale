@@ -11,12 +11,25 @@ type ServiceAccountCredentials = {
 };
 
 function parseServiceAccountFromEnv(): ServiceAccountCredentials | null {
-  const raw = process.env.GCS_SERVICE_ACCOUNT_JSON?.trim();
+  let raw = process.env.GCS_SERVICE_ACCOUNT_JSON?.trim();
   if (!raw) return null;
+  // Strip UTF-8 BOM if the secret was saved with one
+  if (raw.charCodeAt(0) === 0xfeff) {
+    raw = raw.slice(1);
+  }
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const client_email = parsed.client_email;
-    const private_key = parsed.private_key;
+    let parsed: unknown = JSON.parse(raw);
+    // Vercel / copy-paste: value is sometimes a JSON-encoded string containing the object
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed) as unknown;
+    }
+    if (typeof parsed !== 'object' || parsed === null) {
+      logger.warn('GCS_SERVICE_ACCOUNT_JSON parsed to a non-object');
+      return null;
+    }
+    const rec = parsed as Record<string, unknown>;
+    const client_email = rec.client_email;
+    const private_key = rec.private_key;
     if (typeof client_email !== 'string' || typeof private_key !== 'string') {
       logger.warn(
         'GCS_SERVICE_ACCOUNT_JSON is set but JSON is missing client_email or private_key (wrong file type?)',
@@ -26,7 +39,7 @@ function parseServiceAccountFromEnv(): ServiceAccountCredentials | null {
     return {
       client_email,
       private_key,
-      project_id: typeof parsed.project_id === 'string' ? parsed.project_id : undefined,
+      project_id: typeof rec.project_id === 'string' ? rec.project_id : undefined,
     };
   } catch (error) {
     logger.error('GCS_SERVICE_ACCOUNT_JSON is not valid JSON', { err: error });
@@ -42,8 +55,8 @@ export function getGCSClient(): Storage | null {
     return storageClient;
   }
 
-  const projectId = process.env.GCS_PROJECT_ID;
-  const bucketName = process.env.GCS_BUCKET_NAME;
+  const projectId = process.env.GCS_PROJECT_ID?.trim();
+  const bucketName = process.env.GCS_BUCKET_NAME?.trim();
 
   if (!projectId || !bucketName) {
     logger.info('GCS not configured: Missing GCS_PROJECT_ID or GCS_BUCKET_NAME. Using local file storage.');
@@ -51,11 +64,23 @@ export function getGCSClient(): Storage | null {
   }
 
   const credentials = parseServiceAccountFromEnv();
+  const adcPath = process.env.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+
+  // Never use `new Storage({ projectId })` alone on Vercel/serverless: there is no metadata-based
+  // Application Default Credentials, so the first API call fails with "Unable to detect a Project Id".
+  if (!credentials && !adcPath) {
+    logger.warn(
+      'GCS is partially configured: GCS_PROJECT_ID and GCS_BUCKET_NAME are set but GCS_SERVICE_ACCOUNT_JSON ' +
+        'is missing or invalid JSON. On Vercel paste the full service account key as one line (see docs/GCS_VERCEL.md). ' +
+        'Locally you can use GOOGLE_APPLICATION_CREDENTIALS instead.',
+    );
+    return null;
+  }
 
   try {
     storageClient = credentials
       ? new Storage({
-          projectId,
+          projectId: credentials.project_id || projectId,
           credentials: {
             client_email: credentials.client_email,
             private_key: credentials.private_key.replace(/\\n/g, '\n'),

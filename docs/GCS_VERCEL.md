@@ -36,6 +36,12 @@ Add for **Production** (and **Preview** / **Development** if you want uploads th
 
 Redeploy after saving variables (Vercel → Deployments → Redeploy, or push a commit).
 
+### Troubleshooting: `Unable to detect a Project Id`
+
+That message usually means the Node client fell back to **Application Default Credentials** (metadata server / gcloud), which **do not exist on Vercel**. In this repo, that happens if **`GCS_SERVICE_ACCOUNT_JSON` is missing, empty, or not valid JSON** so the service account is never passed to `Storage`.
+
+Fix: paste the **full** key JSON again (minify with `jq -c . key.json`), redeploy, and confirm the variable is enabled for the environment you are testing (Production vs Preview). The app will log a warning when project/bucket are set but the JSON could not be parsed.
+
 ## 3. Optional: local parity with production
 
 In `.env.local` you can set the same three variables instead of `GOOGLE_APPLICATION_CREDENTIALS`. Keep `.env.local` out of git (it usually is via `.gitignore`).
