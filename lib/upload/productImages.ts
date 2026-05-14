@@ -1,6 +1,7 @@
 "use client";
 
 import { getAuthClient } from "@/lib/firebase";
+import { maybeCompressProductImage, VERCEL_SAFE_UPLOAD_MAX_BYTES } from "@/lib/upload/compressImageForUpload";
 
 export type UploadedProductImage = {
   fileName: string;
@@ -56,9 +57,21 @@ function apiUrl(path: string): string {
 }
 
 export async function uploadProductImage(file: File): Promise<UploadedProductImage> {
+  const prepared = await maybeCompressProductImage(file);
+  if (prepared.size > VERCEL_SAFE_UPLOAD_MAX_BYTES) {
+    const mb = (prepared.size / (1024 * 1024)).toFixed(1);
+    const hint =
+      /^image\/(heic|heif)$/i.test(file.type) || /^image\/(heic|heif)$/i.test(prepared.type)
+        ? " iPhone HEIC files often cannot be shrunk in the browser here—export as JPEG in Photos first, or use a smaller file."
+        : " Try exporting a smaller JPEG or crop the photo.";
+    throw new Error(
+      `This image is still about ${mb} MB after compression. Hosting limits uploads to roughly 4.5 MB.${hint}`,
+    );
+  }
+
   const token = await getBearerToken();
   const formData = new FormData();
-  formData.set("file", file);
+  formData.set("file", prepared);
   const res = await fetch(apiUrl("/api/products/image/upload"), {
     method: "POST",
     headers: {
@@ -66,6 +79,11 @@ export async function uploadProductImage(file: File): Promise<UploadedProductIma
     },
     body: formData,
   });
+  if (res.status === 413) {
+    throw new Error(
+      "Upload rejected: file too large for the server (HTTP 413). The image was compressed automatically; try a smaller original or export as JPEG.",
+    );
+  }
   const data = await readJsonApiResponse<UploadedProductImage & { error?: string }>(res);
   if (!res.ok) {
     throw new Error(
