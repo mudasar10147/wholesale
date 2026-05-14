@@ -38,9 +38,13 @@ Redeploy after saving variables (Vercel → Deployments → Redeploy, or push a 
 
 ### Troubleshooting: `Unable to detect a Project Id`
 
-That message usually means the Node client fell back to **Application Default Credentials** (metadata server / gcloud), which **do not exist on Vercel**. In this repo, that happens if **`GCS_SERVICE_ACCOUNT_JSON` is missing, empty, or not valid JSON** so the service account is never passed to `Storage`.
+That message usually means **Firebase Admin SDK** (used to **verify your login** on `/api/products/image/upload` and other routes) fell back to **Application Default Credentials**, which **do not exist on Vercel** — so it can happen **before** GCS runs.
 
-Fix: paste the **full** key JSON again (minify with `jq -c . key.json`), redeploy, and confirm the variable is enabled for the environment you are testing (Production vs Preview). The app will log a warning when project/bucket are set but the JSON could not be parsed.
+**Fix:** Configure Admin credentials (see [FIREBASE_PHASE1.md](FIREBASE_PHASE1.md) → *Server-side Firebase Admin*): split `FIREBASE_ADMIN_*` vars, or `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON`, or ensure **`GCS_SERVICE_ACCOUNT_JSON`** parses and is the **Firebase-compatible** service account (the app reuses it for Admin when dedicated Admin vars are unset).
+
+For GCS-only issues (invalid bucket key JSON), the app logs a warning when project/bucket are set but the JSON could not be parsed.
+
+After deploy, admins can call **`GET /api/debug/admin-bootstrap`** with `Authorization: Bearer <Firebase ID token>` to see what parsed (no secrets in the response).
 
 ## 3. Optional: local parity with production
 

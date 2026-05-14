@@ -84,6 +84,26 @@ For **Phase 2** collections (`products`, `sales`, `expenses`), use the combined 
 
 In the Vercel project: **Settings** → **Environment Variables** → add the same `NEXT_PUBLIC_FIREBASE_*` keys as in `.env.local` for **Production** (and **Preview** if you want previews to talk to Firebase). Redeploy after saving.
 
+### Server-side Firebase Admin (API routes)
+
+Anything that verifies Firebase ID tokens on the server (for example **product image upload** at `/api/products/image/upload`) uses **`lib/firebase/admin.ts`**. On Vercel there is no Application Default Credentials file path, so you should provide **explicit** credentials using **one** of these:
+
+| Approach | Env vars |
+|----------|-----------|
+| Split fields | `FIREBASE_ADMIN_PROJECT_ID`, `FIREBASE_ADMIN_CLIENT_EMAIL`, `FIREBASE_ADMIN_PRIVATE_KEY` (same values as in the Firebase service account JSON; newline in private key as `\n` in the string). |
+| Single JSON | `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON` — full contents of the Firebase Admin SDK service account JSON (Sensitive), same style as `GCS_SERVICE_ACCOUNT_JSON`. |
+| Reuse GCS key | If you only configure **`GCS_SERVICE_ACCOUNT_JSON`**, the app **reuses** that JSON for Firebase Admin **when** the split / `FIREBASE_ADMIN_SERVICE_ACCOUNT_JSON` vars are not set. Use a service account that is allowed to verify Auth tokens (often the default **firebase-adminsdk-…** key from Firebase Console → Project settings → Service accounts). |
+
+If Admin is not configured, you may see Google errors such as **Unable to detect a Project Id** on upload even when GCS env vars look correct.
+
+### Debug endpoint (admin only)
+
+After deploy, as an **admin** user, call:
+
+`GET /api/debug/admin-bootstrap` with header `Authorization: Bearer <your Firebase ID token>`.
+
+The JSON response shows which env flags parsed and whether GCS client construction succeeded — **no secrets** are returned.
+
 ---
 
 ## 6. Verify
