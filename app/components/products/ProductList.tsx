@@ -8,7 +8,7 @@ import {
   query,
   type Timestamp,
 } from "firebase/firestore";
-import Image from "next/image";
+import Link from "next/link";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
@@ -147,7 +147,7 @@ export function ProductList() {
         </div>
 
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-muted">
                 <th className="px-4 py-3 font-semibold text-foreground">Name</th>
@@ -195,6 +195,15 @@ export function ProductList() {
                     </td>
                     <td className="px-4 py-3 align-top">
                       <div className="flex flex-wrap gap-1.5">
+                        <Link
+                          href={`/products/${row.id}`}
+                          className={cn(
+                            "inline-flex h-9 items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-surface-hover",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ring-offset)]",
+                          )}
+                        >
+                          View
+                        </Link>
                         <Button
                           type="button"
                           variant="outline"
