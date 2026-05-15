@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { collection, onSnapshot, query, where, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
@@ -73,13 +73,81 @@ function isWalkInPaid(row: WalkInSessionDoc): boolean {
   return row.payment_status === "paid";
 }
 
+type WalkInLineDisplay = {
+  id: string;
+  name: string;
+  quantity: number;
+  unitSalePrice: number;
+};
+
+function walkInTableHeaders() {
+  return (
+    <tr className="border-b border-border bg-surface-muted">
+      <th className="px-4 py-2.5 font-semibold">Date</th>
+      <th className="px-4 py-2.5 font-semibold">Name</th>
+      <th className="px-4 py-2.5 font-semibold">Quantity</th>
+      <th className="px-4 py-2.5 font-semibold">Sale Price</th>
+      <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
+    </tr>
+  );
+}
+
+function renderWalkInLineRows(
+  sessions: Array<{ id: string; data: WalkInSessionDoc }>,
+  linesBySession: Record<string, WalkInLineDisplay[] | undefined>,
+  actions: (session: { id: string; data: WalkInSessionDoc }) => ReactNode,
+) {
+  return sessions.flatMap((session) => {
+    const lines = linesBySession[session.id];
+    if (lines === undefined) {
+      return (
+        <tr key={session.id} className="border-b border-border last:border-b-0">
+          <td className="px-4 py-3 text-foreground">{formatSaleDate(session.data.sale_date)}</td>
+          <td colSpan={3} className="px-4 py-3 text-muted-foreground">
+            Loading…
+          </td>
+          <td className="px-4 py-3 align-top">{actions(session)}</td>
+        </tr>
+      );
+    }
+    if (lines.length === 0) {
+      return (
+        <tr key={session.id} className="border-b border-border last:border-b-0">
+          <td className="px-4 py-3 text-foreground">{formatSaleDate(session.data.sale_date)}</td>
+          <td colSpan={3} className="px-4 py-3 text-muted-foreground">
+            No line items
+          </td>
+          <td className="px-4 py-3 align-top">{actions(session)}</td>
+        </tr>
+      );
+    }
+    return lines.map((line, idx) => (
+      <tr key={`${session.id}-${line.id}`} className="border-b border-border last:border-b-0">
+        {idx === 0 ? (
+          <td className="px-4 py-3 align-top text-foreground" rowSpan={lines.length}>
+            {formatSaleDate(session.data.sale_date)}
+          </td>
+        ) : null}
+        <td className="px-4 py-3 text-foreground">{line.name}</td>
+        <td className="px-4 py-3 tabular-nums">{line.quantity.toLocaleString()}</td>
+        <td className="px-4 py-3 tabular-nums">{money(line.unitSalePrice)}</td>
+        {idx === 0 ? (
+          <td className="px-4 py-3 align-top" rowSpan={lines.length}>
+            {actions(session)}
+          </td>
+        ) : null}
+      </tr>
+    ));
+  });
+}
+
 export function WalkInSalesPageContent() {
   const { user, isAdmin } = useAuth();
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [pending, setPending] = useState<Array<{ id: string; data: WalkInSessionDoc }>>([]);
   const [approved, setApproved] = useState<Array<{ id: string; data: WalkInSessionDoc }>>([]);
-  const [sessionItemNames, setSessionItemNames] = useState<Record<string, string>>({});
+  const [sessionLines, setSessionLines] = useState<Record<string, WalkInLineDisplay[] | undefined>>({});
   const [pendingLoading, setPendingLoading] = useState(true);
   const [approvedLoading, setApprovedLoading] = useState(true);
 
@@ -172,27 +240,31 @@ export function WalkInSalesPageContent() {
     const allSessions = [...pending, ...approved];
     const sessionIds = Array.from(new Set(allSessions.map((row) => row.id)));
 
-    async function loadSessionItemNames() {
+    async function loadSessionLines() {
       if (sessionIds.length === 0) {
-        if (!cancelled) setSessionItemNames({});
+        if (!cancelled) setSessionLines({});
         return;
       }
       const entries = await Promise.all(
         sessionIds.map(async (sessionId) => {
           const lineRows = await fetchWalkInLines(db, sessionId);
-          const names = lineRows
-            .map((l) => products.find((p) => p.id === l.data.product_id)?.name ?? "Unknown product")
-            .filter((name, idx, arr) => arr.indexOf(name) === idx);
-          return [sessionId, names.join(", ")] as const;
+          const displayLines: WalkInLineDisplay[] = lineRows.map((l) => ({
+            id: l.id,
+            name: products.find((p) => p.id === l.data.product_id)?.name ?? "Unknown product",
+            quantity: typeof l.data.quantity === "number" ? l.data.quantity : 0,
+            unitSalePrice:
+              typeof l.data.unit_sale_price === "number" ? l.data.unit_sale_price : 0,
+          }));
+          return [sessionId, displayLines] as const;
         }),
       );
 
       if (!cancelled) {
-        setSessionItemNames(Object.fromEntries(entries));
+        setSessionLines(Object.fromEntries(entries));
       }
     }
 
-    void loadSessionItemNames();
+    void loadSessionLines();
     return () => {
       cancelled = true;
     };
@@ -547,29 +619,10 @@ export function WalkInSalesPageContent() {
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-border bg-surface-muted">
-                  <th className="px-4 py-2.5 font-semibold">Sale date</th>
-                  <th className="px-4 py-2.5 font-semibold">Items</th>
-                  <th className="px-4 py-2.5 font-semibold">Lines</th>
-                  <th className="px-4 py-2.5 font-semibold">Payment</th>
-                  <th className="px-4 py-2.5 font-semibold">Session</th>
-                  <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
-                </tr>
-              </thead>
+              <thead>{walkInTableHeaders()}</thead>
               <tbody>
-                {pending.map((row) => (
-                  <tr key={row.id} className="border-b border-border last:border-b-0">
-                    <td className="px-4 py-3 text-foreground">{formatSaleDate(row.data.sale_date)}</td>
-                    <td className="px-4 py-3 text-foreground">
-                      {sessionItemNames[row.id] && sessionItemNames[row.id].trim().length > 0
-                        ? sessionItemNames[row.id]
-                        : "Loading…"}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums">{row.data.line_count}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.id}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap justify-end gap-2">
+                {renderWalkInLineRows(pending, sessionLines, (row) => (
+                  <div className="flex flex-wrap justify-end gap-2">
                         <Button
                           type="button"
                           variant="outline"
@@ -609,9 +662,7 @@ export function WalkInSalesPageContent() {
                             </Button>
                           </>
                         ) : null}
-                      </div>
-                    </td>
-                  </tr>
+                  </div>
                 ))}
               </tbody>
             </table>
@@ -628,39 +679,10 @@ export function WalkInSalesPageContent() {
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-border bg-surface-muted">
-                  <th className="px-4 py-2.5 font-semibold">Sale date</th>
-                  <th className="px-4 py-2.5 font-semibold">Items</th>
-                  <th className="px-4 py-2.5 font-semibold">Lines</th>
-                  <th className="px-4 py-2.5 font-semibold">Session</th>
-                  <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
-                </tr>
-              </thead>
+              <thead>{walkInTableHeaders()}</thead>
               <tbody>
-                {approved.map((row) => (
-                  <tr key={row.id} className="border-b border-border last:border-b-0">
-                    <td className="px-4 py-3 text-foreground">{formatSaleDate(row.data.sale_date)}</td>
-                    <td className="px-4 py-3 text-foreground">
-                      {sessionItemNames[row.id] && sessionItemNames[row.id].trim().length > 0
-                        ? sessionItemNames[row.id]
-                        : "Loading…"}
-                    </td>
-                    <td className="px-4 py-3 tabular-nums">{row.data.line_count}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={
-                          isWalkInPaid(row.data)
-                            ? "rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success"
-                            : "rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium text-foreground"
-                        }
-                      >
-                        {isWalkInPaid(row.data) ? "paid" : "unpaid"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.id}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap justify-end gap-2">
+                {renderWalkInLineRows(approved, sessionLines, (row) => (
+                  <div className="flex flex-wrap justify-end gap-2">
                         {isAdmin ? (
                           <>
                             <Button
@@ -685,9 +707,7 @@ export function WalkInSalesPageContent() {
                         ) : (
                           <span className="text-xs text-muted-foreground">No actions</span>
                         )}
-                      </div>
-                    </td>
-                  </tr>
+                  </div>
                 ))}
               </tbody>
             </table>
