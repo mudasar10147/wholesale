@@ -87,6 +87,7 @@ function walkInTableHeaders() {
       <th className="px-4 py-2.5 font-semibold">Name</th>
       <th className="px-4 py-2.5 font-semibold">Quantity</th>
       <th className="px-4 py-2.5 font-semibold">Sale Price</th>
+      <th className="px-4 py-2.5 font-semibold">Total amount</th>
       <th className="px-4 py-2.5 font-semibold text-right">Actions</th>
     </tr>
   );
@@ -103,7 +104,7 @@ function renderWalkInLineRows(
       return (
         <tr key={session.id} className="border-b border-border last:border-b-0">
           <td className="px-4 py-3 text-foreground">{formatSaleDate(session.data.sale_date)}</td>
-          <td colSpan={3} className="px-4 py-3 text-muted-foreground">
+          <td colSpan={4} className="px-4 py-3 text-muted-foreground">
             Loading…
           </td>
           <td className="px-4 py-3 align-top">{actions(session)}</td>
@@ -114,7 +115,7 @@ function renderWalkInLineRows(
       return (
         <tr key={session.id} className="border-b border-border last:border-b-0">
           <td className="px-4 py-3 text-foreground">{formatSaleDate(session.data.sale_date)}</td>
-          <td colSpan={3} className="px-4 py-3 text-muted-foreground">
+          <td colSpan={4} className="px-4 py-3 text-muted-foreground">
             No line items
           </td>
           <td className="px-4 py-3 align-top">{actions(session)}</td>
@@ -131,6 +132,7 @@ function renderWalkInLineRows(
         <td className="px-4 py-3 text-foreground">{line.name}</td>
         <td className="px-4 py-3 tabular-nums">{line.quantity.toLocaleString()}</td>
         <td className="px-4 py-3 tabular-nums">{money(line.unitSalePrice)}</td>
+        <td className="px-4 py-3 tabular-nums">{money(line.quantity * line.unitSalePrice)}</td>
         {idx === 0 ? (
           <td className="px-4 py-3 align-top" rowSpan={lines.length}>
             {actions(session)}
