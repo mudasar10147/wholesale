@@ -30,7 +30,9 @@ export default function ExpensesPage() {
       <Card>
         <CardHeader>
           <CardTitle>All expenses</CardTitle>
-          <CardDescription>Latest 100 expenses, newest first.</CardDescription>
+          <CardDescription>
+            Latest 100 expenses, newest first. Expenses from the last two days can be edited.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <ExpenseList />
