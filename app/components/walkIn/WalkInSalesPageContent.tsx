@@ -24,6 +24,7 @@ import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 import { SearchableSelect } from "@/app/components/ui/SearchableSelect";
+import { WalkInDailySummary } from "@/app/components/walkIn/WalkInDailySummary";
 
 function toDateInputValue(d: Date): string {
   const y = d.getFullYear();
@@ -453,6 +454,12 @@ export function WalkInSalesPageContent() {
 
   return (
     <div className="space-y-10">
+      <WalkInDailySummary
+        approved={approved}
+        sessionLines={sessionLines}
+        sessionsLoading={approvedLoading}
+      />
+
       <form onSubmit={(e) => void onSubmit(e)} className="space-y-6">
         <div className="space-y-2">
           <h2 className="text-base font-semibold text-foreground">New walk-in sale</h2>
