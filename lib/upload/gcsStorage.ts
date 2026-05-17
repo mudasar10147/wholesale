@@ -185,6 +185,28 @@ export class GCSStorageService {
     }
   }
 
+  async downloadByPath(
+    gcsObjectPath: string,
+  ): Promise<{ buffer: Buffer; contentType: string } | null> {
+    if (!this.isAvailable()) return null;
+    try {
+      const bucket = this.storage!.bucket(this.bucketName!);
+      const gcsFile = bucket.file(gcsObjectPath);
+      const [exists] = await gcsFile.exists();
+      if (!exists) return null;
+      const [buffer] = await gcsFile.download();
+      const [metadata] = await gcsFile.getMetadata();
+      const contentType =
+        typeof metadata.contentType === "string" && metadata.contentType.startsWith("image/")
+          ? metadata.contentType
+          : "image/jpeg";
+      return { buffer, contentType };
+    } catch (error) {
+      logger.error("GCS downloadByPath error", { err: error });
+      return null;
+    }
+  }
+
   async getSignedReadUrlByPath(
     gcsObjectPath: string,
     expiresInMinutes: number = 60

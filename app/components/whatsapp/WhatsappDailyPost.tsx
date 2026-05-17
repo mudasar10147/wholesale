@@ -6,7 +6,12 @@ import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { ProductDoc } from "@/lib/types/firestore";
-import { getSignedProductImageUrl } from "@/lib/upload/productImages";
+import {
+  copyImageBlobToClipboard,
+  fetchImageBlob,
+  loadImageBlobViaCanvas,
+  resolveProductImageSrc,
+} from "@/lib/upload/productImageDisplay";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 
@@ -19,7 +24,6 @@ type ProductRow = {
 };
 
 const SELLING_LINE = "Limited stock | Order now";
-const DUMMY_IMAGE_PATH = "/wholesale_logo.png";
 
 function toPrice(n: number): string {
   return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0";
@@ -146,22 +150,25 @@ export function WhatsappDailyPost() {
 
   async function copyProductImage(product: ProductRow) {
     setFeedback(null);
+    const src = resolveProductImageSrc(product.imagePath, product.imageUrl);
     try {
-      let src = product.imageUrl && product.imageUrl.trim().length > 0 ? product.imageUrl : DUMMY_IMAGE_PATH;
-      if (product.imagePath && product.imagePath.trim().length > 0) {
-        src = await getSignedProductImageUrl(product.imagePath);
+      let blob: Blob;
+      try {
+        blob = await fetchImageBlob(src);
+      } catch {
+        const fallbackUrl = product.imageUrl?.trim();
+        if (!product.imagePath?.trim() && fallbackUrl) {
+          blob = await loadImageBlobViaCanvas(fallbackUrl);
+        } else {
+          throw new Error("fetch failed");
+        }
       }
-      const res = await fetch(src);
-      if (!res.ok) throw new Error("Image fetch failed");
-      const blob = await res.blob();
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          [blob.type || "image/png"]: blob,
-        }),
-      ]);
+      await copyImageBlobToClipboard(blob);
       setFeedback("Image copied.");
     } catch {
-      setFeedback("Could not copy image. Please refresh and try again.");
+      setFeedback(
+        "Could not copy image. Use HTTPS, try Chrome or Safari, or long-press the product photo to save it.",
+      );
     }
   }
 
@@ -209,7 +216,7 @@ export function WhatsappDailyPost() {
               >
                 <div className="flex items-center gap-3">
                   <img
-                    src={p.imageUrl && p.imageUrl.trim().length > 0 ? p.imageUrl : DUMMY_IMAGE_PATH}
+                    src={resolveProductImageSrc(p.imagePath, p.imageUrl)}
                     alt={cleanName(p.name)}
                     className="h-14 w-14 rounded-md border border-border bg-surface-muted object-contain p-1"
                     loading="lazy"
