@@ -5,7 +5,8 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { downloadRetailRateListPdf, downloadSalesCatalogPdf } from "@/lib/share/salesCatalogPdf";
+import { downloadCatalogPdf, type CatalogPdfOptionalColumn } from "@/lib/share/salesCatalogPdf";
+import { SalesCatalogPdfModal } from "@/app/components/share/SalesCatalogPdfModal";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
@@ -28,6 +29,7 @@ export function SalesCatalogByCategory() {
   const [searchQuery, setSearchQuery] = useState("");
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [pdfPending, setPdfPending] = useState(false);
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
 
   useEffect(() => {
     const db = getDb();
@@ -90,23 +92,12 @@ export function SalesCatalogByCategory() {
     return sortedGroups;
   }, [filteredRows]);
 
-  async function handleDownloadPdf() {
+  async function handleDownloadPdfConfirm(columns: CatalogPdfOptionalColumn[]) {
     if (filteredRows.length === 0 || pdfPending) return;
     setPdfPending(true);
     try {
-      await downloadSalesCatalogPdf(filteredRows);
-    } catch (downloadError) {
-      setError(getFirestoreUserMessage(downloadError));
-    } finally {
-      setPdfPending(false);
-    }
-  }
-
-  async function handleDownloadRetailPdf() {
-    if (filteredRows.length === 0 || pdfPending) return;
-    setPdfPending(true);
-    try {
-      await downloadRetailRateListPdf(filteredRows);
+      await downloadCatalogPdf(filteredRows, { columns });
+      setPdfModalOpen(false);
     } catch (downloadError) {
       setError(getFirestoreUserMessage(downloadError));
     } finally {
@@ -139,6 +130,12 @@ export function SalesCatalogByCategory() {
 
   return (
     <div className="space-y-5">
+      <SalesCatalogPdfModal
+        open={pdfModalOpen}
+        onClose={() => setPdfModalOpen(false)}
+        onConfirm={(columns) => void handleDownloadPdfConfirm(columns)}
+        pending={pdfPending}
+      />
       <div className="space-y-3">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div className="max-w-md flex-1 space-y-1.5">
@@ -152,19 +149,13 @@ export function SalesCatalogByCategory() {
               autoComplete="off"
             />
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={handleDownloadPdf} disabled={pdfPending || filteredRows.length === 0}>
-              {pdfPending ? "Preparing PDF..." : "Download PDF"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleDownloadRetailPdf}
-              disabled={pdfPending || filteredRows.length === 0}
-            >
-              {pdfPending ? "Preparing PDF..." : "Download Retail Rate List"}
-            </Button>
-          </div>
+          <Button
+            type="button"
+            onClick={() => setPdfModalOpen(true)}
+            disabled={pdfPending || filteredRows.length === 0}
+          >
+            Download PDF
+          </Button>
         </div>
         <p className="text-xs text-muted-foreground">
           {updatedAt ? `Last updated: ${updatedAt.toLocaleString()}` : "Waiting for updates..."}
