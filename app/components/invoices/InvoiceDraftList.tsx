@@ -8,7 +8,7 @@ import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, markInvoicePaid, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
-import type { InvoiceDoc } from "@/lib/types/firestore";
+import type { CustomerDoc, InvoiceDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -32,6 +32,7 @@ function formatDate(ts?: Timestamp) {
 export function InvoiceDraftList() {
   const { isAdmin } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
+  const [customerNameById, setCustomerNameById] = useState<Map<string, string>>(() => new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -60,6 +61,25 @@ export function InvoiceDraftList() {
     );
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    const db = getDb();
+    const unsub = onSnapshot(collection(db, COLLECTIONS.customers), (snap) => {
+      const next = new Map<string, string>();
+      snap.forEach((docSnap) => {
+        const d = docSnap.data() as CustomerDoc;
+        const name = d.name?.trim();
+        next.set(docSnap.id, name || docSnap.id);
+      });
+      setCustomerNameById(next);
+    });
+    return () => unsub();
+  }, []);
+
+  function customerLabel(customerId: string | undefined): string {
+    if (!customerId) return "—";
+    return customerNameById.get(customerId) ?? customerId;
+  }
 
   async function handlePost(row: Row) {
     setActionError(null);
@@ -148,15 +168,14 @@ export function InvoiceDraftList() {
     <div className="space-y-3">
       {actionError ? <InlineAlert variant="error">{actionError}</InlineAlert> : null}
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[920px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[800px] border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-border bg-surface-muted">
               <th className="px-4 py-3 font-semibold text-foreground">Order ID</th>
               <th className="px-4 py-3 font-semibold text-foreground">Status</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Customer</th>
               <th className="px-4 py-3 font-semibold text-foreground">Items</th>
               <th className="px-4 py-3 font-semibold text-foreground">Subtotal</th>
-              <th className="px-4 py-3 font-semibold text-foreground">Delivery</th>
-              <th className="px-4 py-3 font-semibold text-foreground">Discount</th>
               <th className="px-4 py-3 font-semibold text-foreground">Total</th>
               <th className="px-4 py-3 font-semibold text-foreground">Created</th>
               <th className="px-4 py-3 font-semibold text-foreground">Actions</th>
@@ -193,10 +212,9 @@ export function InvoiceDraftList() {
                     {row.status}
                   </span>
                 </td>
+                <td className="px-4 py-3 text-foreground">{customerLabel(row.customer_id)}</td>
                 <td className="px-4 py-3 tabular-nums text-foreground">{row.item_ids?.length ?? 0}</td>
                 <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.subtotal_amount)}</td>
-                <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.delivery_charge)}</td>
-                <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.discount_amount)}</td>
                 <td className="px-4 py-3 tabular-nums font-medium text-foreground">
                   {formatMoney(row.total_amount)}
                 </td>
