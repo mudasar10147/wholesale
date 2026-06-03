@@ -1,5 +1,15 @@
-import { deleteField, doc, serverTimestamp, updateDoc, type Firestore } from "firebase/firestore";
+import {
+  collection,
+  deleteField,
+  doc,
+  runTransaction,
+  serverTimestamp,
+  updateDoc,
+  type Firestore,
+} from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { applyStockInInTransaction } from "@/lib/firestore/inventory";
+import type { ProductDoc } from "@/lib/types/firestore";
 
 type ProductImageMeta = {
   path: string;
@@ -12,6 +22,90 @@ type ProductImageInput =
   | { action: "keep" }
   | { action: "remove" }
   | { action: "replace"; file: ProductImageMeta };
+
+export type CreateProductInput = {
+  name: string;
+  category?: string;
+  cost_price: number;
+  sale_price: number;
+  /** Units bought on create; 0 = catalog SKU only (no stock lot or cash purchase). */
+  initial_quantity: number;
+  image?: {
+    url: string;
+    path: string;
+    mimeType: string;
+    size: number;
+  };
+};
+
+/**
+ * Create a product. Initial quantity is recorded as a stock-in purchase (FIFO lot + cash impact).
+ */
+export async function createProduct(db: Firestore, input: CreateProductInput): Promise<string> {
+  const name = input.name.trim();
+  if (!name) {
+    throw new Error("Name is required.");
+  }
+  if (
+    !Number.isInteger(input.initial_quantity) ||
+    input.initial_quantity < 0
+  ) {
+    throw new Error("Initial quantity must be a whole number zero or greater.");
+  }
+  if (
+    typeof input.cost_price !== "number" ||
+    !Number.isFinite(input.cost_price) ||
+    input.cost_price < 0
+  ) {
+    throw new Error("Cost price must be zero or greater.");
+  }
+  if (
+    typeof input.sale_price !== "number" ||
+    !Number.isFinite(input.sale_price) ||
+    input.sale_price < 0
+  ) {
+    throw new Error("Sale price must be zero or greater.");
+  }
+
+  const productRef = doc(collection(db, COLLECTIONS.products));
+
+  await runTransaction(db, async (tx) => {
+    const payload: Record<string, unknown> = {
+      name,
+      cost_price: input.cost_price,
+      sale_price: input.sale_price,
+      stock_quantity: 0,
+      created_at: serverTimestamp(),
+    };
+    const cat = input.category?.trim();
+    if (cat) {
+      payload.category = cat;
+    }
+    if (input.image) {
+      payload.image_url = input.image.url;
+      payload.image_path = input.image.path;
+      payload.image_mime = input.image.mimeType;
+      payload.image_size = input.image.size;
+      payload.image_updated_at = serverTimestamp();
+    }
+    tx.set(productRef, payload);
+
+    if (input.initial_quantity > 0) {
+      applyStockInInTransaction(
+        tx,
+        db,
+        productRef.id,
+        productRef,
+        { cost_price: input.cost_price, sale_price: input.sale_price } as ProductDoc,
+        input.initial_quantity,
+        input.cost_price,
+        input.sale_price,
+      );
+    }
+  });
+
+  return productRef.id;
+}
 
 /**
  * Update display fields only. Does not touch prices or stock.

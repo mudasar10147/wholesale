@@ -23,7 +23,8 @@ export default function ProductsPage() {
         <CardHeader>
           <CardTitle>Add product</CardTitle>
           <CardDescription>
-            Required: name, cost price, sale price, and stock quantity. Category is optional.
+            Required: name, cost price, sale price, and initial purchase quantity. Quantity is recorded
+            as a stock purchase (inventory and cash on hand). Category is optional.
           </CardDescription>
         </CardHeader>
         <CardContent>

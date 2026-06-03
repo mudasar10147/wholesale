@@ -1,10 +1,9 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { createProduct } from "@/lib/firestore/products";
 import { uploadProductImage } from "@/lib/upload/productImages";
 import {
   parseNonNegativeDecimal,
@@ -61,27 +60,28 @@ export function AddProductForm() {
 
     setSubmitting(true);
     try {
-      const payload: Record<string, unknown> = {
-        name: trimmedName,
-        cost_price: cost.value,
-        sale_price: sale.value,
-        stock_quantity: stock.value,
-        created_at: serverTimestamp(),
-      };
       const cat = category.trim();
-      if (cat) {
-        payload.category = cat;
-      }
+      let image:
+        | { url: string; path: string; mimeType: string; size: number }
+        | undefined;
       if (imageFile) {
         const uploaded = await uploadProductImage(imageFile);
-        payload.image_url = uploaded.url;
-        payload.image_path = uploaded.path;
-        payload.image_mime = uploaded.mimeType;
-        payload.image_size = uploaded.size;
-        payload.image_updated_at = serverTimestamp();
+        image = {
+          url: uploaded.url,
+          path: uploaded.path,
+          mimeType: uploaded.mimeType,
+          size: uploaded.size,
+        };
       }
 
-      await addDoc(collection(getDb(), COLLECTIONS.products), payload);
+      await createProduct(getDb(), {
+        name: trimmedName,
+        category: cat || undefined,
+        cost_price: cost.value,
+        sale_price: sale.value,
+        initial_quantity: stock.value,
+        image,
+      });
       setName("");
       setCategory("");
       setImageFile(null);
@@ -165,7 +165,7 @@ export function AddProductForm() {
           />
         </div>
         <div className="space-y-2 sm:col-span-2">
-          <Label htmlFor="product-stock">Stock quantity</Label>
+          <Label htmlFor="product-stock">Initial purchase quantity</Label>
           <Input
             id="product-stock"
             name="stock_quantity"
@@ -176,8 +176,12 @@ export function AddProductForm() {
             onChange={(e) => setStockQuantity(e.target.value)}
             placeholder="0"
             aria-invalid={numbersInvalid}
-            aria-describedby={numbersInvalid ? FORM_ALERT_ID : undefined}
+            aria-describedby={numbersInvalid ? FORM_ALERT_ID : "product-stock-hint"}
           />
+          <p id="product-stock-hint" className="text-sm text-muted-foreground">
+            Units bought now are stocked in at the cost price above and reduce estimated cash on hand.
+            Use 0 to add the product only and buy stock later from the product page.
+          </p>
         </div>
       </div>
 

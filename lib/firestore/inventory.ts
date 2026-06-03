@@ -5,7 +5,9 @@ import {
   increment,
   runTransaction,
   serverTimestamp,
+  type DocumentReference,
   type Firestore,
+  type Transaction,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { costPriceAfterFifoStockOutLots } from "@/lib/inventory/lotPricing";
@@ -32,6 +34,54 @@ function assertNonNegativeMoney(label: string, value: number | undefined): void 
 }
 
 /**
+ * Apply a stock-in receipt inside an existing transaction (product must already exist).
+ */
+export function applyStockInInTransaction(
+  tx: Transaction,
+  db: Firestore,
+  productId: string,
+  productRef: DocumentReference,
+  product: ProductDoc | undefined,
+  quantity: number,
+  unitCost?: number,
+  salePrice?: number,
+): void {
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    throw new Error("Quantity must be a positive whole number.");
+  }
+  assertNonNegativeMoney("Sale price", salePrice);
+  const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
+
+  const patch: {
+    stock_quantity: ReturnType<typeof increment>;
+    cost_price: number;
+    sale_price?: number;
+  } = {
+    stock_quantity: increment(quantity),
+    cost_price: resolvedUnitCost,
+  };
+  if (salePrice !== undefined) {
+    patch.sale_price = salePrice;
+  }
+  tx.update(productRef, patch);
+  const lotRef = doc(collection(db, COLLECTIONS.stockLots));
+  tx.set(lotRef, {
+    product_id: productId,
+    unit_cost: resolvedUnitCost,
+    qty_in: quantity,
+    qty_remaining: quantity,
+    source: "stock_in",
+    received_at: serverTimestamp(),
+    created_at: serverTimestamp(),
+    updated_at: serverTimestamp(),
+  } satisfies Omit<StockLotDoc, "received_at" | "created_at" | "updated_at"> & {
+    received_at: unknown;
+    created_at: unknown;
+    updated_at: unknown;
+  });
+}
+
+/**
  * Increase stock atomically (stock in).
  * @param unitCost - Cost per unit for this receipt; omitted or undefined uses the product's current cost_price.
  * @param salePrice - When set, updates the product's `sale_price` immediately (not tied to FIFO lots).
@@ -43,10 +93,6 @@ export async function stockIn(
   unitCost?: number,
   salePrice?: number,
 ): Promise<void> {
-  if (!Number.isInteger(quantity) || quantity <= 0) {
-    throw new Error("Quantity must be a positive whole number.");
-  }
-  assertNonNegativeMoney("Sale price", salePrice);
   const ref = doc(db, COLLECTIONS.products, productId);
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
@@ -54,35 +100,7 @@ export async function stockIn(
       throw new Error("Product not found.");
     }
     const product = snap.data() as ProductDoc | undefined;
-    const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
-
-    const patch: {
-      stock_quantity: ReturnType<typeof increment>;
-      cost_price: number;
-      sale_price?: number;
-    } = {
-      stock_quantity: increment(quantity),
-      cost_price: resolvedUnitCost,
-    };
-    if (salePrice !== undefined) {
-      patch.sale_price = salePrice;
-    }
-    tx.update(ref, patch);
-    const lotRef = doc(collection(db, COLLECTIONS.stockLots));
-    tx.set(lotRef, {
-      product_id: productId,
-      unit_cost: resolvedUnitCost,
-      qty_in: quantity,
-      qty_remaining: quantity,
-      source: "stock_in",
-      received_at: serverTimestamp(),
-      created_at: serverTimestamp(),
-      updated_at: serverTimestamp(),
-    } satisfies Omit<StockLotDoc, "received_at" | "created_at" | "updated_at"> & {
-      received_at: unknown;
-      created_at: unknown;
-      updated_at: unknown;
-    });
+    applyStockInInTransaction(tx, db, productId, ref, product, quantity, unitCost, salePrice);
   });
 }
 
