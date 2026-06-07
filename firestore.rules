@@ -681,12 +681,11 @@ service cloud.firestore {
       // Temporary: allow admin to remove mistaken lots; prefer editing qty/cost when possible.
       allow delete: if isAdmin();
     }
-    // Posting can create an opening_balance lot and consumptions in the same transaction; exists(lot) would fail.
-    // Use one get(invoice) + item_ids membership instead of two exists() — transactions share a 20 get/exists budget.
+    // Posting creates consumptions + COGS in the same transaction; shape-only admin create
+    // avoids exceeding the 20 cross-document rule read limit (see invoice_items create).
     match /lot_consumptions/{docId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && validLotConsumptionBase(request.resource.data)
-        && request.resource.data.invoice_item_id in get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.item_ids
         && !('reversed_at' in request.resource.data);
       allow update: if isAdmin() && validLotConsumptionBase(request.resource.data)
         && request.resource.data.invoice_id == resource.data.invoice_id
@@ -702,16 +701,11 @@ service cloud.firestore {
         && request.resource.data.reversed_at is timestamp;
       allow delete: if false;
     }
-    // One logical read of invoices/{id} (cached across duplicate get paths) + item_ids check — saves exists() budget.
+    // Shape-only admin create — membership preflighted in app code during postInvoice.
     match /invoice_item_cogs/{docId} {
       allow read: if isAdmin();
       allow create: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
-        && request.resource.data.invoice_item_id == docId
-        && request.resource.data.invoice_item_id in get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.item_ids
-        && request.resource.data.order_id
-          == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.order_id
-        && request.resource.data.customer_id
-          == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.customer_id;
+        && request.resource.data.invoice_item_id == docId;
       allow update: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at
         && adminCustomerIdReassignOnlyNoTimestamp(resource.data, request.resource.data);

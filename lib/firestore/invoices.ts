@@ -540,7 +540,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
 
   const auth = getAuthClient();
   if (auth.currentUser) {
-    await auth.currentUser.getIdToken(true);
+    await auth.currentUser.getIdToken(false);
   }
   await logFirestoreAuthForDebug("postInvoice (before transaction)");
 
@@ -598,7 +598,9 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   for (const pid of productIdsForEstimate) {
     preloadedLotsByProduct.set(
       pid,
-      (lotsDataByProduct.get(pid) ?? []).map((r) => r.id),
+      (lotsDataByProduct.get(pid) ?? [])
+        .filter((r) => (typeof r.data.qty_remaining === "number" ? r.data.qty_remaining : 0) > 0)
+        .map((r) => r.id),
     );
   }
 
@@ -643,11 +645,8 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     stockSnapshotEarly,
   );
   const dirtyEstimate = simulateFifoForDirtyEstimate(invoiceItemsEarly, lotsByProductForEstimate);
-
-  let lotReadSumForEstimate = 0;
-  for (const pid of productIdsForEstimate) {
-    lotReadSumForEstimate += (preloadedLotsByProduct.get(pid) ?? []).length;
-  }
+  const dirtyLotIdsToRead = Array.from(dirtyEstimate).filter((id) => !id.startsWith("__sim_opening__"));
+  const preflightLotsByProduct = cloneLotsByProductForSimulation(lotsByProductForEstimate);
 
   let openingCountEstimate = 0;
   for (const pid of productIdsForEstimate) {
@@ -666,7 +665,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     1 +
     itemIdsForEstimate.length +
     productIdsForEstimate.length +
-    lotReadSumForEstimate +
+    dirtyLotIdsToRead.length +
     itemIdsForEstimate.length * 3 +
     dirtyEstimate.size +
     openingCountEstimate +
@@ -706,8 +705,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     const neededByProduct = new Map<string, number>();
     const invoiceItems: Array<{ id: string; data: InvoiceItemDoc }> = [];
     for (const itemId of itemIds) {
-      const itemRef = doc(db, COLLECTIONS.invoiceItems, itemId);
-      const itemSnap = await tx.get(itemRef);
+      const itemSnap = await tx.get(doc(db, COLLECTIONS.invoiceItems, itemId));
       if (!itemSnap.exists()) {
         throw new Error("Invoice items are incomplete. Please recreate draft.");
       }
@@ -730,8 +728,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     const stockSnapshot = new Map<string, number>();
 
     for (const productId of productIds) {
-      const productRef = doc(db, COLLECTIONS.products, productId);
-      const productSnap = await tx.get(productRef);
+      const productSnap = await tx.get(doc(db, COLLECTIONS.products, productId));
       if (!productSnap.exists()) {
         throw new Error("A product in this invoice no longer exists.");
       }
@@ -749,7 +746,32 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       stockSnapshot.set(productId, currentStock);
     }
 
-    const lotsByProductId = new Map<string, Array<{ id: string; data: StockLotDoc }>>();
+    const lotsByProductId = cloneLotsByProductForSimulation(preflightLotsByProduct);
+    for (const productId of productIds) {
+      const rows = lotsByProductId.get(productId) ?? [];
+      lotsByProductId.set(
+        productId,
+        rows.filter((row) => !row.id.startsWith("__sim_opening__")),
+      );
+    }
+
+    const freshDirtyLots = new Map<string, StockLotDoc>();
+    for (const lotId of dirtyLotIdsToRead) {
+      const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, lotId));
+      if (!lotSnap.exists()) {
+        continue;
+      }
+      freshDirtyLots.set(lotId, lotSnap.data() as StockLotDoc);
+    }
+    for (const [lotId, lotData] of freshDirtyLots) {
+      for (const rows of lotsByProductId.values()) {
+        const idx = rows.findIndex((row) => row.id === lotId);
+        if (idx >= 0) {
+          rows[idx] = { id: lotId, data: { ...lotData } };
+        }
+      }
+    }
+
     const pendingOpeningLots: Array<{
       ref: ReturnType<typeof doc>;
       payload: Record<string, unknown>;
@@ -759,17 +781,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       const product = productById.get(productId);
       const currentStock = stockSnapshot.get(productId) ?? 0;
 
-      const lots: Array<{ id: string; data: StockLotDoc }> = [];
-      const lotIds = preloadedLotsByProduct.get(productId) ?? [];
-      for (const lotId of lotIds) {
-        const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
-        const lotSnap = await tx.get(lotRef);
-        if (!lotSnap.exists()) continue;
-        const lotData = lotSnap.data() as StockLotDoc;
-        if (lotData.product_id === productId) {
-          lots.push({ id: lotId, data: lotData });
-        }
-      }
+      const lots = lotsByProductId.get(productId) ?? [];
 
       const lotTotal = lots.reduce((acc, row) => acc + (row.data.qty_remaining ?? 0), 0);
       const gap = Math.max(0, currentStock - lotTotal);
@@ -937,7 +949,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       posted_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     });
-  });
+    });
   } catch (e) {
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
     if (
