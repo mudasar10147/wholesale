@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test:gcs": "node scripts/test-gcs-upload.mjs",
-    "lint": "eslint",
+    "test:pricing": "node --experimental-strip-types lib/pricing/metrics.test.ts",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"
   },

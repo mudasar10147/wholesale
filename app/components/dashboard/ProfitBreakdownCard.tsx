@@ -79,7 +79,7 @@ export function ProfitBreakdownCard({
     );
   }
 
-  const { totalSales, totalExpenses, cogs, profit } = breakdown;
+  const { totalSales, totalExpenses, cogs, damagedWriteOffs, profit } = breakdown;
   const profitPositive = profit >= 0;
 
   return (
@@ -92,6 +92,14 @@ export function ProfitBreakdownCard({
         <MetricRow label="Total sales" value={formatMoney(totalSales)} />
         <MetricRow label="Total expenses" value={formatMoney(totalExpenses)} />
         <MetricRow label="Cost of goods sold" value={formatMoney(cogs)} />
+        {damagedWriteOffs > 0 ? (
+          <p className="border-b border-border py-2 pl-2 text-xs text-muted-foreground">
+            Includes damaged write-offs (returns + stock discards):{" "}
+            <span className="tabular-nums font-medium text-accent-foreground">
+              {formatMoney(damagedWriteOffs)}
+            </span>
+          </p>
+        ) : null}
         <div className="pt-2">
           <MetricRow label="Profit / (loss)" value={formatMoney(profit)} emphasize />
           <p

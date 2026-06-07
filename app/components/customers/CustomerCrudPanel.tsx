@@ -4,15 +4,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   collection,
   onSnapshot,
-  orderBy,
-  query,
   type Timestamp,
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { archiveCustomer, createCustomer, updateCustomer } from "@/lib/firestore/customers";
-import type { CustomerDoc } from "@/lib/types/firestore";
+import type { CustomerDoc, InvoiceDoc } from "@/lib/types/firestore";
+import { MergeCustomersModal } from "@/app/components/customers/MergeCustomersModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
@@ -38,6 +37,10 @@ function isEmailLike(value: string): boolean {
 
 function isPhoneLike(value: string): boolean {
   return /^[+\d][\d\s()-]*$/.test(value);
+}
+
+function compareCustomerName(a: CustomerRow, b: CustomerRow): number {
+  return (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" });
 }
 
 function validateCustomerForm(input: {
@@ -74,6 +77,11 @@ export function CustomerCrudPanel() {
   const [busy, setBusy] = useState<"create" | "update" | "archive" | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [mergeSelected, setMergeSelected] = useState<Set<string>>(new Set());
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [invoiceCountByCustomerId, setInvoiceCountByCustomerId] = useState<Map<string, number>>(
+    () => new Map(),
+  );
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -82,9 +90,8 @@ export function CustomerCrudPanel() {
 
   useEffect(() => {
     const db = getDb();
-    const q = query(collection(db, COLLECTIONS.customers), orderBy("created_at", "desc"));
     const unsub = onSnapshot(
-      q,
+      collection(db, COLLECTIONS.customers),
       (snap) => {
         setLoading(false);
         setLoadingError(null);
@@ -103,9 +110,70 @@ export function CustomerCrudPanel() {
     return () => unsub();
   }, []);
 
+  useEffect(() => {
+    const db = getDb();
+    const unsub = onSnapshot(collection(db, COLLECTIONS.invoices), (snap) => {
+      const counts = new Map<string, number>();
+      snap.forEach((docSnap) => {
+        const inv = docSnap.data() as InvoiceDoc;
+        if (inv.status === "void") return;
+        const id = inv.customer_id;
+        if (!id) return;
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      });
+      setInvoiceCountByCustomerId(counts);
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    setMergeSelected((prev) => {
+      const valid = new Set(rows.map((r) => r.id));
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [rows]);
+
   const isEditing = editingId !== null;
+  const sortedRows = useMemo(
+    () => [...rows].sort(compareCustomerName),
+    [rows],
+  );
   const activeCount = useMemo(() => rows.filter((r) => r.is_active).length, [rows]);
   const archivedCount = rows.length - activeCount;
+
+  const mergePair = useMemo(() => {
+    if (mergeSelected.size !== 2) return null;
+    const ids = [...mergeSelected];
+    const a = rows.find((r) => r.id === ids[0]);
+    const b = rows.find((r) => r.id === ids[1]);
+    if (!a || !b) return null;
+    return [a, b] as [CustomerRow, CustomerRow];
+  }, [mergeSelected, rows]);
+
+  function toggleMergeSelect(id: string) {
+    setMergeSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        return next;
+      }
+      if (next.size >= 2) {
+        return new Set([id]);
+      }
+      next.add(id);
+      return next;
+    });
+  }
+
+  function handleMerged() {
+    setMergeSelected(new Set());
+    if (editingId && mergeSelected.has(editingId)) {
+      resetForm();
+    }
+    setFormSuccess("Customers merged. Invoice history now belongs to the kept customer.");
+    setFormError(null);
+  }
 
   function resetForm() {
     setEditingId(null);
@@ -260,7 +328,30 @@ export function CustomerCrudPanel() {
         <span>
           Archived: <strong className="text-foreground">{archivedCount}</strong>
         </span>
+        {mergeSelected.size > 0 ? (
+          <span>
+            Selected for merge: <strong className="text-foreground">{mergeSelected.size}</strong>/2
+          </span>
+        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          className="ml-auto h-8 px-3 text-xs"
+          disabled={mergeSelected.size !== 2 || busy !== null}
+          onClick={() => setShowMergeModal(true)}
+        >
+          Merge selected
+        </Button>
       </div>
+
+      {showMergeModal && mergePair ? (
+        <MergeCustomersModal
+          customers={mergePair}
+          invoiceCountByCustomerId={invoiceCountByCustomerId}
+          onDismiss={() => setShowMergeModal(false)}
+          onMerged={handleMerged}
+        />
+      ) : null}
 
       {loading ? (
         <p className="text-sm text-muted-foreground" role="status">
@@ -277,6 +368,9 @@ export function CustomerCrudPanel() {
             <table className="w-full min-w-[860px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface-muted">
+                  <th className="px-4 py-3 font-semibold text-foreground w-10">
+                    <span className="sr-only">Select for merge</span>
+                  </th>
                   <th className="px-4 py-3 font-semibold text-foreground">Name</th>
                   <th className="px-4 py-3 font-semibold text-foreground">Phone</th>
                   <th className="px-4 py-3 font-semibold text-foreground">Email</th>
@@ -286,7 +380,7 @@ export function CustomerCrudPanel() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => (
+                {sortedRows.map((row, i) => (
                   <tr
                     key={row.id}
                     className={cn(
@@ -294,7 +388,23 @@ export function CustomerCrudPanel() {
                       i % 2 === 1 ? "bg-surface-muted/50" : "bg-surface",
                     )}
                   >
-                    <td className="px-4 py-3 font-medium text-foreground">{row.name}</td>
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        checked={mergeSelected.has(row.id)}
+                        onChange={() => toggleMergeSelect(row.id)}
+                        aria-label={`Select ${row.name} for merge`}
+                        disabled={busy !== null}
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-medium text-foreground">
+                      {row.name}
+                      {(invoiceCountByCustomerId.get(row.id) ?? 0) > 0 ? (
+                        <span className="ml-2 text-xs font-normal text-muted-foreground">
+                          ({invoiceCountByCustomerId.get(row.id)} inv.)
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.phone || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{row.email || "—"}</td>
                     <td className="px-4 py-3">

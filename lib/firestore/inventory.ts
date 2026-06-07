@@ -10,7 +10,9 @@ import {
   type Transaction,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { costPriceAfterFifoStockOutLots } from "@/lib/inventory/lotPricing";
+import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
+import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
+import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
 function resolveStockInUnitCost(
@@ -45,6 +47,10 @@ export function applyStockInInTransaction(
   quantity: number,
   unitCost?: number,
   salePrice?: number,
+  pricingContext?: {
+    categoryTemplates: Record<string, import("@/lib/types/firestore").CategoryMarginTemplate>;
+    globalDefault: number;
+  },
 ): void {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
@@ -62,6 +68,14 @@ export function applyStockInInTransaction(
   };
   if (salePrice !== undefined) {
     patch.sale_price = salePrice;
+  }
+  if (pricingContext && salePrice === undefined) {
+    applyAutomaticPricingToPatch(
+      product,
+      patch,
+      pricingContext.categoryTemplates,
+      pricingContext.globalDefault,
+    );
   }
   tx.update(productRef, patch);
   const lotRef = doc(collection(db, COLLECTIONS.stockLots));
@@ -93,6 +107,7 @@ export async function stockIn(
   unitCost?: number,
   salePrice?: number,
 ): Promise<void> {
+  const settings = await loadPricingSettings(db);
   const ref = doc(db, COLLECTIONS.products, productId);
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
@@ -100,7 +115,20 @@ export async function stockIn(
       throw new Error("Product not found.");
     }
     const product = snap.data() as ProductDoc | undefined;
-    applyStockInInTransaction(tx, db, productId, ref, product, quantity, unitCost, salePrice);
+    applyStockInInTransaction(
+      tx,
+      db,
+      productId,
+      ref,
+      product,
+      quantity,
+      unitCost,
+      salePrice,
+      {
+        categoryTemplates: settings.categoryTemplates,
+        globalDefault: settings.globalDefaultTargetMarginPercent,
+      },
+    );
   });
 }
 
@@ -127,6 +155,7 @@ export async function stockOut(
 
   /** Stable order so transaction reads are deterministic across retries. */
   const sortedLotCandidateIds = [...lotCandidateIds].sort();
+  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
@@ -170,12 +199,22 @@ export async function stockOut(
       throw new Error("Stock lots are out of sync. Please restock this product.");
     }
 
-    const nextCostPrice = costPriceAfterFifoStockOutLots(lots, lotUpdates);
+    const nextCostPrice = listCostFromProductLots(
+      lots,
+      lotUpdates.map((u) => ({ id: u.id, qty_remaining: u.qty_remaining })),
+    );
 
-    transaction.update(ref, {
+    const stockPatch: Record<string, unknown> = {
       stock_quantity: increment(-quantity),
       cost_price: nextCostPrice,
-    });
+    };
+    applyAutomaticPricingToPatch(
+      data as ProductDoc,
+      stockPatch,
+      settings.categoryTemplates,
+      settings.globalDefaultTargetMarginPercent,
+    );
+    transaction.update(ref, stockPatch);
     for (const u of lotUpdates) {
       transaction.update(doc(db, COLLECTIONS.stockLots, u.id), {
         qty_remaining: u.qty_remaining,

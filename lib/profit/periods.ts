@@ -68,3 +68,65 @@ export function getBoundsFromDateInputs(
   );
   return { start, end };
 }
+
+/** Monday 00:00 through Sunday 23:59:59 for the week containing `date` (local). */
+export function getCalendarWeekBounds(date = new Date()): { start: Date; end: Date } {
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dow = day.getDay(); // 0 Sun … 6 Sat
+  const daysSinceMonday = dow === 0 ? 6 : dow - 1;
+  const monday = new Date(day);
+  monday.setDate(day.getDate() - daysSinceMonday);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  sunday.setHours(23, 59, 59, 999);
+  return { start: monday, end: sunday };
+}
+
+function formatShortDate(d: Date): string {
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** Human-readable Mon–Sun range, e.g. "Jun 2 – Jun 8, 2026". */
+export function formatCalendarWeekLabel(start: Date, end: Date): string {
+  const y = end.getFullYear();
+  const startPart = formatShortDate(start);
+  const endPart = formatShortDate(end);
+  if (start.getFullYear() === y) {
+    return `${startPart} – ${endPart}, ${y}`;
+  }
+  return `${startPart}, ${start.getFullYear()} – ${endPart}, ${y}`;
+}
+
+/**
+ * Reference Mon–Sun week for inventory velocity.
+ * Mon–Sat: last completed route week (previous Mon–Sun).
+ * Sunday: current Mon–Sun (full weekly cycle including today).
+ */
+export function getInventoryVelocityWeekBounds(now = new Date()): {
+  start: Date;
+  end: Date;
+  label: string;
+} {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dow = today.getDay();
+  const { start: thisMonday, end: thisSunday } = getCalendarWeekBounds(today);
+
+  if (dow === 0) {
+    return {
+      start: thisMonday,
+      end: thisSunday,
+      label: formatCalendarWeekLabel(thisMonday, thisSunday),
+    };
+  }
+
+  const prevMonday = new Date(thisMonday);
+  prevMonday.setDate(prevMonday.getDate() - 7);
+  const prevSunday = new Date(thisSunday);
+  prevSunday.setDate(prevSunday.getDate() - 7);
+  return {
+    start: prevMonday,
+    end: prevSunday,
+    label: formatCalendarWeekLabel(prevMonday, prevSunday),
+  };
+}

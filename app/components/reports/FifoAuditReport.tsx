@@ -5,6 +5,7 @@ import { collection, onSnapshot, query, type Timestamp } from "firebase/firestor
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { getInvoiceEffectiveTotal } from "@/lib/invoices/invoiceEffective";
 import type {
   CustomerDoc,
   InvoiceDoc,
@@ -178,7 +179,7 @@ export function FifoAuditReport() {
     return invoices
       .filter((inv) => inv.status === "posted")
       .map((inv) => {
-        const revenue = inv.posted_total_amount ?? inv.total_amount ?? 0;
+        const revenue = getInvoiceEffectiveTotal(inv);
         const cogs = cogsByInvoice.get(inv.id) ?? 0;
         return {
           invoiceId: inv.id,

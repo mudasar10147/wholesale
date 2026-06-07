@@ -16,6 +16,31 @@ service cloud.firestore {
     function isStaff() {
       return isAdmin() || isClerk();
     }
+    // Admin customer merge: repoint customer_id only (optionally touch updated_at).
+    function adminCustomerIdReassignOnly(res, req) {
+      return req.diff(res).affectedKeys().hasOnly(['customer_id', 'updated_at'])
+        && req.customer_id is string
+        && req.customer_id.size() > 0
+        && req.customer_id != res.customer_id;
+    }
+    function adminCustomerIdReassignOnlyNoTimestamp(res, req) {
+      return req.diff(res).affectedKeys().hasOnly(['customer_id'])
+        && req.customer_id is string
+        && req.customer_id.size() > 0
+        && req.customer_id != res.customer_id;
+    }
+    function validCustomerMergeAudit(data) {
+      return data.keep_customer_id is string
+        && data.keep_customer_id.size() > 0
+        && data.merged_customer_id is string
+        && data.merged_customer_id.size() > 0
+        && data.merged_customer_name is string
+        && data.merged_by_uid is string
+        && data.merged_by_uid.size() > 0
+        && data.final_profile is map
+        && data.updated_counts is map
+        && data.created_at is timestamp;
+    }
     function hasOnlyKeys(data, keys) {
       return data.keys().hasOnly(keys);
     }
@@ -85,6 +110,8 @@ service cloud.firestore {
       && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
       && (!('posted_at' in data) || data.posted_at == null || data.posted_at is timestamp)
       && (!('voided_at' in data) || data.voided_at == null || data.voided_at is timestamp)
+      && (!('returned_amount' in data) || (data.returned_amount is number && data.returned_amount >= 0))
+      && (!('return_ids' in data) || data.return_ids is list)
       && data.created_at is timestamp
       && data.updated_at is timestamp;
     }
@@ -210,6 +237,14 @@ service cloud.firestore {
       && (!('actual_cash_updated_at' in data) || data.actual_cash_updated_at is timestamp)
       && data.updated_at is timestamp;
     }
+    function validPricingSettings(data) {
+      return hasOnlyKeys(data, ['global_default_target_margin_percent', 'category_templates', 'updated_at'])
+      && data.global_default_target_margin_percent is number
+      && data.global_default_target_margin_percent >= 0
+      && data.global_default_target_margin_percent < 100
+      && data.category_templates is map
+      && data.updated_at is timestamp;
+    }
     function validCashEntryBase(data) {
       return hasOnlyKeys(data, ['entry_type', 'amount', 'date', 'note', 'created_at'])
       && data.entry_type in ['add', 'remove']
@@ -246,8 +281,248 @@ service cloud.firestore {
         && req.delivery_charge == res.delivery_charge
         && req.total_amount == res.total_amount
         && req.payment_status in ['unpaid', 'partial', 'paid']
-        && req.paid_amount >= res.paid_amount
-        && req.paid_amount <= req.total_amount;
+        && req.paid_amount >= 0
+        && req.paid_amount <= req.posted_total_amount
+        && (
+          req.paid_amount >= res.paid_amount
+          || (
+            ('returned_amount' in res)
+            && res.returned_amount is number
+            && res.returned_amount > 0
+            && ('returned_amount' in req)
+            && req.returned_amount == res.returned_amount
+            && req.paid_amount <= res.paid_amount
+          )
+        );
+    }
+    function invoiceReturnPostedAtUnchanged(res, req) {
+      return (!('posted_at' in res) && !('posted_at' in req)) || req.posted_at == res.posted_at;
+    }
+    function invoiceReturnVoidedAtUnchanged(res, req) {
+      return (!('voided_at' in res) && !('voided_at' in req)) || req.voided_at == res.voided_at;
+    }
+    function validInvoiceReturnBase(data) {
+      return data.return_number is string
+      && data.return_number.size() >= 6
+      && data.return_number.size() <= 40
+      && data.original_invoice_id is string
+      && data.original_invoice_id.size() >= 6
+      && data.original_invoice_id.size() <= 40
+      && data.order_id is string
+      && data.order_id.size() >= 6
+      && data.order_id.size() <= 40
+      && data.customer_id is string
+      && data.customer_id.size() > 0
+      && data.status in ['draft', 'posted', 'void']
+      && data.settlement_type in ['reduce_balance', 'cash_refund']
+      && data.item_ids is list
+      && data.item_ids.size() > 0
+      && data.subtotal_amount is number
+      && data.subtotal_amount >= 0
+      && data.total_amount is number
+      && data.total_amount >= 0
+      && data.refund_amount is number
+      && data.refund_amount >= 0
+      && data.refund_amount <= data.total_amount
+      && data.total_amount >= data.subtotal_amount
+      && (!('write_off_cogs_amount' in data) || (data.write_off_cogs_amount is number && data.write_off_cogs_amount >= 0))
+      && (!('return_reason' in data) || (data.return_reason is string && data.return_reason.size() <= 300))
+      && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+      && (!('posted_at' in data) || data.posted_at == null || data.posted_at is timestamp)
+      && (!('voided_at' in data) || data.voided_at == null || data.voided_at is timestamp)
+      && data.created_at is timestamp
+      && data.updated_at is timestamp;
+    }
+    function validInvoiceReturnItemBase(data) {
+      return data.return_id is string
+      && data.return_id.size() > 0
+      && data.original_invoice_id is string
+      && data.original_invoice_id.size() >= 6
+      && data.original_invoice_id.size() <= 40
+      && data.original_invoice_item_id is string
+      && data.original_invoice_item_id.size() > 0
+      && data.customer_id is string
+      && data.customer_id.size() > 0
+      && data.order_id is string
+      && data.order_id.size() >= 6
+      && data.order_id.size() <= 40
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.quantity_returned is int
+      && data.quantity_returned > 0
+      && data.quantity_restock is int
+      && data.quantity_restock >= 0
+      && data.quantity_discard is int
+      && data.quantity_discard >= 0
+      && data.quantity_restock + data.quantity_discard == data.quantity_returned
+      && data.unit_price is number
+      && data.unit_price >= 0
+      && data.line_discount is number
+      && data.line_discount >= 0
+      && data.line_delivery_charge is number
+      && data.line_delivery_charge >= 0
+      && data.line_total is number
+      && data.line_total >= 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && data.write_off_cogs_amount is number
+      && data.write_off_cogs_amount >= 0
+      && approxMoneyEq(
+        data.line_total,
+        (data.quantity_returned * data.unit_price) - data.line_discount + data.line_delivery_charge
+      )
+      && data.created_at is timestamp
+      && data.updated_at is timestamp;
+    }
+    function validReturnLotRestorationBase(data) {
+      return data.return_id is string
+      && data.return_id.size() > 0
+      && data.consumption_id is string
+      && data.consumption_id.size() > 0
+      && data.lot_id is string
+      && data.lot_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.invoice_id is string
+      && data.invoice_id.size() >= 6
+      && data.invoice_id.size() <= 40
+      && data.invoice_item_id is string
+      && data.invoice_item_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.unit_cost is number
+      && data.unit_cost >= 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && (
+        approxMoneyEq(data.cogs_amount, data.quantity * data.unit_cost)
+        || approxMoneyEq(data.unit_cost, data.cogs_amount / data.quantity)
+      )
+      && data.created_at is timestamp;
+    }
+    function validReturnLotWriteOffBase(data) {
+      return data.return_id is string
+      && data.return_id.size() > 0
+      && data.consumption_id is string
+      && data.consumption_id.size() > 0
+      && data.lot_id is string
+      && data.lot_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.invoice_id is string
+      && data.invoice_id.size() >= 6
+      && data.invoice_id.size() <= 40
+      && data.invoice_item_id is string
+      && data.invoice_item_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.unit_cost is number
+      && data.unit_cost >= 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && (
+        approxMoneyEq(data.cogs_amount, data.quantity * data.unit_cost)
+        || approxMoneyEq(data.unit_cost, data.cogs_amount / data.quantity)
+      )
+      && data.created_at is timestamp;
+    }
+    function validInventoryDiscardBase(data) {
+      return data.discard_number is string
+      && data.discard_number.size() >= 6
+      && data.discard_number.size() <= 40
+      && data.total_quantity is int
+      && data.total_quantity > 0
+      && data.total_cogs_amount is number
+      && data.total_cogs_amount >= 0
+      && data.item_ids is list
+      && data.item_ids.size() > 0
+      && (!('reason' in data) || (data.reason is string && data.reason.size() <= 300))
+      && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+      && data.created_at is timestamp;
+    }
+    function validInventoryDiscardItemBase(data) {
+      return data.discard_id is string
+      && data.discard_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && data.created_at is timestamp;
+    }
+    function validInventoryDiscardLotBase(data) {
+      return data.discard_id is string
+      && data.discard_id.size() > 0
+      && data.discard_item_id is string
+      && data.discard_item_id.size() > 0
+      && data.lot_id is string
+      && data.lot_id.size() > 0
+      && data.product_id is string
+      && data.product_id.size() > 0
+      && data.quantity is int
+      && data.quantity > 0
+      && data.unit_cost is number
+      && data.unit_cost >= 0
+      && data.cogs_amount is number
+      && data.cogs_amount >= 0
+      && (
+        approxMoneyEq(data.cogs_amount, data.quantity * data.unit_cost)
+        || approxMoneyEq(data.unit_cost, data.cogs_amount / data.quantity)
+      )
+      && data.created_at is timestamp;
+    }
+    function invoicePostedReturnAdjustmentOnly(res, req) {
+      return res.status == 'posted'
+        && req.status == 'posted'
+        && req.stock_reversal_applied == false
+        && postedAtUnchanged(res, req)
+        && voidedAtUnchanged(res, req)
+        && (
+          (!('posted_subtotal_amount' in res) && !('posted_subtotal_amount' in req))
+          || req.posted_subtotal_amount == res.posted_subtotal_amount
+        )
+        && (
+          (!('posted_discount_amount' in res) && !('posted_discount_amount' in req))
+          || req.posted_discount_amount == res.posted_discount_amount
+        )
+        && (
+          (!('posted_delivery_charge' in res) && !('posted_delivery_charge' in req))
+          || req.posted_delivery_charge == res.posted_delivery_charge
+        )
+        && (
+          (!('posted_total_amount' in res) && !('posted_total_amount' in req))
+          || req.posted_total_amount == res.posted_total_amount
+        )
+        && (
+          (!('posted_cogs_amount' in res) && !('posted_cogs_amount' in req))
+          || req.posted_cogs_amount == res.posted_cogs_amount
+        )
+        && req.customer_id == res.customer_id
+        && req.order_id == res.order_id
+        && req.item_ids == res.item_ids
+        && req.subtotal_amount == res.subtotal_amount
+        && req.discount_amount == res.discount_amount
+        && req.delivery_charge == res.delivery_charge
+        && req.total_amount == res.total_amount
+        && req.payment_status in ['unpaid', 'partial', 'paid']
+        && req.paid_amount >= 0
+        && req.paid_amount <= req.total_amount
+        && ('returned_amount' in req)
+        && req.returned_amount is number
+        && req.returned_amount >= 0
+        && (!('returned_amount' in res) || req.returned_amount >= res.returned_amount)
+        && (
+          !('posted_total_amount' in req)
+          || req.returned_amount <= req.posted_total_amount
+        )
+        && (
+          !('return_ids' in res) && (!('return_ids' in req) || req.return_ids is list)
+          || ('return_ids' in req && req.return_ids is list)
+        )
+        && (
+          req.paid_amount <= res.paid_amount
+        );
     }
 
     // Phase 1 smoke test (optional)
@@ -271,7 +546,11 @@ service cloud.firestore {
     }
     match /settings/{docId} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() && docId == 'cash' && validCashSettings(request.resource.data);
+      allow create, update: if isAdmin()
+        && (
+          (docId == 'cash' && validCashSettings(request.resource.data))
+          || (docId == 'pricing' && validPricingSettings(request.resource.data))
+        );
       allow delete: if false;
     }
     match /customers/{docId} {
@@ -279,7 +558,13 @@ service cloud.firestore {
       allow create: if isStaff() && validCustomerBase(request.resource.data) && request.resource.data.is_active == true;
       allow update: if isStaff() && validCustomerBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at;
-      allow delete: if false;
+      allow delete: if isAdmin();
+    }
+    match /customer_merges/{docId} {
+      allow read, create: if isAdmin()
+        && validCustomerMergeAudit(request.resource.data)
+        && request.resource.data.merged_by_uid == request.auth.uid;
+      allow update, delete: if false;
     }
     match /invoices/{docId} {
       allow read: if isStaff();
@@ -348,6 +633,9 @@ service cloud.firestore {
               invoicePostedPaymentUpdateOnly(resource.data, request.resource.data)
             )
             || (
+              invoicePostedReturnAdjustmentOnly(resource.data, request.resource.data)
+            )
+            || (
               resource.data.status == 'posted'
               && request.resource.data.status == 'void'
               && request.resource.data.stock_reversal_applied == true
@@ -359,6 +647,7 @@ service cloud.firestore {
               && request.resource.data.posted_total_amount == resource.data.posted_total_amount
               && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
             )
+            || adminCustomerIdReassignOnly(resource.data, request.resource.data)
           ))
         );
       allow delete: if isStaff() && resource.data.status == 'draft' && resource.data.stock_reversal_applied == false;
@@ -370,7 +659,9 @@ service cloud.firestore {
     match /invoice_items/{docId} {
       allow read: if isStaff();
       allow create: if isStaff() && validInvoiceItemBase(request.resource.data);
-      allow update: if false;
+      allow update: if isAdmin() && validInvoiceItemBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at
+        && adminCustomerIdReassignOnly(resource.data, request.resource.data);
       allow delete: if isStaff() && resource.data.invoice_id is string
         && resource.data.invoice_id.size() > 0
         && exists(/databases/$(database)/documents/invoices/$(resource.data.invoice_id))
@@ -421,6 +712,87 @@ service cloud.firestore {
           == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.order_id
         && request.resource.data.customer_id
           == get(/databases/$(database)/documents/invoices/$(request.resource.data.invoice_id)).data.customer_id;
+      allow update: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at
+        && adminCustomerIdReassignOnlyNoTimestamp(resource.data, request.resource.data);
+      allow delete: if false;
+    }
+    match /invoice_returns/{docId} {
+      allow read: if isStaff();
+      allow create: if isAdmin() && validInvoiceReturnBase(request.resource.data)
+        && request.resource.data.status == 'draft'
+        && request.resource.data.refund_amount == 0
+        && exists(/databases/$(database)/documents/invoices/$(request.resource.data.original_invoice_id));
+      allow update: if isAdmin() && validInvoiceReturnBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.return_number == resource.data.return_number
+        && request.resource.data.original_invoice_id == resource.data.original_invoice_id
+        && request.resource.data.order_id == resource.data.order_id
+        && (
+          adminCustomerIdReassignOnly(resource.data, request.resource.data)
+          || (
+            request.resource.data.customer_id == resource.data.customer_id
+            && (
+              (
+                resource.data.status == 'draft'
+                && request.resource.data.status == 'draft'
+                && invoiceReturnPostedAtUnchanged(resource.data, request.resource.data)
+                && invoiceReturnVoidedAtUnchanged(resource.data, request.resource.data)
+              )
+              || (
+                resource.data.status == 'draft'
+                && request.resource.data.status == 'posted'
+                && request.resource.data.posted_at is timestamp
+                && invoiceReturnVoidedAtUnchanged(resource.data, request.resource.data)
+                && request.resource.data.refund_amount == request.resource.data.total_amount
+              )
+            )
+          )
+        );
+      allow delete: if isAdmin() && resource.data.status == 'draft';
+    }
+    match /invoice_return_items/{docId} {
+      allow read: if isStaff();
+      allow create: if isAdmin() && validInvoiceReturnItemBase(request.resource.data);
+      allow update: if isAdmin() && validInvoiceReturnItemBase(request.resource.data)
+        && request.resource.data.return_id == resource.data.return_id
+        && request.resource.data.original_invoice_id == resource.data.original_invoice_id
+        && request.resource.data.original_invoice_item_id == resource.data.original_invoice_item_id
+        && request.resource.data.created_at == resource.data.created_at
+        && (
+          adminCustomerIdReassignOnly(resource.data, request.resource.data)
+          || (
+            exists(/databases/$(database)/documents/invoice_returns/$(request.resource.data.return_id))
+            && get(/databases/$(database)/documents/invoice_returns/$(request.resource.data.return_id)).data.status == 'draft'
+          )
+        );
+      allow delete: if isAdmin() && resource.data.return_id is string
+        && exists(/databases/$(database)/documents/invoice_returns/$(resource.data.return_id))
+        && get(/databases/$(database)/documents/invoice_returns/$(resource.data.return_id)).data.status == 'draft';
+    }
+    match /return_lot_restorations/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validReturnLotRestorationBase(request.resource.data);
+      allow update, delete: if false;
+    }
+    match /return_lot_write_offs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validReturnLotWriteOffBase(request.resource.data);
+      allow update, delete: if false;
+    }
+    match /inventory_discards/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validInventoryDiscardBase(request.resource.data);
+      allow update, delete: if false;
+    }
+    match /inventory_discard_items/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validInventoryDiscardItemBase(request.resource.data);
+      allow update, delete: if false;
+    }
+    match /inventory_discard_lots/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validInventoryDiscardLotBase(request.resource.data);
       allow update, delete: if false;
     }
     function validWalkInSessionCreate(data) {

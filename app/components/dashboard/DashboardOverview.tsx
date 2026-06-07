@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { loadStockSummary, type StockSummaryData } from "@/lib/inventory/stockSummary";
-import { loadProfitForPeriod } from "@/lib/profit/loadPeriod";
+import { loadDashboardSnapshot } from "@/lib/dashboard/loadSnapshot";
+import type { StockSummaryData } from "@/lib/inventory/stockSummary";
+import {
+  computeWeeklyInventoryVelocity,
+  type WeeklyInventoryVelocity,
+} from "@/lib/inventory/turnoverMetrics";
+import { loadProfitForPeriod, loadCogsForVelocityWeek, loadYtdAverageWeeklySales, type YtdWeeklySalesSummary } from "@/lib/profit/loadPeriod";
 import {
   getBoundsFromDateInputs,
   getCurrentMonthBounds,
@@ -25,6 +30,7 @@ import { CashInHandStatCard } from "@/app/components/dashboard/CashInHandStatCar
 import { CashEntryForm } from "@/app/components/dashboard/CashEntryForm";
 import { CashEntryLedgerTable } from "@/app/components/dashboard/CashEntryLedgerTable";
 import { TotalAssetsCard } from "@/app/components/dashboard/TotalAssetsCard";
+import { DashboardExtendedKpiGrid } from "@/app/components/dashboard/DashboardExtendedKpiGrid";
 import { DashboardSecondaryStatRow } from "@/app/components/dashboard/DashboardSecondaryStatRow";
 import { ExpectedCashCards } from "@/app/components/dashboard/ExpectedCashCards";
 import { Input } from "@/app/components/ui/Input";
@@ -46,6 +52,9 @@ export function DashboardOverview() {
   const [customEndDate, setCustomEndDate] = useState(() => toDateInputValue(initialNow));
   const [selected, setSelected] = useState<ProfitBreakdown | null>(null);
   const [stock, setStock] = useState<StockSummaryData | null>(null);
+  const [customerCount, setCustomerCount] = useState<number | null>(null);
+  const [weeklyVelocity, setWeeklyVelocity] = useState<WeeklyInventoryVelocity | null>(null);
+  const [ytdWeeklySales, setYtdWeeklySales] = useState<YtdWeeklySalesSummary | null>(null);
   const [cashSnapshot, setCashSnapshot] = useState<CashInHandSnapshot | null>(null);
   const [cashLoading, setCashLoading] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -124,21 +133,38 @@ export function DashboardOverview() {
       setError("Select a valid date or date range.");
       setSelected(null);
       setStock(null);
+      setCustomerCount(null);
+      setWeeklyVelocity(null);
+      setYtdWeeklySales(null);
       setLoading(false);
       return;
     }
 
     try {
-      const [periodSummary, s] = await Promise.all([
+      const [periodSummary, snapshot, velocityWeek, ytdSales] = await Promise.all([
         loadProfitForPeriod(db, selectedRange.bounds.start, selectedRange.bounds.end),
-        loadStockSummary(db),
+        loadDashboardSnapshot(db),
+        loadCogsForVelocityWeek(db),
+        loadYtdAverageWeeklySales(db),
       ]);
       setSelected(periodSummary);
-      setStock(s);
+      setStock(snapshot.stock);
+      setCustomerCount(snapshot.activeCustomerCount);
+      setYtdWeeklySales(ytdSales);
+      setWeeklyVelocity(
+        computeWeeklyInventoryVelocity(
+          snapshot.stock.totalValueAtLotCost,
+          velocityWeek.weeklyCogs,
+          velocityWeek.week,
+        ),
+      );
     } catch (e) {
       setError(getFirestoreUserMessage(e));
       setSelected(null);
       setStock(null);
+      setCustomerCount(null);
+      setWeeklyVelocity(null);
+      setYtdWeeklySales(null);
     } finally {
       setLoading(false);
     }
@@ -152,11 +178,10 @@ export function DashboardOverview() {
     <div className="space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          KPIs use sales and expenses in local time. Profit subtracts COGS (cost_price × quantity
-          sold). Choose preset, one calendar day, or a custom range to view period totals. Inventory
-          value is current product cost × units on hand.
-          Cash in hand is an all-time estimate from recorded flows; set opening cash if you started
-          mid-stream.
+          KPIs use sales and expenses in local time. Period cards include gross and net margin %,
+          damaged write-offs, and inventory velocity (Mon–Sun route week). Snapshot cards show
+          inventory at retail, unrealized profit on stock, customer count, and reorder alerts.
+          Cash in hand is an all-time estimate from recorded flows.
         </p>
         <Button type="button" variant="outline" className="shrink-0" onClick={() => void load()}>
           Refresh
@@ -270,6 +295,18 @@ export function DashboardOverview() {
           end={selectedRange.bounds.end}
           periodTitle={`${selectedRange.label}: ${selectedRange.description}`}
           kpiTotalSales={selected?.totalSales ?? 0}
+        />
+      ) : null}
+
+      {!error && selectedRange.bounds ? (
+        <DashboardExtendedKpiGrid
+          breakdown={selected}
+          stock={stock}
+          customerCount={customerCount}
+          rollingVelocity={weeklyVelocity}
+          ytdWeeklySales={ytdWeeklySales}
+          loading={loading}
+          periodLabel={selectedRange.label}
         />
       ) : null}
 

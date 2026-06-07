@@ -20,6 +20,7 @@ type StockAdjustControlsProps = {
   currentStock: number;
   /** Shown as default for the unit cost field; updates when the product row updates. */
   defaultUnitCost: number;
+  pricingMode?: "manual" | "automatic";
 };
 
 function defaultCostInputString(n: number): string {
@@ -31,6 +32,7 @@ export function StockAdjustControls({
   productId,
   currentStock,
   defaultUnitCost,
+  pricingMode = "manual",
 }: StockAdjustControlsProps) {
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState(() => defaultCostInputString(defaultUnitCost));
@@ -147,22 +149,24 @@ export function StockAdjustControls({
             aria-label="Purchase unit cost for stock in"
           />
         </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor={saleId} className="text-xs text-muted-foreground">
-            Sale price
-          </Label>
-          <Input
-            id={saleId}
-            className="h-9 w-[5.5rem] px-2 py-1.5 text-sm tabular-nums"
-            inputMode="decimal"
-            min={0}
-            step="any"
-            value={salePriceInput}
-            onChange={(e) => setSalePriceInput(e.target.value)}
-            placeholder="opt."
-            aria-label="Optional new sale price for stock in"
-          />
-        </div>
+        {pricingMode !== "automatic" ? (
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor={saleId} className="text-xs text-muted-foreground">
+              Sale price
+            </Label>
+            <Input
+              id={saleId}
+              className="h-9 w-[5.5rem] px-2 py-1.5 text-sm tabular-nums"
+              inputMode="decimal"
+              min={0}
+              step="any"
+              value={salePriceInput}
+              onChange={(e) => setSalePriceInput(e.target.value)}
+              placeholder="opt."
+              aria-label="Optional new sale price for stock in"
+            />
+          </div>
+        ) : null}
         <Button
           type="button"
           variant="primary"
@@ -186,7 +190,9 @@ export function StockAdjustControls({
         </Button>
       </div>
       <p className="text-[10px] leading-snug text-muted-foreground">
-        Receipt cost feeds FIFO lots; optional sale price updates the product list price immediately (not per lot).
+        {pricingMode === "automatic"
+          ? "Receipt cost feeds FIFO lots; list sale price recalculates from target margin after stock in."
+          : "Receipt cost feeds FIFO lots; optional sale price updates the product list price immediately (not per lot)."}
       </p>
       {error ? (
         <InlineAlert variant="error" id={alertId} className="max-w-[260px] text-xs">

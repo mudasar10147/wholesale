@@ -1,5 +1,6 @@
 import { AddInvoiceForm } from "@/app/components/invoices/AddInvoiceForm";
 import { InvoiceDraftList } from "@/app/components/invoices/InvoiceDraftList";
+import { ReturnList } from "@/app/components/invoices/ReturnList";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import {
   Card,
@@ -39,6 +40,18 @@ export default function SalesPage() {
         </CardHeader>
         <CardContent>
           <InvoiceDraftList />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Returns</CardTitle>
+          <CardDescription>
+            Draft and posted returns against invoices. Open a draft to post it or delete it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ReturnList />
         </CardContent>
       </Card>
 

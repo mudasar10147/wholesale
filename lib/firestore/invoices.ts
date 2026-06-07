@@ -15,6 +15,16 @@ import {
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
+import {
+  derivePaymentStatus,
+  getInvoiceAmountDue,
+  getInvoiceEffectiveTotal,
+  getInvoicePaidAmount,
+} from "@/lib/invoices/invoiceEffective";
+import {
+  formatInvoiceVoidBlockedMessage,
+  loadInvoiceReturnBlockers,
+} from "@/lib/firestore/invoiceReturns";
 import type {
   CustomerDoc,
   InvoiceDoc,
@@ -22,6 +32,8 @@ import type {
   InvoiceItemDoc,
   LotConsumptionDoc,
   ProductDoc,
+  ReturnLotRestorationDoc,
+  ReturnLotWriteOffDoc,
   StockLotDoc,
 } from "@/lib/types/firestore";
 import {
@@ -943,6 +955,57 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   }
 }
 
+export async function recordInvoicePayment(
+  db: Firestore,
+  invoiceId: string,
+  paymentAmount: number,
+): Promise<void> {
+  const trimmedId = invoiceId.trim().toUpperCase();
+  if (!trimmedId) {
+    throw new Error("Invoice ID is required.");
+  }
+
+  const amount = roundMoney2(paymentAmount);
+  if (amount <= 0) {
+    throw new Error("Payment amount must be greater than zero.");
+  }
+
+  const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(invoiceRef);
+    if (!snap.exists()) {
+      throw new Error("Invoice not found.");
+    }
+    const invoice = snap.data() as InvoiceDoc | undefined;
+    if (!invoice) {
+      throw new Error("Invoice not found.");
+    }
+    if (invoice.status === "void") {
+      throw new Error("Cannot record payment on a void invoice.");
+    }
+    if (invoice.status !== "posted") {
+      throw new Error("Only posted invoices can receive payments.");
+    }
+
+    const effectiveTotal = getInvoiceEffectiveTotal(invoice);
+    const amountDue = getInvoiceAmountDue(invoice);
+    if (effectiveTotal <= 0.01 || amountDue <= 0.01) {
+      throw new Error("Nothing is due on this invoice.");
+    }
+    if (amount > amountDue + 0.01) {
+      throw new Error(`Payment cannot exceed amount due (${amountDue}).`);
+    }
+
+    const paidNow = getInvoicePaidAmount(invoice);
+    const nextPaid = roundMoney2(paidNow + amount);
+    tx.update(invoiceRef, {
+      paid_amount: nextPaid,
+      payment_status: derivePaymentStatus(invoice, nextPaid),
+      updated_at: serverTimestamp(),
+    });
+  });
+}
+
 export async function markInvoicePaid(db: Firestore, invoiceId: string): Promise<void> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
@@ -966,17 +1029,29 @@ export async function markInvoicePaid(db: Firestore, invoiceId: string): Promise
       throw new Error("Only posted invoices can be marked as paid.");
     }
 
-    const total = roundMoney2(
-      typeof invoice.posted_total_amount === "number" ? invoice.posted_total_amount : invoice.total_amount,
-    );
-    const paidNow = roundMoney2(typeof invoice.paid_amount === "number" ? invoice.paid_amount : 0);
-    if (paidNow >= total) {
+    const effectiveTotal = getInvoiceEffectiveTotal(invoice);
+    const amountDue = getInvoiceAmountDue(invoice);
+    const paidNow = getInvoicePaidAmount(invoice);
+
+    if (effectiveTotal <= 0.01) {
       return;
     }
 
+    if (amountDue <= 0.01) {
+      if (paidNow !== effectiveTotal) {
+        tx.update(invoiceRef, {
+          paid_amount: effectiveTotal,
+          payment_status: derivePaymentStatus(invoice, effectiveTotal),
+          updated_at: serverTimestamp(),
+        });
+      }
+      return;
+    }
+
+    const nextPaid = roundMoney2(paidNow + amountDue);
     tx.update(invoiceRef, {
-      paid_amount: total,
-      payment_status: "paid",
+      paid_amount: nextPaid,
+      payment_status: derivePaymentStatus(invoice, nextPaid),
       updated_at: serverTimestamp(),
     });
   });
@@ -994,6 +1069,12 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   }
   await logFirestoreAuthForDebug("voidInvoice (before transaction)");
 
+  const returnBlockers = await loadInvoiceReturnBlockers(db, trimmedId);
+  const voidBlockedMessage = formatInvoiceVoidBlockedMessage(returnBlockers);
+  if (voidBlockedMessage) {
+    throw new Error(voidBlockedMessage);
+  }
+
   const consumptionQ = query(
     collection(db, COLLECTIONS.lotConsumptions),
     where("invoice_id", "==", trimmedId),
@@ -1002,6 +1083,34 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   const preloadedConsumptionIds: string[] = [];
   consumptionSnap.forEach((docSnap) => {
     preloadedConsumptionIds.push(docSnap.id);
+  });
+
+  const restorationQ = query(
+    collection(db, COLLECTIONS.returnLotRestorations),
+    where("invoice_id", "==", trimmedId),
+  );
+  const restorationSnap = await getDocs(restorationQ);
+  const restoredByConsumption = new Map<string, number>();
+  restorationSnap.forEach((docSnap) => {
+    const row = docSnap.data() as ReturnLotRestorationDoc;
+    restoredByConsumption.set(
+      row.consumption_id,
+      (restoredByConsumption.get(row.consumption_id) ?? 0) + row.quantity,
+    );
+  });
+
+  const writeOffQ = query(
+    collection(db, COLLECTIONS.returnLotWriteOffs),
+    where("invoice_id", "==", trimmedId),
+  );
+  const writeOffSnap = await getDocs(writeOffQ);
+  const writtenOffByConsumption = new Map<string, number>();
+  writeOffSnap.forEach((docSnap) => {
+    const row = docSnap.data() as ReturnLotWriteOffDoc;
+    writtenOffByConsumption.set(
+      row.consumption_id,
+      (writtenOffByConsumption.get(row.consumption_id) ?? 0) + row.quantity,
+    );
   });
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
@@ -1064,15 +1173,27 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
 
     const restoreByProduct = new Map<string, number>();
     const restoreByLot = new Map<string, number>();
+    const consumptionsToReverse: Array<{ id: string; data: LotConsumptionDoc }> = [];
     for (const c of consumptions) {
       const lotId = c.data.lot_id;
       const productId = c.data.product_id;
-      const qty = c.data.quantity;
-      if (!lotId || !productId || !Number.isInteger(qty) || qty <= 0) {
+      const alreadyReturned = restoredByConsumption.get(c.id) ?? 0;
+      const alreadyWrittenOff = writtenOffByConsumption.get(c.id) ?? 0;
+      const qty = c.data.quantity - alreadyReturned - alreadyWrittenOff;
+      if (!lotId || !productId || !Number.isInteger(c.data.quantity) || c.data.quantity <= 0) {
         throw new Error("Invalid lot-consumption data.");
+      }
+      if (qty <= 0) {
+        consumptionsToReverse.push(c);
+        continue;
       }
       restoreByProduct.set(productId, (restoreByProduct.get(productId) ?? 0) + qty);
       restoreByLot.set(lotId, (restoreByLot.get(lotId) ?? 0) + qty);
+      consumptionsToReverse.push(c);
+    }
+
+    if (restoreByLot.size === 0 && consumptionsToReverse.length === 0) {
+      throw new Error("No lot-consumption records found. Cannot reverse stock safely.");
     }
 
     // Firestore transactions require all reads before any writes.
@@ -1112,7 +1233,7 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
       });
     }
 
-    for (const c of consumptions) {
+    for (const c of consumptionsToReverse) {
       tx.update(doc(db, COLLECTIONS.lotConsumptions, c.id), {
         reversed_at: serverTimestamp(),
       });
@@ -1127,6 +1248,8 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
     tx.update(invoiceRef, {
       status: "void",
       stock_reversal_applied: true,
+      paid_amount: 0,
+      payment_status: "unpaid",
       voided_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     });

@@ -12,7 +12,7 @@ export default function DashboardPage() {
         <PageHeader
           className="flex-1 border-0 pb-0"
           title="Dashboard"
-          description="Business overview: today, this month and year sales, expenses, profit, inventory value, and monthly detail."
+          description="Business overview: sales, margins, profit, inventory opportunity, cash, and stock alerts."
         />
       </div>
 

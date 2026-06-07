@@ -1,5 +1,6 @@
 import { applicationDefault, cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { parseGoogleServiceAccountJson } from "@/lib/server/googleServiceAccountJson";
 
 let adminApp: App | null = null;
@@ -83,4 +84,8 @@ export function getFirebaseAdminApp(): App {
 
 export function getFirebaseAdminAuth() {
   return getAuth(getFirebaseAdminApp());
+}
+
+export function getFirebaseAdminFirestore(): Firestore {
+  return getFirestore(getFirebaseAdminApp());
 }

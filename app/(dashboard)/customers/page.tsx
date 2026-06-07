@@ -21,7 +21,8 @@ export default function CustomersPage() {
         <CardHeader>
           <CardTitle>Customer management</CardTitle>
           <CardDescription>
-            Add new customers, update their details, and archive old records without deleting history.
+            Add new customers, update their details, archive old records, or merge duplicates into
+            one customer (updates all linked invoices and deletes the duplicate).
           </CardDescription>
         </CardHeader>
         <CardContent>

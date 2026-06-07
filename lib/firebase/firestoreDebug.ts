@@ -65,7 +65,14 @@ export function logFirestoreError(context: string, error: unknown): void {
     if (cd !== undefined) base.customData = cd;
   } else if (error instanceof Error) {
     base.message = error.message;
-    base.stack = error.stack;
+    base.name = error.name;
+    if (error.stack) base.stack = error.stack;
+  } else if (error && typeof error === "object") {
+    try {
+      base.detail = JSON.stringify(error);
+    } catch {
+      base.detail = String(error);
+    }
   } else {
     base.value = error;
   }

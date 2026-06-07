@@ -4,6 +4,8 @@ import type { Timestamp } from "firebase/firestore";
  * Document shape for `products/{productId}`.
  * Field names use snake_case to match docs/PROJECT_SPEC.md.
  */
+export type PricingMode = "manual" | "automatic";
+
 export type ProductDoc = {
   name: string;
   category?: string;
@@ -15,6 +17,10 @@ export type ProductDoc = {
   cost_price: number;
   sale_price: number;
   stock_quantity: number;
+  /** Target gross margin % (selling-price basis). Falls back to category template then global default. */
+  target_margin_percent?: number;
+  pricing_mode?: PricingMode;
+  pricing_updated_at?: Timestamp;
   created_at: Timestamp;
 };
 
@@ -22,8 +28,14 @@ export type ProductDoc = {
  * Document shape for `sales/{saleId}`.
  * `product_id` references `products/{product_id}`.
  */
+export type SaleType = "sale" | "return";
+
 export type SaleDoc = {
   invoice_id?: string;
+  /** Original invoice when this row is a return offset. */
+  original_invoice_id?: string;
+  return_id?: string;
+  sale_type?: SaleType;
   /** Set when sale was created from an approved walk-in session. */
   walk_in_session_id?: string;
   order_id?: string;
@@ -105,6 +117,23 @@ export type CashSettingsDoc = {
   updated_at: Timestamp;
 };
 
+export type CategoryMarginTemplate = {
+  target_margin_percent: number;
+  pricing_mode: PricingMode;
+};
+
+/**
+ * Document shape for `settings/pricing` — global default margin and per-category templates.
+ */
+export type PricingSettingsDoc = {
+  global_default_target_margin_percent: number;
+  category_templates: Record<string, CategoryMarginTemplate>;
+  updated_at: Timestamp;
+};
+
+export const PRICING_SETTINGS_DOC_ID = "pricing";
+export const DEFAULT_GLOBAL_TARGET_MARGIN_PERCENT = 15;
+
 /**
  * Document shape for `customers/{customerId}`.
  */
@@ -144,11 +173,101 @@ export type InvoiceDoc = {
   posted_delivery_charge?: number;
   posted_total_amount?: number;
   posted_cogs_amount?: number;
+  /** Cumulative value of posted returns against this invoice. */
+  returned_amount?: number;
+  /** Posted return document IDs linked to this invoice. */
+  return_ids?: string[];
   notes?: string;
   posted_at?: Timestamp;
   voided_at?: Timestamp;
   created_at: Timestamp;
   updated_at: Timestamp;
+};
+
+export type InvoiceReturnStatus = "draft" | "posted" | "void";
+export type InvoiceReturnSettlementType = "reduce_balance" | "cash_refund";
+
+/**
+ * Document shape for `invoice_returns/{returnId}`.
+ */
+export type InvoiceReturnDoc = {
+  return_number: string;
+  original_invoice_id: string;
+  order_id: string;
+  customer_id: string;
+  status: InvoiceReturnStatus;
+  settlement_type: InvoiceReturnSettlementType;
+  item_ids: string[];
+  subtotal_amount: number;
+  total_amount: number;
+  refund_amount: number;
+  /** Sum of discard FIFO write-off COGS at post (damaged goods). */
+  write_off_cogs_amount?: number;
+  return_reason?: string;
+  notes?: string;
+  posted_at?: Timestamp;
+  voided_at?: Timestamp;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+/**
+ * Document shape for `invoice_return_items/{itemId}`.
+ */
+export type InvoiceReturnItemDoc = {
+  return_id: string;
+  original_invoice_id: string;
+  original_invoice_item_id: string;
+  customer_id: string;
+  order_id: string;
+  product_id: string;
+  quantity_returned: number;
+  /** Resellable units restored to stock at post. */
+  quantity_restock: number;
+  /** Damaged units written off (no stock restore). */
+  quantity_discard: number;
+  unit_price: number;
+  line_discount: number;
+  line_delivery_charge: number;
+  line_total: number;
+  /** FIFO COGS for restock portion (filled at post). */
+  cogs_amount: number;
+  /** FIFO COGS for discard portion (filled at post). */
+  write_off_cogs_amount: number;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+/**
+ * Audit row for stock restored to a lot on return post.
+ */
+export type ReturnLotRestorationDoc = {
+  return_id: string;
+  consumption_id: string;
+  lot_id: string;
+  product_id: string;
+  invoice_id: string;
+  invoice_item_id: string;
+  quantity: number;
+  unit_cost: number;
+  cogs_amount: number;
+  created_at: Timestamp;
+};
+
+/**
+ * Audit row for damaged/discarded return qty — FIFO cost write-off, no stock restore.
+ */
+export type ReturnLotWriteOffDoc = {
+  return_id: string;
+  consumption_id: string;
+  lot_id: string;
+  product_id: string;
+  invoice_id: string;
+  invoice_item_id: string;
+  quantity: number;
+  unit_cost: number;
+  cogs_amount: number;
+  created_at: Timestamp;
 };
 
 /**
@@ -221,5 +340,44 @@ export type InvoiceItemCogsDoc = {
   line_delivery_charge: number;
   cogs_amount: number;
   line_total: number;
+  created_at: Timestamp;
+};
+
+/**
+ * Standalone stock discard header (`inventory_discards/{discardId}`).
+ * For QC failures and damaged goods — not tied to invoices or returns.
+ */
+export type InventoryDiscardDoc = {
+  discard_number: string;
+  reason?: string;
+  notes?: string;
+  total_quantity: number;
+  total_cogs_amount: number;
+  item_ids: string[];
+  created_at: Timestamp;
+};
+
+/**
+ * One product line on a stock discard (`inventory_discard_items/{itemId}`).
+ */
+export type InventoryDiscardItemDoc = {
+  discard_id: string;
+  product_id: string;
+  quantity: number;
+  cogs_amount: number;
+  created_at: Timestamp;
+};
+
+/**
+ * FIFO lot audit for discarded stock (`inventory_discard_lots/{docId}`).
+ */
+export type InventoryDiscardLotDoc = {
+  discard_id: string;
+  discard_item_id: string;
+  lot_id: string;
+  product_id: string;
+  quantity: number;
+  unit_cost: number;
+  cogs_amount: number;
   created_at: Timestamp;
 };

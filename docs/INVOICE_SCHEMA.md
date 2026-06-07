@@ -29,6 +29,11 @@ Schema contract for customer + invoice features. Code mirrors this in [`lib/fire
 | `customer_id` | string | yes | must match a `customers` document ID |
 | `order_id` | string | yes | unique business-facing order/invoice number |
 | `status` | string | yes | one of `draft`, `posted`, `void` |
+| `payment_status` | string | yes | one of `unpaid`, `partial`, `paid` |
+| `paid_amount` | number | yes | amount collected from customer |
+| `stock_reversal_applied` | boolean | yes | true after posted void restores stock |
+| `returned_amount` | number | no | cumulative posted return credit |
+| `return_ids` | list | no | posted return document IDs |
 | `subtotal_amount` | number | yes | sum of line totals before header adjustments |
 | `discount_amount` | number | yes | invoice-level discount |
 | `delivery_charge` | number | yes | invoice-level delivery/transport charge |

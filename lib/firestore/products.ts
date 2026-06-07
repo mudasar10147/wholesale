@@ -7,9 +7,12 @@ import {
   updateDoc,
   type Firestore,
 } from "firebase/firestore";
+import { inheritPricingFieldsForNewProduct } from "@/lib/pricing/automaticPricing";
+import { automaticSalePrice } from "@/lib/pricing/metrics";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { applyStockInInTransaction } from "@/lib/firestore/inventory";
-import type { ProductDoc } from "@/lib/types/firestore";
+import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
+import type { PricingMode, ProductDoc } from "@/lib/types/firestore";
 
 type ProductImageMeta = {
   path: string;
@@ -30,6 +33,8 @@ export type CreateProductInput = {
   sale_price: number;
   /** Units bought on create; 0 = catalog SKU only (no stock lot or cash purchase). */
   initial_quantity: number;
+  target_margin_percent?: number;
+  pricing_mode?: PricingMode;
   image?: {
     url: string;
     path: string;
@@ -67,17 +72,36 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
     throw new Error("Sale price must be zero or greater.");
   }
 
+  const settings = await loadPricingSettings(db);
+  const cat = input.category?.trim();
+  const inherited = inheritPricingFieldsForNewProduct(
+    cat,
+    settings.categoryTemplates,
+    settings.globalDefaultTargetMarginPercent,
+    input.cost_price,
+  );
+
+  const pricing_mode = input.pricing_mode ?? inherited.pricing_mode;
+  const target_margin_percent =
+    input.target_margin_percent ?? inherited.target_margin_percent ?? settings.globalDefaultTargetMarginPercent;
+  let sale_price = input.sale_price;
+  if (pricing_mode === "automatic") {
+    sale_price = automaticSalePrice(input.cost_price, target_margin_percent);
+  }
+
   const productRef = doc(collection(db, COLLECTIONS.products));
 
   await runTransaction(db, async (tx) => {
     const payload: Record<string, unknown> = {
       name,
       cost_price: input.cost_price,
-      sale_price: input.sale_price,
+      sale_price,
       stock_quantity: 0,
+      target_margin_percent,
+      pricing_mode,
+      pricing_updated_at: serverTimestamp(),
       created_at: serverTimestamp(),
     };
-    const cat = input.category?.trim();
     if (cat) {
       payload.category = cat;
     }
@@ -91,15 +115,26 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
     tx.set(productRef, payload);
 
     if (input.initial_quantity > 0) {
+      const seedProduct = {
+        cost_price: input.cost_price,
+        sale_price,
+        pricing_mode,
+        target_margin_percent,
+        category: cat,
+      } as ProductDoc;
       applyStockInInTransaction(
         tx,
         db,
         productRef.id,
         productRef,
-        { cost_price: input.cost_price, sale_price: input.sale_price } as ProductDoc,
+        seedProduct,
         input.initial_quantity,
         input.cost_price,
-        input.sale_price,
+        pricing_mode === "manual" ? sale_price : undefined,
+        {
+          categoryTemplates: settings.categoryTemplates,
+          globalDefault: settings.globalDefaultTargetMarginPercent,
+        },
       );
     }
   });

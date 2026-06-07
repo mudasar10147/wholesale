@@ -23,6 +23,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/app/components/ui/Card";
+import { marginPercent, markupPercent } from "@/lib/pricing/metrics";
 import { cn } from "@/lib/utils";
 
 type ProductRow = ProductDoc & { id: string };
@@ -294,8 +295,14 @@ export function ProductProfileContent() {
     if (!product) return null;
     const cost = typeof product.cost_price === "number" ? product.cost_price : 0;
     const sale = typeof product.sale_price === "number" ? product.sale_price : 0;
-    if (cost <= 0) return null;
-    return ((sale - cost) / cost) * 100;
+    return marginPercent(sale, cost);
+  }, [product]);
+
+  const markupPct = useMemo(() => {
+    if (!product) return null;
+    const cost = typeof product.cost_price === "number" ? product.cost_price : 0;
+    const sale = typeof product.sale_price === "number" ? product.sale_price : 0;
+    return markupPercent(sale, cost);
   }, [product]);
 
   const stockValueAtCost = useMemo(() => {
@@ -389,7 +396,7 @@ export function ProductProfileContent() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Cost price</CardTitle>
@@ -412,10 +419,18 @@ export function ProductProfileContent() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">List margin (vs cost)</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">List margin %</CardTitle>
           </CardHeader>
           <CardContent className="text-xl font-semibold tabular-nums">
             {marginPct !== null ? `${marginPct.toFixed(1)}%` : "—"}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">List markup %</CardTitle>
+          </CardHeader>
+          <CardContent className="text-xl font-semibold tabular-nums">
+            {markupPct !== null ? `${markupPct.toFixed(1)}%` : "—"}
           </CardContent>
         </Card>
       </div>

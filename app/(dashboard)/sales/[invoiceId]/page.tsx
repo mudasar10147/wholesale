@@ -11,7 +11,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     <div className="space-y-10">
       <PageHeader
         title="Invoice"
-        description="View lines, copy or download as text, edit drafts, post, void, or delete drafts."
+        description="View lines, copy or download as text, edit drafts, post, create returns, void, or delete drafts."
       />
       <InvoiceDetailView invoiceId={invoiceId} />
     </div>

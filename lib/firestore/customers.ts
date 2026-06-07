@@ -2,6 +2,7 @@ import {
   addDoc,
   collection,
   doc,
+  getDocs,
   serverTimestamp,
   updateDoc,
   type Firestore,
@@ -48,4 +49,15 @@ export async function archiveCustomer(db: Firestore, customerId: string): Promis
     archived_at: serverTimestamp(),
     updated_at: serverTimestamp(),
   });
+}
+
+/** Count customers that are not archived (`is_active !== false`). */
+export async function loadActiveCustomerCount(db: Firestore): Promise<number> {
+  const snap = await getDocs(collection(db, COLLECTIONS.customers));
+  let count = 0;
+  snap.forEach((docSnap) => {
+    const data = docSnap.data() as { is_active?: boolean };
+    if (data.is_active !== false) count += 1;
+  });
+  return count;
 }

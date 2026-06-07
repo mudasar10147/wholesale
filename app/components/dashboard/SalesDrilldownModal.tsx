@@ -34,10 +34,15 @@ function formatTs(ts: Timestamp | undefined): string {
 
 function refLine(s: SaleDoc): string {
   const parts: string[] = [];
+  if (s.sale_type === "return") parts.push("return");
+  if (s.return_id) parts.push(`ret:${s.return_id}`);
   if (s.invoice_id) parts.push(`inv:${s.invoice_id}`);
   if (s.walk_in_session_id) parts.push(`walk-in:${s.walk_in_session_id}`);
   if (s.order_id) parts.push(`order:${s.order_id}`);
   if (s.customer_id) parts.push(`cust:${s.customer_id}`);
+  if (s.sale_type === "return" && typeof s.cogs_amount === "number") {
+    parts.push(s.cogs_amount === 0 ? "no COGS reversal (discard)" : `COGS ${s.cogs_amount}`);
+  }
   return parts.length > 0 ? parts.join(" · ") : "—";
 }
 

@@ -12,8 +12,10 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { weightedAverageUnitCostFromLotCostRows } from "@/lib/inventory/lotPricing";
-import type { StockLotDoc } from "@/lib/types/firestore";
+import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
+import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
+import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
+import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
 async function prefetchSortedLotIdsForProduct(db: Firestore, productId: string): Promise<string[]> {
   const snap = await getDocs(collection(db, COLLECTIONS.stockLots));
@@ -25,17 +27,24 @@ async function prefetchSortedLotIdsForProduct(db: Firestore, productId: string):
   return [...ids].sort();
 }
 
-function lotRowsForWac(lots: Array<{ id: string; data: StockLotDoc }>) {
-  return lots.map((l) => ({
-    qty_remaining: typeof l.data.qty_remaining === "number" ? l.data.qty_remaining : 0,
-    unit_cost:
-      typeof l.data.unit_cost === "number" && Number.isFinite(l.data.unit_cost) ? l.data.unit_cost : 0,
-  }));
+function productPatchWithAutoPricing(
+  product: ProductDoc,
+  patch: Record<string, unknown>,
+  settings: Awaited<ReturnType<typeof loadPricingSettings>>,
+): Record<string, unknown> {
+  const full = { ...patch };
+  applyAutomaticPricingToPatch(
+    product,
+    full,
+    settings.categoryTemplates,
+    settings.globalDefaultTargetMarginPercent,
+  );
+  return full;
 }
 
 /**
  * Update editable lot fields (unit_cost, qty_remaining) and set product cost_price to the
- * weighted average of all lots for this product. Firestore rules lock qty_in, source, etc.
+ * newest lot with stock (last purchase price). Firestore rules lock qty_in, source, etc.
  */
 export async function updateLotAndSyncProduct(
   db: Firestore,
@@ -63,12 +72,14 @@ export async function updateLotAndSyncProduct(
   }
 
   const productRef = doc(db, COLLECTIONS.products, productId);
+  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
+    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -104,17 +115,9 @@ export async function updateLotAndSyncProduct(
           ? target.data.unit_cost
           : 0;
 
-    const rows = lots.map((l) => {
-      if (l.id === lotId) {
-        return { qty_remaining: nextQty, unit_cost: nextUnitCost };
-      }
-      const qr = typeof l.data.qty_remaining === "number" ? l.data.qty_remaining : 0;
-      const uc =
-        typeof l.data.unit_cost === "number" && Number.isFinite(l.data.unit_cost) ? l.data.unit_cost : 0;
-      return { qty_remaining: qr, unit_cost: uc };
-    });
-
-    const nextCostPrice = weightedAverageUnitCostFromLotCostRows(rows);
+    const nextCostPrice = listCostFromProductLots(lots, [
+      { id: lotId, qty_remaining: nextQty, unit_cost: nextUnitCost },
+    ]);
 
     tx.update(doc(db, COLLECTIONS.stockLots, lotId), {
       unit_cost: nextUnitCost,
@@ -122,23 +125,28 @@ export async function updateLotAndSyncProduct(
       updated_at: serverTimestamp(),
     });
 
-    tx.update(productRef, { cost_price: nextCostPrice });
+    tx.update(
+      productRef,
+      productPatchWithAutoPricing(product, { cost_price: nextCostPrice }, settings),
+    );
   });
 }
 
 /**
- * Set product stock_quantity to the sum of lot qty_remaining and cost_price to the weighted
- * average of remaining units (0 when no stock on lots).
+ * Set product stock_quantity to the sum of lot qty_remaining and cost_price to the newest
+ * lot with stock (0 when no stock on lots).
  */
 export async function syncProductStockFromLots(db: Firestore, productId: string): Promise<void> {
   const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
   const productRef = doc(db, COLLECTIONS.products, productId);
+  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
+    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -157,17 +165,22 @@ export async function syncProductStockFromLots(db: Firestore, productId: string)
       sum += typeof q === "number" && Number.isInteger(q) ? q : 0;
     }
 
-    const nextCost = weightedAverageUnitCostFromLotCostRows(lotRowsForWac(lots));
+    const nextCost = listCostFromProductLots(lots);
 
-    tx.update(productRef, {
-      stock_quantity: sum,
-      cost_price: nextCost,
-    });
+    tx.update(
+      productRef,
+      productPatchWithAutoPricing(
+        product,
+        { stock_quantity: sum, cost_price: nextCost },
+        settings,
+      ),
+    );
   });
 }
 
 /**
- * Append an adjustment lot and increase product stock; cost_price becomes WAC including the new lot.
+ * Append an adjustment lot and increase product stock; cost_price becomes that lot's unit cost
+ * (newest receipt with stock).
  */
 export async function createAdjustmentLot(
   db: Firestore,
@@ -190,12 +203,14 @@ export async function createAdjustmentLot(
   const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
   const productRef = doc(db, COLLECTIONS.products, productId);
   const newLotRef = doc(collection(db, COLLECTIONS.stockLots));
+  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
+    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -208,9 +223,7 @@ export async function createAdjustmentLot(
       }
     }
 
-    const baseRows = lotRowsForWac(lots);
-    baseRows.push({ qty_remaining: quantity, unit_cost: unitCost });
-    const nextCost = weightedAverageUnitCostFromLotCostRows(baseRows);
+    const nextCost = unitCost;
 
     const payload: Record<string, unknown> = {
       product_id: productId,
@@ -227,16 +240,20 @@ export async function createAdjustmentLot(
     }
 
     tx.set(newLotRef, payload);
-    tx.update(productRef, {
-      stock_quantity: increment(quantity),
-      cost_price: nextCost,
-    });
+    tx.update(
+      productRef,
+      productPatchWithAutoPricing(
+        product,
+        { stock_quantity: increment(quantity), cost_price: nextCost },
+        settings,
+      ),
+    );
   });
 }
 
 /**
- * Remove a lot and set product stock to the sum of remaining lots and cost to WAC.
- * Temporary admin escape hatch; breaks links to this lot_id in historical data if any.
+ * Remove a lot and set product stock to the sum of remaining lots and cost to the newest lot
+ * with stock. Temporary admin escape hatch; breaks links to this lot_id in historical data if any.
  */
 export async function deleteLotAndSyncProduct(
   db: Firestore,
@@ -250,12 +267,14 @@ export async function deleteLotAndSyncProduct(
 
   const productRef = doc(db, COLLECTIONS.products, productId);
   const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
+  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
+    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -279,13 +298,17 @@ export async function deleteLotAndSyncProduct(
       const q = l.data.qty_remaining;
       sum += typeof q === "number" && Number.isInteger(q) ? q : 0;
     }
-    const nextCost = weightedAverageUnitCostFromLotCostRows(lotRowsForWac(remaining));
+    const nextCost = listCostFromProductLots(remaining);
 
     tx.delete(lotRef);
-    tx.update(productRef, {
-      stock_quantity: sum,
-      cost_price: nextCost,
-    });
+    tx.update(
+      productRef,
+      productPatchWithAutoPricing(
+        product,
+        { stock_quantity: sum, cost_price: nextCost },
+        settings,
+      ),
+    );
   });
 }
 

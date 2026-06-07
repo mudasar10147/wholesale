@@ -12,6 +12,8 @@ export type NavItem = {
 export const navItems: readonly NavItem[] = [
   { href: "/", label: "Dashboard", roles: ["admin"] },
   { href: "/products", label: "Products", roles: ["admin"] },
+  { href: "/products/pricing", label: "Pricing & margin", roles: ["admin"] },
+  { href: "/inventory/discard", label: "Discard stock", roles: ["admin"] },
   {
     href: "/products/completeness",
     label: "Catalog completeness",

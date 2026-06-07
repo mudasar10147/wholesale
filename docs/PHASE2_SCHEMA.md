@@ -22,8 +22,21 @@ Firestore creates a collection when the **first document** is written. Phase 3+ 
 | `sale_price` | number | yes |
 | `stock_quantity` | number | yes |
 | `created_at` | Timestamp | yes |
+| `target_margin_percent` | number | no — gross margin target (% of sale price) |
+| `pricing_mode` | string | no — `manual` or `automatic` |
+| `pricing_updated_at` | Timestamp | no — last pricing-field change |
 
 Document ID is the product identifier used elsewhere (spec “product_id”).
+
+## `settings/pricing`
+
+Single document for pricing defaults (admin-only).
+
+| Field | Type | Required |
+|-------|------|----------|
+| `global_default_target_margin_percent` | number | yes |
+| `category_templates` | map | yes — category name → `{ target_margin_percent, pricing_mode }` |
+| `updated_at` | Timestamp | yes |
 
 ## `sales/{saleId}`
 

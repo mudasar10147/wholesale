@@ -7,9 +7,21 @@ import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { deleteDraftInvoice, markInvoicePaid, postInvoice, voidInvoice } from "@/lib/firestore/invoices";
-import type { CustomerDoc, InvoiceDoc } from "@/lib/types/firestore";
+import { deleteDraftInvoice, postInvoice, recordInvoicePayment, voidInvoice } from "@/lib/firestore/invoices";
+import {
+  formatInvoiceVoidBlockedMessage,
+  type InvoiceReturnBlockers,
+} from "@/lib/firestore/invoiceReturns";
+import {
+  getInvoiceAmountDue,
+  getInvoiceEffectiveTotal,
+  getInvoicePaidAmount,
+  getInvoicePostedTotal,
+  getInvoiceReturnedAmount,
+} from "@/lib/invoices/invoiceEffective";
+import type { CustomerDoc, InvoiceDoc, InvoiceReturnDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
+import { RecordInvoicePaymentModal } from "@/app/components/invoices/RecordInvoicePaymentModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { cn } from "@/lib/utils";
@@ -37,7 +49,31 @@ export function InvoiceDraftList() {
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [workingId, setWorkingId] = useState<string | null>(null);
-  const [workingAction, setWorkingAction] = useState<"post" | "void" | "delete" | "mark-paid" | null>(null);
+  const [workingAction, setWorkingAction] = useState<"post" | "void" | "delete" | "record-payment" | null>(null);
+  const [paymentModalRow, setPaymentModalRow] = useState<Row | null>(null);
+  const [returnBlockersByInvoiceId, setReturnBlockersByInvoiceId] = useState<
+    Map<string, InvoiceReturnBlockers>
+  >(() => new Map());
+
+  useEffect(() => {
+    const db = getDb();
+    const unsub = onSnapshot(collection(db, COLLECTIONS.invoiceReturns), (snap) => {
+      const next = new Map<string, InvoiceReturnBlockers>();
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as InvoiceReturnDoc;
+        const invoiceId = data.original_invoice_id?.trim();
+        if (!invoiceId) return;
+        const prev = next.get(invoiceId) ?? { postedCount: 0, draftCount: 0 };
+        if (data.status === "posted") {
+          next.set(invoiceId, { ...prev, postedCount: prev.postedCount + 1 });
+        } else if (data.status === "draft") {
+          next.set(invoiceId, { ...prev, draftCount: prev.draftCount + 1 });
+        }
+      });
+      setReturnBlockersByInvoiceId(next);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const db = getDb();
@@ -111,15 +147,16 @@ export function InvoiceDraftList() {
     }
   }
 
-  async function handleMarkPaid(row: Row) {
+  async function handleRecordPayment(row: Row, amount: number) {
     setActionError(null);
     setWorkingId(row.id);
-    setWorkingAction("mark-paid");
+    setWorkingAction("record-payment");
     try {
-      await markInvoicePaid(getDb(), row.id);
+      await recordInvoicePayment(getDb(), row.id, amount);
+      setPaymentModalRow(null);
     } catch (err) {
-      logFirestoreError("InvoiceDraftList handleMarkPaid", err);
-      setActionError(getFirestoreUserMessage(err));
+      logFirestoreError("InvoiceDraftList handleRecordPayment", err);
+      throw err;
     } finally {
       setWorkingId(null);
       setWorkingAction(null);
@@ -176,13 +213,30 @@ export function InvoiceDraftList() {
               <th className="px-4 py-3 font-semibold text-foreground">Customer</th>
               <th className="px-4 py-3 font-semibold text-foreground">Items</th>
               <th className="px-4 py-3 font-semibold text-foreground">Subtotal</th>
-              <th className="px-4 py-3 font-semibold text-foreground">Total</th>
+              <th className="px-4 py-3 font-semibold text-foreground">Total / due</th>
               <th className="px-4 py-3 font-semibold text-foreground">Created</th>
               <th className="px-4 py-3 font-semibold text-foreground">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => (
+            {rows.map((row, i) => {
+              const postedTotal = getInvoicePostedTotal(row);
+              const returnedAmount = getInvoiceReturnedAmount(row);
+              const effectiveTotal = getInvoiceEffectiveTotal(row);
+              const paidAmount = getInvoicePaidAmount(row);
+              const amountDue = getInvoiceAmountDue(row);
+              const displayTotal =
+                row.status === "posted" ? effectiveTotal : row.total_amount;
+              const hasReturns = row.status === "posted" && returnedAmount > 0;
+              const showPaymentSummary = row.status === "posted";
+              const isFullyPaid = row.payment_status === "paid" || amountDue <= 0.01;
+              const voidBlockers = returnBlockersByInvoiceId.get(row.id) ?? {
+                postedCount: 0,
+                draftCount: 0,
+              };
+              const voidBlockedMessage = formatInvoiceVoidBlockedMessage(voidBlockers);
+
+              return (
               <tr
                 key={row.id}
                 className={cn(
@@ -199,24 +253,58 @@ export function InvoiceDraftList() {
                   </Link>
                 </td>
                 <td className="px-4 py-3">
-                  <span
-                    className={cn(
-                      "rounded-full px-2 py-0.5 text-xs font-medium",
-                      row.status === "posted"
-                        ? "bg-success-muted text-success"
-                        : row.status === "draft"
-                          ? "bg-surface-hover text-foreground"
-                          : "bg-destructive-muted text-destructive",
-                    )}
-                  >
-                    {row.status}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-xs font-medium",
+                        row.status === "posted"
+                          ? "bg-success-muted text-success"
+                          : row.status === "draft"
+                            ? "bg-surface-hover text-foreground"
+                            : "bg-destructive-muted text-destructive",
+                      )}
+                    >
+                      {row.status}
+                    </span>
+                    {hasReturns ? (
+                      <span className="rounded-full bg-accent-muted px-2 py-0.5 text-xs font-medium text-accent-foreground">
+                        −{formatMoney(returnedAmount)}
+                      </span>
+                    ) : null}
+                    {showPaymentSummary && !isFullyPaid ? (
+                      <span className="rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium text-foreground">
+                        {row.payment_status === "partial" ? "partial" : "unpaid"}
+                      </span>
+                    ) : null}
+                    {showPaymentSummary && isFullyPaid && effectiveTotal > 0.01 ? (
+                      <span className="rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
+                        paid
+                      </span>
+                    ) : null}
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-foreground">{customerLabel(row.customer_id)}</td>
                 <td className="px-4 py-3 tabular-nums text-foreground">{row.item_ids?.length ?? 0}</td>
                 <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.subtotal_amount)}</td>
-                <td className="px-4 py-3 tabular-nums font-medium text-foreground">
-                  {formatMoney(row.total_amount)}
+                <td className="px-4 py-3 tabular-nums text-foreground">
+                  {showPaymentSummary ? (
+                    <div className="space-y-0.5">
+                      <div className="font-semibold text-foreground">{formatMoney(displayTotal)}</div>
+                      {hasReturns ? (
+                        <div className="text-xs text-muted-foreground line-through">{formatMoney(postedTotal)}</div>
+                      ) : null}
+                      {paidAmount > 0.01 ? (
+                        <div className="text-xs font-medium text-success">Paid {formatMoney(paidAmount)}</div>
+                      ) : null}
+                      {amountDue > 0.01 ? (
+                        <div className="text-xs font-medium text-destructive">Due {formatMoney(amountDue)}</div>
+                      ) : effectiveTotal > 0.01 ? (
+                        <div className="text-xs font-medium text-success">Paid in full</div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <span className="font-medium">{formatMoney(displayTotal)}</span>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
                 <td className="px-4 py-3">
@@ -228,37 +316,26 @@ export function InvoiceDraftList() {
                       View
                     </Link>
                     {row.status === "posted" && isAdmin ? (
+                      <Link
+                        href={`/sales/${encodeURIComponent(row.id)}/return/new`}
+                        className="inline-flex items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs hover:bg-surface-hover"
+                      >
+                        Return
+                      </Link>
+                    ) : null}
+                    {row.status === "posted" && isAdmin ? (
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => void handleMarkPaid(row)}
-                        disabled={
-                          workingId !== null ||
-                          row.payment_status === "paid" ||
-                          Math.max(
-                            0,
-                            (row.posted_total_amount ?? row.total_amount ?? 0) -
-                              Math.min(
-                                Math.max(0, row.paid_amount ?? 0),
-                                Math.max(0, row.posted_total_amount ?? row.total_amount ?? 0),
-                              ),
-                          ) <= 0
-                        }
+                        onClick={() => setPaymentModalRow(row)}
+                        disabled={workingId !== null || isFullyPaid}
                         className="px-3 py-1.5 text-xs"
                       >
-                        {workingId === row.id && workingAction === "mark-paid"
+                        {workingId === row.id && workingAction === "record-payment"
                           ? "Saving…"
-                          : row.payment_status === "paid" ||
-                              Math.max(
-                                0,
-                                (row.posted_total_amount ?? row.total_amount ?? 0) -
-                                  Math.min(
-                                    Math.max(0, row.paid_amount ?? 0),
-                                    Math.max(0, row.posted_total_amount ?? row.total_amount ?? 0),
-                                  ),
-                              ) <= 0
+                          : isFullyPaid
                             ? "Paid"
-                            : "Mark paid"}
+                            : "Record payment"}
                       </Button>
                     ) : null}
                     {row.status === "draft" ? (
@@ -289,7 +366,8 @@ export function InvoiceDraftList() {
                         type="button"
                         variant="outline"
                         onClick={() => void handleVoid(row)}
-                        disabled={workingId !== null}
+                        disabled={workingId !== null || !!voidBlockedMessage}
+                        title={voidBlockedMessage || undefined}
                         className="px-3 py-1.5 text-xs text-destructive"
                       >
                         {workingId === row.id && workingAction === "void" ? "Voiding…" : "Void"}
@@ -301,10 +379,23 @@ export function InvoiceDraftList() {
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+      {paymentModalRow ? (
+        <RecordInvoicePaymentModal
+          orderId={paymentModalRow.order_id}
+          effectiveTotal={getInvoiceEffectiveTotal(paymentModalRow)}
+          paidAmount={getInvoicePaidAmount(paymentModalRow)}
+          amountDue={getInvoiceAmountDue(paymentModalRow)}
+          pending={workingId === paymentModalRow.id && workingAction === "record-payment"}
+          onDismiss={() => setPaymentModalRow(null)}
+          onSubmit={(amount) => handleRecordPayment(paymentModalRow, amount)}
+        />
+      ) : null}
     </div>
   );
 }

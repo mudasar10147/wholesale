@@ -6,6 +6,11 @@ import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { CustomerDoc, InvoiceDoc } from "@/lib/types/firestore";
+import {
+  getInvoiceAmountDue,
+  getInvoiceEffectiveTotal,
+  getInvoicePaidAmount,
+} from "@/lib/invoices/invoiceEffective";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { cn } from "@/lib/utils";
 
@@ -98,19 +103,18 @@ export function CustomerLedgerTable() {
           net_revenue_contribution: 0,
         } satisfies LedgerRow);
 
-      const total = inv.posted_total_amount ?? inv.total_amount ?? 0;
+      const effective = getInvoiceEffectiveTotal(inv);
       const discount = inv.posted_discount_amount ?? inv.discount_amount ?? 0;
       const delivery = inv.posted_delivery_charge ?? inv.delivery_charge ?? 0;
-      const paidRaw = typeof inv.paid_amount === "number" ? inv.paid_amount : 0;
-      const paid = Math.min(Math.max(0, paidRaw), Math.max(0, total));
-      const unpaid = Math.max(0, total - paid);
+      const paid = getInvoicePaidAmount(inv);
+      const unpaid = getInvoiceAmountDue(inv);
 
-      row.total_purchased += total;
+      row.total_purchased += effective;
       row.paid_amount += paid;
       row.unpaid_amount += unpaid;
       row.total_discount += discount;
       row.delivery_charges += delivery;
-      row.net_revenue_contribution += total;
+      row.net_revenue_contribution += effective;
 
       byCustomer.set(customerId, row);
     }

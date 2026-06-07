@@ -1,14 +1,85 @@
 import { FirebaseError } from "firebase/app";
 
+type ErrorLike = {
+  code?: unknown;
+  message?: unknown;
+  name?: unknown;
+  customData?: unknown;
+  stack?: unknown;
+};
+
+/** Duck-type Firebase/Firestore errors (instanceof can fail across bundles). */
+export function extractFirestoreErrorDetails(error: unknown): Record<string, unknown> {
+  const base: Record<string, unknown> = {};
+  if (error == null) {
+    base.kind = error === null ? "null" : "undefined";
+    return base;
+  }
+
+  if (error instanceof FirebaseError) {
+    base.code = error.code;
+    base.message = error.message;
+    base.name = error.name;
+    const cd = (error as FirebaseError & { customData?: unknown }).customData;
+    if (cd !== undefined) base.customData = cd;
+    return base;
+  }
+
+  if (error instanceof Error) {
+    base.message = error.message;
+    base.name = error.name;
+    if (error.stack) base.stack = error.stack;
+  }
+
+  if (typeof error === "object") {
+    const o = error as ErrorLike;
+    if (typeof o.code === "string" && !base.code) base.code = o.code;
+    if (typeof o.message === "string" && !base.message) base.message = o.message;
+    if (typeof o.name === "string" && !base.name) base.name = o.name;
+    if (o.customData !== undefined && !("customData" in base)) base.customData = o.customData;
+    if (typeof o.stack === "string" && !base.stack) base.stack = o.stack;
+  }
+
+  if (Object.keys(base).length === 0) {
+    try {
+      base.detail = JSON.stringify(error);
+    } catch {
+      base.detail = String(error);
+    }
+  }
+
+  return base;
+}
+
+function getFirebaseErrorCode(error: unknown): string | undefined {
+  if (error instanceof FirebaseError) return error.code;
+  if (error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  return undefined;
+}
+
+function getFirebaseErrorMessage(error: unknown): string | undefined {
+  if (error instanceof FirebaseError) return error.message;
+  if (error && typeof error === "object" && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+  if (error instanceof Error) return error.message;
+  return undefined;
+}
+
 /**
  * User-facing message for Firestore / Firebase client errors.
  */
 export function getFirestoreUserMessage(error: unknown): string {
-  if (error instanceof FirebaseError) {
-    switch (error.code) {
+  const code = getFirebaseErrorCode(error);
+  const message = getFirebaseErrorMessage(error);
+
+  if (code) {
+    switch (code) {
       case "permission-denied": {
         return (
-          `${error.message} ` +
+          `${message ?? "Missing or insufficient permissions."} ` +
           "This usually means Firestore security rules rejected the operation—not necessarily a missing admin claim. " +
           "If your token already has admin=true, check: deployed rules match this project (firebase deploy --only firestore:rules), " +
           "and that the write passes rule validation (e.g. invoice post money/shape checks, stock lot document fields). " +
@@ -19,7 +90,7 @@ export function getFirestoreUserMessage(error: unknown): string {
         return "Service temporarily unavailable. Try again in a moment.";
       case "failed-precondition": {
         // Often a missing Firestore composite index; the SDK message includes a console link.
-        const msg = error.message?.trim() ?? "";
+        const msg = message?.trim() ?? "";
         if (msg.length > 0 && (msg.includes("index") || msg.includes("console.firebase.google.com"))) {
           return msg.length <= 600 ? msg : `${msg.slice(0, 597)}…`;
         }
@@ -34,13 +105,17 @@ export function getFirestoreUserMessage(error: unknown): string {
       default:
         break;
     }
-    if (error.message && error.message.length > 0 && error.message.length < 200) {
-      return error.message;
+    if (message && message.length > 0 && message.length < 200) {
+      return message;
     }
     return "Something went wrong. Please try again.";
   }
   if (error instanceof Error && error.message) {
     return error.message;
+  }
+  const details = extractFirestoreErrorDetails(error);
+  if (typeof details.message === "string" && details.message.length > 0 && details.message.length < 200) {
+    return details.message;
   }
   return "Something went wrong. Please try again.";
 }
