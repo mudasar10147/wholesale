@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, orderBy, query, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
@@ -24,6 +24,8 @@ import { useAuth } from "@/app/components/auth/AuthProvider";
 import { RecordInvoicePaymentModal } from "@/app/components/invoices/RecordInvoicePaymentModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
+import { Input } from "@/app/components/ui/Input";
+import { Label } from "@/app/components/ui/Label";
 import { cn } from "@/lib/utils";
 
 type Row = InvoiceDoc & { id: string };
@@ -54,6 +56,7 @@ export function InvoiceDraftList() {
   const [returnBlockersByInvoiceId, setReturnBlockersByInvoiceId] = useState<
     Map<string, InvoiceReturnBlockers>
   >(() => new Map());
+  const [customerSearch, setCustomerSearch] = useState("");
 
   useEffect(() => {
     const db = getDb();
@@ -116,6 +119,12 @@ export function InvoiceDraftList() {
     if (!customerId) return "—";
     return customerNameById.get(customerId) ?? customerId;
   }
+
+  const filteredRows = useMemo(() => {
+    const q = customerSearch.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => customerLabel(row.customer_id).toLowerCase().includes(q));
+  }, [rows, customerSearch, customerNameById]);
 
   async function handlePost(row: Row) {
     setActionError(null);
@@ -201,9 +210,36 @@ export function InvoiceDraftList() {
     return <p className="text-sm text-muted-foreground">No invoices yet. Create one above.</p>;
   }
 
+  const customerSearchId = "invoice-customer-search";
+
   return (
     <div className="space-y-3">
       {actionError ? <InlineAlert variant="error">{actionError}</InlineAlert> : null}
+      <div className="max-w-md">
+        <Label htmlFor={customerSearchId} className="text-sm text-foreground">
+          Search by customer
+        </Label>
+        <Input
+          id={customerSearchId}
+          type="search"
+          className="mt-1.5 h-10"
+          placeholder="Customer name"
+          value={customerSearch}
+          onChange={(e) => setCustomerSearch(e.target.value)}
+          autoComplete="off"
+          aria-describedby={`${customerSearchId}-hint`}
+        />
+        <p id={`${customerSearchId}-hint`} className="mt-1 text-[11px] text-muted-foreground">
+          {customerSearch.trim()
+            ? `Showing ${filteredRows.length} of ${rows.length} invoice${rows.length === 1 ? "" : "s"}`
+            : `${rows.length} invoice${rows.length === 1 ? "" : "s"}`}
+        </p>
+      </div>
+      {filteredRows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {`No invoices match “${customerSearch.trim()}”. Try another customer name.`}
+        </p>
+      ) : (
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full min-w-[800px] border-collapse text-left text-sm">
           <thead>
@@ -219,7 +255,7 @@ export function InvoiceDraftList() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((row, i) => {
+            {filteredRows.map((row, i) => {
               const postedTotal = getInvoicePostedTotal(row);
               const returnedAmount = getInvoiceReturnedAmount(row);
               const effectiveTotal = getInvoiceEffectiveTotal(row);
@@ -384,6 +420,7 @@ export function InvoiceDraftList() {
           </tbody>
         </table>
       </div>
+      )}
 
       {paymentModalRow ? (
         <RecordInvoicePaymentModal

@@ -14,6 +14,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/products", label: "Products", roles: ["admin"] },
   { href: "/products/pricing", label: "Pricing & margin", roles: ["admin"] },
   { href: "/inventory/discard", label: "Discard stock", roles: ["admin"] },
+  { href: "/inventory/low-stock", label: "Low stock", roles: ["admin"] },
   {
     href: "/products/completeness",
     label: "Catalog completeness",

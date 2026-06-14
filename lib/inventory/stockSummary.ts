@@ -1,9 +1,10 @@
 import { collection, getDocs, type Firestore } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/inventory/lowStock";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
 /** Products at or below this level appear in `lowStockItems`. */
-export const LOW_STOCK_THRESHOLD = 5;
+export const LOW_STOCK_THRESHOLD = DEFAULT_LOW_STOCK_THRESHOLD;
 
 export type LowStockItem = {
   id: string;

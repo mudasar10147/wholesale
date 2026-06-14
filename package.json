@@ -8,6 +8,7 @@
     "start": "next start",
     "test:gcs": "node scripts/test-gcs-upload.mjs",
     "test:pricing": "node --experimental-strip-types lib/pricing/metrics.test.ts",
+    "test:low-stock": "node --experimental-strip-types lib/inventory/lowStock.test.ts",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"
   },

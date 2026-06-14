@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { StockSummaryData } from "@/lib/inventory/stockSummary";
 import { LOW_STOCK_THRESHOLD } from "@/lib/inventory/stockSummary";
 import { formatMoney } from "@/app/components/dashboard/ProfitBreakdownCard";
@@ -87,7 +88,15 @@ export function StockSummary({ data, loading }: StockSummaryProps) {
         </div>
 
         <div>
-          <h3 className="text-sm font-semibold text-foreground">Low stock</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-foreground">Low stock</h3>
+            <Link
+              href={`/inventory/low-stock?threshold=${LOW_STOCK_THRESHOLD}`}
+              className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+            >
+              View all
+            </Link>
+          </div>
           {lowStockItems.length === 0 ? (
             <p className="mt-2 text-sm text-muted-foreground">
               No products at or below {LOW_STOCK_THRESHOLD} units.
