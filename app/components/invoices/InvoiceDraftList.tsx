@@ -19,6 +19,12 @@ import {
   getInvoicePostedTotal,
   getInvoiceReturnedAmount,
 } from "@/lib/invoices/invoiceEffective";
+import {
+  countInvoicesByTab,
+  INVOICE_LIST_TABS,
+  matchesInvoiceTab,
+  type InvoiceListTab,
+} from "@/lib/invoices/invoiceListTabs";
 import type { CustomerDoc, InvoiceDoc, InvoiceReturnDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { RecordInvoicePaymentModal } from "@/app/components/invoices/RecordInvoicePaymentModal";
@@ -57,6 +63,7 @@ export function InvoiceDraftList() {
     Map<string, InvoiceReturnBlockers>
   >(() => new Map());
   const [customerSearch, setCustomerSearch] = useState("");
+  const [activeTab, setActiveTab] = useState<InvoiceListTab>("all");
 
   useEffect(() => {
     const db = getDb();
@@ -120,11 +127,18 @@ export function InvoiceDraftList() {
     return customerNameById.get(customerId) ?? customerId;
   }
 
+  const tabCounts = useMemo(() => countInvoicesByTab(rows), [rows]);
+
   const filteredRows = useMemo(() => {
     const q = customerSearch.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) => customerLabel(row.customer_id).toLowerCase().includes(q));
-  }, [rows, customerSearch, customerNameById]);
+    return rows.filter((row) => {
+      if (!matchesInvoiceTab(row, activeTab)) return false;
+      if (!q) return true;
+      return customerLabel(row.customer_id).toLowerCase().includes(q);
+    });
+  }, [rows, customerSearch, customerNameById, activeTab]);
+
+  const activeTabLabel = INVOICE_LIST_TABS.find((t) => t.id === activeTab)?.label ?? activeTab;
 
   async function handlePost(row: Row) {
     setActionError(null);
@@ -206,15 +220,48 @@ export function InvoiceDraftList() {
     return <InlineAlert variant="error">{error}</InlineAlert>;
   }
 
-  if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground">No invoices yet. Create one above.</p>;
-  }
-
   const customerSearchId = "invoice-customer-search";
 
   return (
     <div className="space-y-3">
       {actionError ? <InlineAlert variant="error">{actionError}</InlineAlert> : null}
+
+      <div
+        className="flex flex-wrap gap-2 border-b border-border pb-3"
+        role="tablist"
+        aria-label="Invoice status"
+      >
+        {INVOICE_LIST_TABS.map((tab) => {
+          const count = tabCounts[tab.id];
+          const selected = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                selected
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-surface text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+              )}
+            >
+              {tab.label}
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-0.5 text-[10px] tabular-nums",
+                  selected ? "bg-primary/15 text-primary" : "bg-surface-muted text-muted-foreground",
+                )}
+              >
+                {count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       <div className="max-w-md">
         <Label htmlFor={customerSearchId} className="text-sm text-foreground">
           Search by customer
@@ -230,14 +277,16 @@ export function InvoiceDraftList() {
           aria-describedby={`${customerSearchId}-hint`}
         />
         <p id={`${customerSearchId}-hint`} className="mt-1 text-[11px] text-muted-foreground">
-          {customerSearch.trim()
-            ? `Showing ${filteredRows.length} of ${rows.length} invoice${rows.length === 1 ? "" : "s"}`
+          {customerSearch.trim() || activeTab !== "all"
+            ? `Showing ${filteredRows.length} of ${tabCounts[activeTab]} in ${activeTabLabel}${customerSearch.trim() ? " (filtered)" : ""}`
             : `${rows.length} invoice${rows.length === 1 ? "" : "s"}`}
         </p>
       </div>
       {filteredRows.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          {`No invoices match “${customerSearch.trim()}”. Try another customer name.`}
+          {customerSearch.trim()
+            ? `No ${activeTabLabel.toLowerCase()} invoices match “${customerSearch.trim()}”.`
+            : `No ${activeTabLabel.toLowerCase()} invoices.`}
         </p>
       ) : (
       <div className="overflow-x-auto rounded-lg border border-border">

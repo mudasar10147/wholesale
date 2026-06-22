@@ -430,7 +430,6 @@ export function PricingTable({
     </>
   );
 }
-
 export function sortPricingRows(
   rows: EnrichedPricingRow[],
   sortKey: PricingSortKey,
@@ -499,3 +498,4 @@ export function sortPricingRows(
     return ((av as number) - (bv as number)) * dir;
   });
 }
+
