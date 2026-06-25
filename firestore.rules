@@ -147,6 +147,19 @@ service cloud.firestore {
       && data.updated_at is timestamp;
     }
     // No hasOnlyKeys: legacy or imported lots may include extra fields; strict keys blocked postInvoice tx.update.
+    function validStockLotPurchaseSourceField(data) {
+      return !('purchase_source' in data)
+        || (data.purchase_source is string
+            && data.purchase_source.size() > 0
+            && data.purchase_source.size() <= 120);
+    }
+    function stockLotPurchaseSourceOk(oldSource, data) {
+      return data.source != 'stock_in'
+        || oldSource == 'stock_in'
+        || ('purchase_source' in data
+            && data.purchase_source is string
+            && data.purchase_source.size() > 0);
+    }
     function validStockLotBase(data) {
       return data.product_id is string
       && data.product_id.size() > 0
@@ -159,6 +172,7 @@ service cloud.firestore {
       && data.qty_remaining <= data.qty_in
       && data.source in ['stock_in', 'opening_balance', 'adjustment']
       && (!('reference_id' in data) || (data.reference_id is string && data.reference_id.size() > 0))
+      && validStockLotPurchaseSourceField(data)
       && data.received_at is timestamp
       && data.created_at is timestamp
       && data.updated_at is timestamp;
@@ -671,11 +685,13 @@ service cloud.firestore {
       allow read: if isAdmin();
       // Omit exists(product): admin-only create; avoids one exists() per opening_balance lot during invoice post
       // (transactions are limited to 20 cross-document rule reads total).
-      allow create: if isAdmin() && validStockLotBase(request.resource.data);
+      allow create: if isAdmin() && validStockLotBase(request.resource.data)
+        && stockLotPurchaseSourceOk('', request.resource.data);
       allow update: if isAdmin() && validStockLotBase(request.resource.data)
         && request.resource.data.product_id == resource.data.product_id
         && request.resource.data.qty_in == resource.data.qty_in
         && stockLotSourceTransitionAllowed(resource.data, request.resource.data)
+        && stockLotPurchaseSourceOk(resource.data.source, request.resource.data)
         && request.resource.data.received_at == resource.data.received_at
         && request.resource.data.created_at == resource.data.created_at;
       // Temporary: allow admin to remove mistaken lots; prefer editing qty/cost when possible.

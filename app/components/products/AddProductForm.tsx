@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { createProduct } from "@/lib/firestore/products";
@@ -14,6 +14,7 @@ import {
 } from "@/lib/validation/numbers";
 import { Button } from "@/app/components/ui/Button";
 import { CategorySuggestInput } from "@/app/components/products/CategorySuggestInput";
+import { PurchaseSourceSuggestInput } from "@/app/components/products/PurchaseSourceSuggestInput";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
@@ -27,6 +28,7 @@ export function AddProductForm() {
   const [costPrice, setCostPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
+  const [purchaseSource, setPurchaseSource] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -65,6 +67,10 @@ export function AddProductForm() {
 
   const nameInvalid = error === "Name is required.";
   const numbersInvalid = Boolean(error && error !== "Name is required.");
+  const showPurchaseSource = useMemo(() => {
+    const stock = parseNonNegativeIntStrict(stockQuantity);
+    return stock.ok && stock.value > 0;
+  }, [stockQuantity]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -92,6 +98,10 @@ export function AddProductForm() {
       setError(stock.message ?? "Invalid stock quantity.");
       return;
     }
+    if (stock.value > 0 && !purchaseSource.trim()) {
+      setError("Purchase source (shop) is required when adding initial stock.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -115,6 +125,7 @@ export function AddProductForm() {
         cost_price: cost.value,
         sale_price: sale.value,
         initial_quantity: stock.value,
+        purchase_source: stock.value > 0 ? purchaseSource.trim() : undefined,
         image,
         ...(pricingSettings
           ? (() => {
@@ -137,6 +148,7 @@ export function AddProductForm() {
       setCostPrice("");
       setSalePrice("");
       setStockQuantity("");
+      setPurchaseSource("");
       setSuccess(true);
     } catch (err) {
       setError(getFirestoreUserMessage(err));
@@ -235,6 +247,20 @@ export function AddProductForm() {
             Use 0 to add the product only and buy stock later from the product page.
           </p>
         </div>
+        {showPurchaseSource ? (
+          <div className="space-y-2 sm:col-span-2">
+            <Label htmlFor="product-purchase-source">Shop (where purchased)</Label>
+            <PurchaseSourceSuggestInput
+              id="product-purchase-source"
+              name="purchase_source"
+              value={purchaseSource}
+              onChange={setPurchaseSource}
+              disabled={submitting}
+              aria-invalid={numbersInvalid}
+              aria-describedby={numbersInvalid ? FORM_ALERT_ID : undefined}
+            />
+          </div>
+        ) : null}
       </div>
 
       {error ? (

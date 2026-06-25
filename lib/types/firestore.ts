@@ -300,6 +300,8 @@ export type StockLotDoc = {
   qty_remaining: number;
   source: StockLotSource;
   reference_id?: string;
+  /** Where this stock-in receipt was purchased (required on new stock_in). */
+  purchase_source?: string;
   received_at: Timestamp;
   created_at: Timestamp;
   updated_at: Timestamp;

@@ -33,6 +33,8 @@ export type CreateProductInput = {
   sale_price: number;
   /** Units bought on create; 0 = catalog SKU only (no stock lot or cash purchase). */
   initial_quantity: number;
+  /** Required when initial_quantity > 0 — where stock was purchased. */
+  purchase_source?: string;
   target_margin_percent?: number;
   pricing_mode?: PricingMode;
   image?: {
@@ -70,6 +72,12 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
     input.sale_price < 0
   ) {
     throw new Error("Sale price must be zero or greater.");
+  }
+  if (input.initial_quantity > 0) {
+    const source = input.purchase_source?.trim() ?? "";
+    if (!source) {
+      throw new Error("Purchase source (shop) is required when adding initial stock.");
+    }
   }
 
   const settings = await loadPricingSettings(db);
@@ -135,6 +143,7 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
           categoryTemplates: settings.categoryTemplates,
           globalDefault: settings.globalDefaultTargetMarginPercent,
         },
+        input.purchase_source ?? "",
       );
     }
   });

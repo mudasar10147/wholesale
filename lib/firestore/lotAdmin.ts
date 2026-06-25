@@ -12,6 +12,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { normalizePurchaseSource } from "@/lib/firestore/inventory";
 import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
 import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
 import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
@@ -320,6 +321,7 @@ export async function convertOpeningBalanceLotToStockIn(
   db: Firestore,
   productId: string,
   lotId: string,
+  purchaseSource: string,
 ): Promise<void> {
   const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
   if (!sortedLotIds.includes(lotId)) {
@@ -327,6 +329,7 @@ export async function convertOpeningBalanceLotToStockIn(
   }
 
   const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
+  const resolvedPurchaseSource = normalizePurchaseSource(purchaseSource);
   await runTransaction(db, async (tx) => {
     const lotSnap = await tx.get(lotRef);
     if (!lotSnap.exists()) {
@@ -341,6 +344,7 @@ export async function convertOpeningBalanceLotToStockIn(
     }
     tx.update(lotRef, {
       source: "stock_in",
+      purchase_source: resolvedPurchaseSource,
       updated_at: serverTimestamp(),
     });
   });

@@ -104,6 +104,14 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
 
   async function handleConvertToStockIn() {
     setError(null);
+    const shop = window.prompt(
+      "Where was this stock purchased? (required to count as a stock purchase)",
+    );
+    if (shop === null) return;
+    if (!shop.trim()) {
+      setError("Purchase source (shop) is required.");
+      return;
+    }
     const ok = window.confirm(
       "Convert this lot source from opening_balance to stock_in? " +
         "It will start counting in stock purchases cash-outflow.",
@@ -111,7 +119,7 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
     if (!ok) return;
     setConvertPending(true);
     try {
-      await convertOpeningBalanceLotToStockIn(getDb(), productId, lot.id);
+      await convertOpeningBalanceLotToStockIn(getDb(), productId, lot.id, shop);
     } catch (e) {
       setError(getFirestoreUserMessage(e));
     } finally {
@@ -124,6 +132,9 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
   return (
     <tr className="border-b border-border align-top">
       <td className="px-3 py-2 text-muted-foreground">{lot.source}</td>
+      <td className="px-3 py-2 text-muted-foreground">
+        {lot.source === "stock_in" ? lot.purchase_source?.trim() || "—" : "—"}
+      </td>
       <td className="px-3 py-2 tabular-nums">{lot.qty_in}</td>
       <td className="px-3 py-2">
         <Input
@@ -355,10 +366,11 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
           </p>
         ) : (
           <div className="mt-6 overflow-x-auto rounded-md border border-border">
-            <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-border bg-surface-muted">
                   <th className="px-3 py-2 font-semibold">Source</th>
+                  <th className="px-3 py-2 font-semibold">Shop</th>
                   <th className="px-3 py-2 font-semibold">Qty in</th>
                   <th className="px-3 py-2 font-semibold">Qty left</th>
                   <th className="px-3 py-2 font-semibold">Unit cost</th>

@@ -35,6 +35,17 @@ function assertNonNegativeMoney(label: string, value: number | undefined): void 
   }
 }
 
+export function normalizePurchaseSource(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Purchase source (shop) is required.");
+  }
+  if (trimmed.length > 120) {
+    throw new Error("Purchase source must be 120 characters or fewer.");
+  }
+  return trimmed;
+}
+
 /**
  * Apply a stock-in receipt inside an existing transaction (product must already exist).
  */
@@ -45,17 +56,19 @@ export function applyStockInInTransaction(
   productRef: DocumentReference,
   product: ProductDoc | undefined,
   quantity: number,
-  unitCost?: number,
-  salePrice?: number,
-  pricingContext?: {
+  unitCost: number | undefined,
+  salePrice: number | undefined,
+  pricingContext: {
     categoryTemplates: Record<string, import("@/lib/types/firestore").CategoryMarginTemplate>;
     globalDefault: number;
-  },
+  } | undefined,
+  purchaseSource: string,
 ): void {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
   }
   assertNonNegativeMoney("Sale price", salePrice);
+  const resolvedPurchaseSource = normalizePurchaseSource(purchaseSource);
   const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
 
   const patch: {
@@ -85,6 +98,7 @@ export function applyStockInInTransaction(
     qty_in: quantity,
     qty_remaining: quantity,
     source: "stock_in",
+    purchase_source: resolvedPurchaseSource,
     received_at: serverTimestamp(),
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
@@ -104,8 +118,9 @@ export async function stockIn(
   db: Firestore,
   productId: string,
   quantity: number,
-  unitCost?: number,
-  salePrice?: number,
+  unitCost: number | undefined,
+  salePrice: number | undefined,
+  purchaseSource: string,
 ): Promise<void> {
   const settings = await loadPricingSettings(db);
   const ref = doc(db, COLLECTIONS.products, productId);
@@ -128,6 +143,7 @@ export async function stockIn(
         categoryTemplates: settings.categoryTemplates,
         globalDefault: settings.globalDefaultTargetMarginPercent,
       },
+      purchaseSource,
     );
   });
 }

@@ -13,6 +13,7 @@ import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
+import { PurchaseSourceSuggestInput } from "@/app/components/products/PurchaseSourceSuggestInput";
 import { cn } from "@/lib/utils";
 
 type StockAdjustControlsProps = {
@@ -36,6 +37,7 @@ export function StockAdjustControls({
 }: StockAdjustControlsProps) {
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState(() => defaultCostInputString(defaultUnitCost));
+  const [purchaseSource, setPurchaseSource] = useState("");
   /** Empty = do not change sale price on stock in. */
   const [salePriceInput, setSalePriceInput] = useState("");
   const [pending, setPending] = useState<"in" | "out" | null>(null);
@@ -49,6 +51,7 @@ export function StockAdjustControls({
 
   useEffect(() => {
     setSalePriceInput("");
+    setPurchaseSource("");
   }, [productId]);
 
   const parsedQty = useMemo(() => parsePositiveIntStrict(qty), [qty]);
@@ -78,9 +81,14 @@ export function StockAdjustControls({
       }
       salePrice = sp.value;
     }
+    const shop = purchaseSource.trim();
+    if (!shop) {
+      setError("Purchase source (shop) is required.");
+      return;
+    }
     setPending("in");
     try {
-      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice);
+      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice, shop);
       setSalePriceInput("");
     } catch (e) {
       setError(getFirestoreUserMessage(e));
@@ -113,10 +121,24 @@ export function StockAdjustControls({
 
   const qtyId = `stock-qty-${productId}`;
   const costId = `stock-unit-cost-${productId}`;
+  const shopId = `stock-shop-${productId}`;
   const saleId = `stock-sale-price-${productId}`;
 
   return (
-    <div className="flex min-w-[220px] max-w-[300px] flex-col gap-2">
+    <div className="flex min-w-[240px] max-w-[340px] flex-col gap-2">
+      <div className="flex flex-col gap-1">
+        <Label htmlFor={shopId} className="text-xs text-muted-foreground">
+          Shop
+        </Label>
+        <PurchaseSourceSuggestInput
+          id={shopId}
+          value={purchaseSource}
+          onChange={setPurchaseSource}
+          disabled={pending !== null}
+          aria-invalid={!!error}
+          aria-describedby={error ? alertId : undefined}
+        />
+      </div>
       <div className="flex flex-wrap items-end gap-2">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor={qtyId} className="text-xs text-muted-foreground">
