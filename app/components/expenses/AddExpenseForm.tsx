@@ -10,7 +10,12 @@ import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 
-export function AddExpenseForm() {
+type AddExpenseFormProps = {
+  /** Called after an expense is successfully saved (e.g. to close a modal). */
+  onCreated?: () => void;
+};
+
+export function AddExpenseForm({ onCreated }: AddExpenseFormProps = {}) {
   const [title, setTitle] = useState("");
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -40,6 +45,7 @@ export function AddExpenseForm() {
       setTitle("");
       setAmount("");
       setSuccess(true);
+      onCreated?.();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
     } finally {

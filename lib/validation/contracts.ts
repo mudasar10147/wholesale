@@ -1,4 +1,6 @@
 import type { CustomerInput } from "@/lib/firestore/customers";
+import type { TraderInput } from "@/lib/firestore/traders";
+import type { PartyInput } from "@/lib/firestore/parties";
 import type { CreateInvoiceInput } from "@/lib/firestore/invoices";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -36,6 +38,90 @@ export function assertValidCustomerInput(input: CustomerInput): void {
   }
   if (input.address && input.address.length > 300) {
     throw new Error("Address must be 300 characters or fewer.");
+  }
+}
+
+export function normalizeTraderInput(input: TraderInput): TraderInput {
+  const name = input.name.trim();
+  const phone = input.phone?.trim();
+  const address = input.address?.trim();
+  const contact_person = input.contact_person?.trim();
+  const city = input.city?.trim();
+  const notes = input.notes?.trim();
+
+  return {
+    name,
+    ...(phone ? { phone } : {}),
+    ...(address ? { address } : {}),
+    ...(contact_person ? { contact_person } : {}),
+    ...(city ? { city } : {}),
+    ...(notes ? { notes } : {}),
+  };
+}
+
+export function assertValidTraderInput(input: TraderInput): void {
+  if (!input.name) throw new Error("Trader name is required.");
+  if (input.name.length < 2 || input.name.length > 120) {
+    throw new Error("Trader name must be between 2 and 120 characters.");
+  }
+  if (input.phone) {
+    if (input.phone.length > 25 || !PHONE_RE.test(input.phone)) {
+      throw new Error("Enter a valid phone number.");
+    }
+  }
+  if (input.address && input.address.length > 300) {
+    throw new Error("Address must be 300 characters or fewer.");
+  }
+  if (input.contact_person && input.contact_person.length > 120) {
+    throw new Error("Contact person must be 120 characters or fewer.");
+  }
+  if (input.city && input.city.length > 120) {
+    throw new Error("City must be 120 characters or fewer.");
+  }
+  if (input.notes && input.notes.length > 500) {
+    throw new Error("Notes must be 500 characters or fewer.");
+  }
+}
+
+export function normalizePartyInput(input: PartyInput): PartyInput {
+  const name = input.name.trim();
+  const phone = input.phone?.trim();
+  const address = input.address?.trim();
+  const contact_person = input.contact_person?.trim();
+  const city = input.city?.trim();
+  const notes = input.notes?.trim();
+
+  return {
+    name,
+    ...(phone ? { phone } : {}),
+    ...(address ? { address } : {}),
+    ...(contact_person ? { contact_person } : {}),
+    ...(city ? { city } : {}),
+    ...(notes ? { notes } : {}),
+  };
+}
+
+export function assertValidPartyInput(input: PartyInput): void {
+  if (!input.name) throw new Error("Party name is required.");
+  if (input.name.length < 2 || input.name.length > 120) {
+    throw new Error("Party name must be between 2 and 120 characters.");
+  }
+  if (input.phone) {
+    if (input.phone.length > 25 || !PHONE_RE.test(input.phone)) {
+      throw new Error("Enter a valid phone number.");
+    }
+  }
+  if (input.address && input.address.length > 300) {
+    throw new Error("Address must be 300 characters or fewer.");
+  }
+  if (input.contact_person && input.contact_person.length > 120) {
+    throw new Error("Contact person must be 120 characters or fewer.");
+  }
+  if (input.city && input.city.length > 120) {
+    throw new Error("City must be 120 characters or fewer.");
+  }
+  if (input.notes && input.notes.length > 500) {
+    throw new Error("Notes must be 500 characters or fewer.");
   }
 }
 

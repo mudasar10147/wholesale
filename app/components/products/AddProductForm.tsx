@@ -14,21 +14,27 @@ import {
 } from "@/lib/validation/numbers";
 import { Button } from "@/app/components/ui/Button";
 import { CategorySuggestInput } from "@/app/components/products/CategorySuggestInput";
-import { PurchaseSourceSuggestInput } from "@/app/components/products/PurchaseSourceSuggestInput";
+import { TraderSelectInput } from "@/app/components/products/TraderSelectInput";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 
 const FORM_ALERT_ID = "add-product-form-alert";
 
-export function AddProductForm() {
+type AddProductFormProps = {
+  /** Called after a product is successfully created (e.g. to close a modal). */
+  onCreated?: () => void;
+};
+
+export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [costPrice, setCostPrice] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
-  const [purchaseSource, setPurchaseSource] = useState("");
+  const [traderId, setTraderId] = useState("");
+  const [traderName, setTraderName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -98,8 +104,8 @@ export function AddProductForm() {
       setError(stock.message ?? "Invalid stock quantity.");
       return;
     }
-    if (stock.value > 0 && !purchaseSource.trim()) {
-      setError("Purchase source (shop) is required when adding initial stock.");
+    if (stock.value > 0 && !traderId) {
+      setError("Trader (where purchased) is required when adding initial stock.");
       return;
     }
 
@@ -125,7 +131,8 @@ export function AddProductForm() {
         cost_price: cost.value,
         sale_price: sale.value,
         initial_quantity: stock.value,
-        purchase_source: stock.value > 0 ? purchaseSource.trim() : undefined,
+        purchase_source: stock.value > 0 ? traderName.trim() : undefined,
+        trader_id: stock.value > 0 ? traderId : undefined,
         image,
         ...(pricingSettings
           ? (() => {
@@ -148,8 +155,10 @@ export function AddProductForm() {
       setCostPrice("");
       setSalePrice("");
       setStockQuantity("");
-      setPurchaseSource("");
+      setTraderId("");
+      setTraderName("");
       setSuccess(true);
+      onCreated?.();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
     } finally {
@@ -249,12 +258,14 @@ export function AddProductForm() {
         </div>
         {showPurchaseSource ? (
           <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="product-purchase-source">Shop (where purchased)</Label>
-            <PurchaseSourceSuggestInput
-              id="product-purchase-source"
-              name="purchase_source"
-              value={purchaseSource}
-              onChange={setPurchaseSource}
+            <Label htmlFor="product-trader">Trader (where purchased)</Label>
+            <TraderSelectInput
+              id="product-trader"
+              value={traderId}
+              onChange={(id, nm) => {
+                setTraderId(id);
+                setTraderName(nm);
+              }}
               disabled={submitting}
               aria-invalid={numbersInvalid}
               aria-describedby={numbersInvalid ? FORM_ALERT_ID : undefined}

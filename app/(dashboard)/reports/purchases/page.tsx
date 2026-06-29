@@ -15,15 +15,15 @@ export default function PurchaseReportsPage() {
       <div className="space-y-10">
         <PageHeader
           title="Purchase report"
-          description="Track inventory stocked in by shop and by day from FIFO purchase receipts."
+          description="Track inventory stocked in by trader and by day from FIFO purchase receipts."
         />
 
         <Card>
           <CardHeader>
             <CardTitle>Stock-in purchases</CardTitle>
             <CardDescription>
-              Aggregates stock-in lots only. Each stock-in on the products page creates one receipt with shop,
-              quantity, cost, and received date.
+              Aggregates stock-in lots only. Each stock-in creates one receipt with trader, quantity,
+              cost, and received date. Create traders here or from the Traders page.
             </CardDescription>
           </CardHeader>
           <CardContent>

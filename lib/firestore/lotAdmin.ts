@@ -322,6 +322,7 @@ export async function convertOpeningBalanceLotToStockIn(
   productId: string,
   lotId: string,
   purchaseSource: string,
+  traderId?: string,
 ): Promise<void> {
   const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
   if (!sortedLotIds.includes(lotId)) {
@@ -330,6 +331,7 @@ export async function convertOpeningBalanceLotToStockIn(
 
   const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
   const resolvedPurchaseSource = normalizePurchaseSource(purchaseSource);
+  const resolvedTraderId = traderId?.trim() || undefined;
   await runTransaction(db, async (tx) => {
     const lotSnap = await tx.get(lotRef);
     if (!lotSnap.exists()) {
@@ -345,6 +347,7 @@ export async function convertOpeningBalanceLotToStockIn(
     tx.update(lotRef, {
       source: "stock_in",
       purchase_source: resolvedPurchaseSource,
+      ...(resolvedTraderId ? { trader_id: resolvedTraderId } : {}),
       updated_at: serverTimestamp(),
     });
   });

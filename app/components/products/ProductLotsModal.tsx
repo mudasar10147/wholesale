@@ -22,6 +22,8 @@ import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
+import { TraderSelectInput } from "@/app/components/products/TraderSelectInput";
+import { cn } from "@/lib/utils";
 
 type ProductRow = ProductDoc & { id: string };
 type LotRow = StockLotDoc & { id: string };
@@ -44,6 +46,9 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
   const [pending, setPending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
   const [convertPending, setConvertPending] = useState(false);
+  const [converting, setConverting] = useState(false);
+  const [convertTraderId, setConvertTraderId] = useState("");
+  const [convertTraderName, setConvertTraderName] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -102,24 +107,24 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
     }
   }
 
-  async function handleConvertToStockIn() {
+  async function handleConfirmConvert() {
     setError(null);
-    const shop = window.prompt(
-      "Where was this stock purchased? (required to count as a stock purchase)",
-    );
-    if (shop === null) return;
-    if (!shop.trim()) {
-      setError("Purchase source (shop) is required.");
+    if (!convertTraderId) {
+      setError("Select a trader (where purchased).");
       return;
     }
-    const ok = window.confirm(
-      "Convert this lot source from opening_balance to stock_in? " +
-        "It will start counting in stock purchases cash-outflow.",
-    );
-    if (!ok) return;
     setConvertPending(true);
     try {
-      await convertOpeningBalanceLotToStockIn(getDb(), productId, lot.id, shop);
+      await convertOpeningBalanceLotToStockIn(
+        getDb(),
+        productId,
+        lot.id,
+        convertTraderName,
+        convertTraderId,
+      );
+      setConverting(false);
+      setConvertTraderId("");
+      setConvertTraderName("");
     } catch (e) {
       setError(getFirestoreUserMessage(e));
     } finally {
@@ -172,15 +177,56 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
             {deletePending ? "…" : "Delete lot"}
           </Button>
           {lot.source === "opening_balance" ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="h-8 px-2 text-xs"
-              disabled={busy}
-              onClick={handleConvertToStockIn}
-            >
-              {convertPending ? "…" : "Count as stock purchase"}
-            </Button>
+            converting ? (
+              <div className="flex flex-col gap-1.5">
+                <TraderSelectInput
+                  id={`convert-trader-${lot.id}`}
+                  value={convertTraderId}
+                  onChange={(idV, name) => {
+                    setConvertTraderId(idV);
+                    setConvertTraderName(name);
+                  }}
+                  disabled={convertPending}
+                />
+                <div className="flex gap-1.5">
+                  <Button
+                    type="button"
+                    className="h-8 px-2 text-xs"
+                    disabled={convertPending}
+                    onClick={handleConfirmConvert}
+                  >
+                    {convertPending ? "…" : "Confirm"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-8 px-2 text-xs"
+                    disabled={convertPending}
+                    onClick={() => {
+                      setConverting(false);
+                      setConvertTraderId("");
+                      setConvertTraderName("");
+                      setError(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-8 px-2 text-xs"
+                disabled={busy}
+                onClick={() => {
+                  setError(null);
+                  setConverting(true);
+                }}
+              >
+                Count as stock purchase
+              </Button>
+            )
           ) : null}
           {error ? (
             <span className="text-[11px] text-destructive" role="alert">
@@ -303,32 +349,73 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
         className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-lg"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 id="product-lots-title" className="text-lg font-semibold text-foreground">
-          Inventory lots — {row.name}
-        </h2>
-        <p className="mt-2 text-sm text-muted-foreground">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 id="product-lots-title" className="text-lg font-semibold text-foreground">
+              Inventory lots
+            </h2>
+            <p className="mt-1 truncate text-sm text-muted-foreground" title={row.name}>
+              {row.name}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Close"
+            className="-mr-1 -mt-1 shrink-0 rounded-md px-2 py-1 text-sm text-muted-foreground hover:bg-surface-hover hover:text-foreground"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Product stock
+            </p>
+            <p className="mt-1 tabular-nums text-lg font-semibold text-foreground">
+              {row.stock_quantity.toLocaleString()}
+            </p>
+          </div>
+          <div
+            className={cn(
+              "rounded-lg border px-4 py-3",
+              mismatch
+                ? "border-destructive/40 bg-destructive-muted/40"
+                : "border-border bg-surface-muted/40",
+            )}
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Sum of lots
+            </p>
+            <p
+              className={cn(
+                "mt-1 tabular-nums text-lg font-semibold",
+                mismatch ? "text-destructive" : "text-foreground",
+              )}
+            >
+              {lotQtySum.toLocaleString()}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              List cost
+            </p>
+            <p className="mt-1 tabular-nums text-lg font-semibold text-foreground">
+              {formatMoney(row.cost_price)}
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
           FIFO sales and stock out consume oldest lots first. You can edit unit cost and quantity
-          remaining per lot. Receipt size (<code className="text-xs">qty_in</code>) and received
-          date cannot be changed (Firestore rules). You can convert{" "}
-          <code className="text-xs">opening_balance</code> to{" "}
-          <code className="text-xs">stock_in</code> using the row action.{" "}
+          remaining per lot; receipt size (<code className="text-[11px]">qty_in</code>) and received
+          date cannot be changed. Convert <code className="text-[11px]">opening_balance</code> to{" "}
+          <code className="text-[11px]">stock_in</code> with the row action.{" "}
           <span className="text-destructive">
-            Delete lot is temporary: use only for bad entries; product stock is re-synced from
-            remaining lots.
+            Delete lot is for bad entries only; product stock is re-synced from remaining lots.
           </span>
         </p>
-
-        <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-          <span className="text-muted-foreground">
-            Product stock: <span className="tabular-nums text-foreground">{row.stock_quantity}</span>
-          </span>
-          <span className="text-muted-foreground">
-            Sum of lots: <span className="tabular-nums text-foreground">{lotQtySum}</span>
-          </span>
-          <span className="text-muted-foreground">
-            List cost: <span className="tabular-nums text-foreground">{formatMoney(row.cost_price)}</span>
-          </span>
-        </div>
 
         {mismatch ? (
           <InlineAlert variant="error" className="mt-3 text-sm">
@@ -370,7 +457,7 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
               <thead>
                 <tr className="border-b border-border bg-surface-muted">
                   <th className="px-3 py-2 font-semibold">Source</th>
-                  <th className="px-3 py-2 font-semibold">Shop</th>
+                  <th className="px-3 py-2 font-semibold">Trader</th>
                   <th className="px-3 py-2 font-semibold">Qty in</th>
                   <th className="px-3 py-2 font-semibold">Qty left</th>
                   <th className="px-3 py-2 font-semibold">Unit cost</th>

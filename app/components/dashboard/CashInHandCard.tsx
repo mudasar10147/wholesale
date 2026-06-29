@@ -103,7 +103,7 @@ export function CashInHandCard({ snapshot, loading, onSaved }: CashInHandCardPro
         <div>
           <CardTitle>Cash in hand breakdown</CardTitle>
           <CardDescription>
-            Opening cash + manual cash added - manual cash removed + walk-in sales + invoice
+            Opening cash + manual cash added − manual cash removed + historical counter sales + invoice
             payments collected - expenses - cash paid for stock receipts (FIFO lots from stock in).
             Invoice lines posted to sales are counted when customers pay, not at post time. This is
             your expected liquid cash estimate.
@@ -161,7 +161,10 @@ export function CashInHandCard({ snapshot, loading, onSaved }: CashInHandCardPro
           <MetricRow label="Opening balance" value={formatMoney(snapshot.openingBalance)} />
           <MetricRow label="Manual cash added" value={formatMoney(snapshot.manualCashAdded)} />
           <MetricRow label="Manual cash removed" value={formatMoney(-snapshot.manualCashRemoved)} />
-          <MetricRow label="Walk-in / non-invoice sales (cash)" value={formatMoney(snapshot.cashWalkInSales)} />
+          <MetricRow
+            label="Counter / non-invoice sales (historical)"
+            value={formatMoney(snapshot.cashWalkInSales)}
+          />
           <MetricRow
             label="Invoice payments collected"
             value={formatMoney(snapshot.cashInvoicePayments)}

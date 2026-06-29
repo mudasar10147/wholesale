@@ -1,4 +1,3 @@
-import type { PricingSummary } from "@/lib/pricing/metrics";
 import { StatCard } from "@/app/components/ui/StatCard";
 
 function formatMoney(n: number) {
@@ -10,10 +9,18 @@ function formatPercent(value: number | null): string {
   return `${value.toFixed(1)}%`;
 }
 
+export type SimplePricingSummary = {
+  totalProducts: number;
+  totalUnits: number;
+  inventoryValueAtCost: number;
+  inventoryValueAtSale: number;
+  profitOnStock: number;
+  averageMarginPercent: number | null;
+};
+
 type PricingSummaryCardsProps = {
-  summary: PricingSummary;
+  summary: SimplePricingSummary;
   loading: boolean;
-  onBelowTargetClick?: () => void;
 };
 
 function StatSkeleton() {
@@ -25,49 +32,28 @@ function StatSkeleton() {
   );
 }
 
-export function PricingSummaryCards({
-  summary,
-  loading,
-  onBelowTargetClick,
-}: PricingSummaryCardsProps) {
+export function PricingSummaryCards({ summary, loading }: PricingSummaryCardsProps) {
   if (loading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid gap-4 sm:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
           <StatSkeleton key={i} />
         ))}
       </div>
     );
   }
 
-  const lowestHint = summary.lowestMarginProduct
-    ? `${summary.lowestMarginProduct.name} (${formatPercent(summary.lowestMarginProduct.marginPercent)})`
-    : undefined;
-  const highestHint = summary.highestMarginProduct
-    ? `${summary.highestMarginProduct.name} (${formatPercent(summary.highestMarginProduct.marginPercent)})`
-    : undefined;
-
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <StatCard label="Total products" value={String(summary.totalProducts)} />
+    <div className="grid gap-4 sm:grid-cols-2">
       <StatCard
-        label="Average margin %"
+        label="Profit on stock"
+        value={formatMoney(summary.profitOnStock)}
+        hint="(Sale − cost) × stock on hand"
+      />
+      <StatCard
+        label="Average margin"
         value={formatPercent(summary.averageMarginPercent)}
-        hint="Products with a sale price > 0"
-      />
-      <StatCard
-        label="Below target margin"
-        value={String(summary.productsBelowTarget)}
-        hint="Click to filter table"
-        onClick={onBelowTargetClick}
-        ariaLabel="Filter products below target margin"
-      />
-      <StatCard label="Lowest margin product" value={formatPercent(summary.lowestMarginProduct?.marginPercent ?? null)} hint={lowestHint} />
-      <StatCard label="Highest margin product" value={formatPercent(summary.highestMarginProduct?.marginPercent ?? null)} hint={highestHint} />
-      <StatCard
-        label="Potential additional profit"
-        value={formatMoney(summary.potentialAdditionalProfit)}
-        hint="Estimated from current stock at target margin"
+        hint="Across products with a sale price"
       />
     </div>
   );

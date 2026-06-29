@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { collection, onSnapshot, orderBy, query, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
@@ -28,7 +29,7 @@ import {
 import type { CustomerDoc, InvoiceDoc, InvoiceReturnDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { RecordInvoicePaymentModal } from "@/app/components/invoices/RecordInvoicePaymentModal";
-import { Button } from "@/app/components/ui/Button";
+import { Button, ButtonLink, buttonClasses } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
@@ -43,10 +44,172 @@ function formatMoney(n: number) {
 function formatDate(ts?: Timestamp) {
   if (!ts) return "—";
   try {
-    return ts.toDate().toLocaleString();
+    return ts.toDate().toLocaleString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
     return "—";
   }
+}
+
+type StatusBadge = { label: string; className: string };
+
+/**
+ * Single status label combining lifecycle and payment state:
+ * Draft · Posted (posted+unpaid) · Partial paid · Paid · Void.
+ */
+function getStatusBadge(row: Row, isFullyPaid: boolean, effectiveTotal: number): StatusBadge {
+  if (row.status === "draft") {
+    return { label: "Draft", className: "bg-surface-hover text-foreground" };
+  }
+  if (row.status === "void") {
+    return { label: "Void", className: "bg-destructive-muted text-destructive" };
+  }
+  // posted
+  if (isFullyPaid && effectiveTotal > 0.01) {
+    return { label: "Paid", className: "bg-success-muted text-success" };
+  }
+  if (row.payment_status === "partial") {
+    return { label: "Partial paid", className: "bg-accent-muted text-accent-foreground" };
+  }
+  return { label: "Posted", className: "bg-primary/10 text-primary" };
+}
+
+function EyeIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function KebabIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <circle cx="12" cy="5" r="1.6" />
+      <circle cx="12" cy="12" r="1.6" />
+      <circle cx="12" cy="19" r="1.6" />
+    </svg>
+  );
+}
+
+type ActionItem = {
+  key: string;
+  label: string;
+  onClick?: () => void;
+  href?: string;
+  destructive?: boolean;
+  disabled?: boolean;
+  title?: string;
+};
+
+/** Three-dots overflow menu. Renders into a body portal so the table's overflow does not clip it. */
+function RowActionsMenu({ items }: { items: ActionItem[] }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocPointer(e: MouseEvent) {
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    function onScrollOrResize() {
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocPointer);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      document.removeEventListener("mousedown", onDocPointer);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [open]);
+
+  if (items.length === 0) return null;
+
+  function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const r = btnRef.current?.getBoundingClientRect();
+    if (r) setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    setOpen(true);
+  }
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={buttonClasses({ variant: "outline", size: "sm", className: "px-2" })}
+        aria-label="More actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={toggle}
+      >
+        <KebabIcon />
+      </button>
+      {open && pos
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              className="fixed z-50 min-w-[170px] overflow-hidden rounded-lg border border-border bg-surface py-1 shadow-lg"
+              style={{ top: pos.top, right: pos.right }}
+            >
+              {items.map((item) =>
+                item.href ? (
+                  <Link
+                    key={item.key}
+                    role="menuitem"
+                    href={item.href}
+                    className="block px-3 py-2 text-left text-xs font-medium text-foreground hover:bg-surface-hover"
+                    onClick={() => setOpen(false)}
+                  >
+                    {item.label}
+                  </Link>
+                ) : (
+                  <button
+                    key={item.key}
+                    role="menuitem"
+                    type="button"
+                    disabled={item.disabled}
+                    title={item.title}
+                    className={cn(
+                      "block w-full px-3 py-2 text-left text-xs font-medium hover:bg-surface-hover disabled:pointer-events-none disabled:opacity-50",
+                      item.destructive ? "text-destructive" : "text-foreground",
+                    )}
+                    onClick={() => {
+                      setOpen(false);
+                      item.onClick?.();
+                    }}
+                  >
+                    {item.label}
+                  </button>
+                ),
+              )}
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
+  );
 }
 
 export function InvoiceDraftList() {
@@ -320,6 +483,74 @@ export function InvoiceDraftList() {
                 draftCount: 0,
               };
               const voidBlockedMessage = formatInvoiceVoidBlockedMessage(voidBlockers);
+              const statusBadge = getStatusBadge(row, isFullyPaid, effectiveTotal);
+              const busy = workingId !== null;
+              const returnHref = `/sales/${encodeURIComponent(row.id)}/return/new`;
+              const voidItem: ActionItem = {
+                key: "void",
+                label: workingId === row.id && workingAction === "void" ? "Voiding…" : "Void",
+                destructive: true,
+                disabled: busy || !!voidBlockedMessage,
+                title: voidBlockedMessage || undefined,
+                onClick: () => void handleVoid(row),
+              };
+
+              let primaryAction: ReactNode = null;
+              const menuItems: ActionItem[] = [];
+
+              if (row.status === "draft") {
+                if (isAdmin) {
+                  primaryAction = (
+                    <Button type="button" size="sm" onClick={() => void handlePost(row)} disabled={busy}>
+                      {workingId === row.id && workingAction === "post" ? "Posting…" : "Post invoice"}
+                    </Button>
+                  );
+                  menuItems.push({
+                    key: "delete",
+                    label: workingId === row.id && workingAction === "delete" ? "Deleting…" : "Delete draft",
+                    destructive: true,
+                    disabled: busy,
+                    onClick: () => void handleDeleteDraft(row),
+                  });
+                  menuItems.push(voidItem);
+                } else {
+                  primaryAction = (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => void handleDeleteDraft(row)}
+                      disabled={busy}
+                    >
+                      {workingId === row.id && workingAction === "delete" ? "Deleting…" : "Delete draft"}
+                    </Button>
+                  );
+                }
+              } else if (row.status === "posted" && isAdmin) {
+                if (!isFullyPaid) {
+                  primaryAction = (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setPaymentModalRow(row)}
+                      disabled={busy}
+                    >
+                      {workingId === row.id && workingAction === "record-payment"
+                        ? "Saving…"
+                        : "Record payment"}
+                    </Button>
+                  );
+                  menuItems.push({ key: "return", label: "Return", href: returnHref });
+                  menuItems.push(voidItem);
+                } else {
+                  primaryAction = (
+                    <ButtonLink href={returnHref} variant="primary" size="sm">
+                      Return
+                    </ButtonLink>
+                  );
+                  menuItems.push(voidItem);
+                }
+              }
 
               return (
               <tr
@@ -342,28 +573,14 @@ export function InvoiceDraftList() {
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-xs font-medium",
-                        row.status === "posted"
-                          ? "bg-success-muted text-success"
-                          : row.status === "draft"
-                            ? "bg-surface-hover text-foreground"
-                            : "bg-destructive-muted text-destructive",
+                        statusBadge.className,
                       )}
                     >
-                      {row.status}
+                      {statusBadge.label}
                     </span>
                     {hasReturns ? (
                       <span className="rounded-full bg-accent-muted px-2 py-0.5 text-xs font-medium text-accent-foreground">
                         −{formatMoney(returnedAmount)}
-                      </span>
-                    ) : null}
-                    {showPaymentSummary && !isFullyPaid ? (
-                      <span className="rounded-full bg-surface-hover px-2 py-0.5 text-xs font-medium text-foreground">
-                        {row.payment_status === "partial" ? "partial" : "unpaid"}
-                      </span>
-                    ) : null}
-                    {showPaymentSummary && isFullyPaid && effectiveTotal > 0.01 ? (
-                      <span className="rounded-full bg-success-muted px-2 py-0.5 text-xs font-medium text-success">
-                        paid
                       </span>
                     ) : null}
                   </div>
@@ -393,74 +610,19 @@ export function InvoiceDraftList() {
                 </td>
                 <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
                 <td className="px-4 py-3">
-                  <div className="flex flex-wrap gap-2">
-                    <Link
+                  <div className="flex items-center gap-2">
+                    <ButtonLink
                       href={`/sales/${encodeURIComponent(row.id)}`}
-                      className="inline-flex items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs hover:bg-surface-hover"
+                      variant="outline"
+                      size="sm"
+                      className="px-2"
+                      aria-label={`View invoice ${row.order_id}`}
+                      title="View"
                     >
-                      View
-                    </Link>
-                    {row.status === "posted" && isAdmin ? (
-                      <Link
-                        href={`/sales/${encodeURIComponent(row.id)}/return/new`}
-                        className="inline-flex items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs hover:bg-surface-hover"
-                      >
-                        Return
-                      </Link>
-                    ) : null}
-                    {row.status === "posted" && isAdmin ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setPaymentModalRow(row)}
-                        disabled={workingId !== null || isFullyPaid}
-                        className="px-3 py-1.5 text-xs"
-                      >
-                        {workingId === row.id && workingAction === "record-payment"
-                          ? "Saving…"
-                          : isFullyPaid
-                            ? "Paid"
-                            : "Record payment"}
-                      </Button>
-                    ) : null}
-                    {row.status === "draft" ? (
-                      <>
-                        {isAdmin ? (
-                          <Button
-                            type="button"
-                            onClick={() => void handlePost(row)}
-                            disabled={workingId !== null}
-                            className="px-3 py-1.5 text-xs"
-                          >
-                            {workingId === row.id && workingAction === "post" ? "Posting…" : "Post invoice"}
-                          </Button>
-                        ) : null}
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => void handleDeleteDraft(row)}
-                          disabled={workingId !== null}
-                          className="px-3 py-1.5 text-xs text-destructive"
-                        >
-                          {workingId === row.id && workingAction === "delete" ? "Deleting…" : "Delete draft"}
-                        </Button>
-                      </>
-                    ) : null}
-                    {(row.status === "draft" || row.status === "posted") && isAdmin ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => void handleVoid(row)}
-                        disabled={workingId !== null || !!voidBlockedMessage}
-                        title={voidBlockedMessage || undefined}
-                        className="px-3 py-1.5 text-xs text-destructive"
-                      >
-                        {workingId === row.id && workingAction === "void" ? "Voiding…" : "Void"}
-                      </Button>
-                    ) : null}
-                    {row.status === "void" ? (
-                      <span className="text-xs text-muted-foreground">No actions</span>
-                    ) : null}
+                      <EyeIcon />
+                    </ButtonLink>
+                    {primaryAction}
+                    <RowActionsMenu items={menuItems} />
                   </div>
                 </td>
               </tr>

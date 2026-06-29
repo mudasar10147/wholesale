@@ -150,7 +150,15 @@ function ProductTable({
   );
 }
 
-export function ProductCompletenessDashboard() {
+type ProductCompletenessDashboardProps = {
+  /** "embedded" trims intro copy and hides the complete-records table (shown inside the Products hub). */
+  variant?: "standalone" | "embedded";
+};
+
+export function ProductCompletenessDashboard({
+  variant = "standalone",
+}: ProductCompletenessDashboardProps = {}) {
+  const embedded = variant === "embedded";
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -257,9 +265,11 @@ export function ProductCompletenessDashboard() {
           </p>
         </div>
         <p className="text-sm text-muted-foreground">
-          Use <span className="font-medium text-foreground">Edit</span> to update name, category, and image (uploads
-          go through the same server flow as the Products page, including GCS when configured). For stock and pricing
-          adjustments, use the Products page inventory controls.
+          Use <span className="font-medium text-foreground">Edit</span> to fill missing fields, including uploading a
+          product image.
+          {!embedded
+            ? " Uploads go through the same server flow as the Products page, including GCS when configured."
+            : ""}
         </p>
       </div>
 
@@ -276,18 +286,24 @@ export function ProductCompletenessDashboard() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Complete records</CardTitle>
-          <CardDescription>
-            {completeRows.length} product{completeRows.length === 1 ? "" : "s"} with name, category, valid prices and
-            stock, created date, and an image URL or uploaded image path.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ProductTable rows={completeRows} onEdit={setEditingProductId} />
-        </CardContent>
-      </Card>
+      {embedded ? (
+        <p className="text-sm text-muted-foreground">
+          {completeRows.length} product{completeRows.length === 1 ? "" : "s"} already complete.
+        </p>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Complete records</CardTitle>
+            <CardDescription>
+              {completeRows.length} product{completeRows.length === 1 ? "" : "s"} with name, category, valid prices and
+              stock, created date, and an image URL or uploaded image path.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProductTable rows={completeRows} onEdit={setEditingProductId} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

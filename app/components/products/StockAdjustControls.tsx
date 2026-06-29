@@ -13,7 +13,7 @@ import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
-import { PurchaseSourceSuggestInput } from "@/app/components/products/PurchaseSourceSuggestInput";
+import { TraderSelectInput } from "@/app/components/products/TraderSelectInput";
 import { cn } from "@/lib/utils";
 
 type StockAdjustControlsProps = {
@@ -37,7 +37,8 @@ export function StockAdjustControls({
 }: StockAdjustControlsProps) {
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState(() => defaultCostInputString(defaultUnitCost));
-  const [purchaseSource, setPurchaseSource] = useState("");
+  const [traderId, setTraderId] = useState("");
+  const [traderName, setTraderName] = useState("");
   /** Empty = do not change sale price on stock in. */
   const [salePriceInput, setSalePriceInput] = useState("");
   const [pending, setPending] = useState<"in" | "out" | null>(null);
@@ -51,7 +52,8 @@ export function StockAdjustControls({
 
   useEffect(() => {
     setSalePriceInput("");
-    setPurchaseSource("");
+    setTraderId("");
+    setTraderName("");
   }, [productId]);
 
   const parsedQty = useMemo(() => parsePositiveIntStrict(qty), [qty]);
@@ -81,14 +83,13 @@ export function StockAdjustControls({
       }
       salePrice = sp.value;
     }
-    const shop = purchaseSource.trim();
-    if (!shop) {
-      setError("Purchase source (shop) is required.");
+    if (!traderId) {
+      setError("Trader (where purchased) is required.");
       return;
     }
     setPending("in");
     try {
-      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice, shop);
+      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice, traderName, traderId);
       setSalePriceInput("");
     } catch (e) {
       setError(getFirestoreUserMessage(e));
@@ -125,28 +126,28 @@ export function StockAdjustControls({
   const saleId = `stock-sale-price-${productId}`;
 
   return (
-    <div className="flex min-w-[240px] max-w-[340px] flex-col gap-2">
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={shopId} className="text-xs text-muted-foreground">
-          Shop
-        </Label>
-        <PurchaseSourceSuggestInput
+    <div className="flex w-full flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor={shopId}>Trader (where purchased)</Label>
+        <TraderSelectInput
           id={shopId}
-          value={purchaseSource}
-          onChange={setPurchaseSource}
+          value={traderId}
+          onChange={(id, name) => {
+            setTraderId(id);
+            setTraderName(name);
+          }}
           disabled={pending !== null}
           aria-invalid={!!error}
           aria-describedby={error ? alertId : undefined}
         />
       </div>
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor={qtyId} className="text-xs text-muted-foreground">
-            Qty
-          </Label>
+
+      <div className={cn("grid gap-3", pricingMode !== "automatic" ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={qtyId}>Quantity</Label>
           <Input
             id={qtyId}
-            className="h-9 w-[4.5rem] px-2 py-1.5 text-sm"
+            className="h-10 tabular-nums"
             inputMode="numeric"
             min={1}
             step={1}
@@ -156,13 +157,11 @@ export function StockAdjustControls({
             aria-describedby={error ? alertId : undefined}
           />
         </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor={costId} className="text-xs text-muted-foreground">
-            Unit cost
-          </Label>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={costId}>Unit cost</Label>
           <Input
             id={costId}
-            className="h-9 w-[5.5rem] px-2 py-1.5 text-sm tabular-nums"
+            className="h-10 tabular-nums"
             inputMode="decimal"
             min={0}
             step="any"
@@ -172,55 +171,58 @@ export function StockAdjustControls({
           />
         </div>
         {pricingMode !== "automatic" ? (
-          <div className="flex min-w-0 flex-col gap-1">
-            <Label htmlFor={saleId} className="text-xs text-muted-foreground">
-              Sale price
-            </Label>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={saleId}>Sale price</Label>
             <Input
               id={saleId}
-              className="h-9 w-[5.5rem] px-2 py-1.5 text-sm tabular-nums"
+              className="h-10 tabular-nums"
               inputMode="decimal"
               min={0}
               step="any"
               value={salePriceInput}
               onChange={(e) => setSalePriceInput(e.target.value)}
-              placeholder="opt."
+              placeholder="Optional"
               aria-label="Optional new sale price for stock in"
             />
           </div>
         ) : null}
+      </div>
+
+      <p className="text-xs leading-snug text-muted-foreground">
+        {pricingMode === "automatic"
+          ? "Receipt cost feeds FIFO lots; list sale price recalculates from target margin after stock in."
+          : "Receipt cost feeds FIFO lots. Quantity and cost are required for stock in; sale price is optional and updates the product list price immediately (not per lot)."}
+      </p>
+
+      {error ? (
+        <InlineAlert variant="error" id={alertId} className="text-sm">
+          {error}
+        </InlineAlert>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-2 pt-1">
         <Button
           type="button"
           variant="primary"
           disabled={pending !== null}
-          className="h-9 px-3 py-1.5 text-xs"
+          className="h-10"
           onClick={handleStockIn}
         >
-          {pending === "in" ? "…" : "Stock in"}
+          {pending === "in" ? "Stocking in…" : "Stock in"}
         </Button>
         <Button
           type="button"
           variant="outline"
           disabled={stockOutDisabled}
           className={cn(
-            "h-9 px-3 py-1.5 text-xs text-destructive",
+            "h-10 text-destructive",
             "border-destructive/40 hover:bg-destructive-muted hover:text-destructive",
           )}
           onClick={handleStockOut}
         >
-          {pending === "out" ? "…" : "Stock out"}
+          {pending === "out" ? "Stocking out…" : "Stock out"}
         </Button>
       </div>
-      <p className="text-[10px] leading-snug text-muted-foreground">
-        {pricingMode === "automatic"
-          ? "Receipt cost feeds FIFO lots; list sale price recalculates from target margin after stock in."
-          : "Receipt cost feeds FIFO lots; optional sale price updates the product list price immediately (not per lot)."}
-      </p>
-      {error ? (
-        <InlineAlert variant="error" id={alertId} className="max-w-[260px] text-xs">
-          {error}
-        </InlineAlert>
-      ) : null}
     </div>
   );
 }

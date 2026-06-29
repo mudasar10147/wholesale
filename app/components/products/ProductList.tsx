@@ -8,16 +8,13 @@ import {
   query,
   type Timestamp,
 } from "firebase/firestore";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
-import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
-import { StockAdjustControls } from "@/app/components/products/StockAdjustControls";
 import { Button } from "@/app/components/ui/Button";
-import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 import { cn } from "@/lib/utils";
@@ -37,16 +34,12 @@ function formatDate(ts: Timestamp) {
 }
 
 export function ProductList() {
+  const router = useRouter();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingRow, setEditingRow] = useState<Row | null>(null);
-  const [lotsModalProductId, setLotsModalProductId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  const lotsModalRow = lotsModalProductId
-    ? (rows.find((r) => r.id === lotsModalProductId) ?? null)
-    : null;
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -73,9 +66,6 @@ export function ProductList() {
           next.push({ id: docSnap.id, ...d });
         });
         setRows(next);
-        setLotsModalProductId((openId) =>
-          openId && !next.some((r) => r.id === openId) ? null : openId,
-        );
       },
       (err) => {
         setLoading(false);
@@ -105,7 +95,7 @@ export function ProductList() {
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No products yet. Add one using the form above.
+        No products yet. Use Add product to create your first one.
       </p>
     );
   }
@@ -116,13 +106,6 @@ export function ProductList() {
     <>
       {editingRow ? (
         <EditProductModal key={editingRow.id} row={editingRow} onDismiss={() => setEditingRow(null)} />
-      ) : null}
-      {lotsModalRow ? (
-        <ProductLotsModal
-          key={lotsModalRow.id}
-          row={lotsModalRow}
-          onDismiss={() => setLotsModalProductId(null)}
-        />
       ) : null}
       <div className="space-y-3">
         <div className="max-w-md">
@@ -147,7 +130,7 @@ export function ProductList() {
         </div>
 
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[820px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-muted">
                 <th className="px-4 py-3 font-semibold text-foreground">Name</th>
@@ -155,16 +138,15 @@ export function ProductList() {
                 <th className="px-4 py-3 font-semibold text-foreground">Cost</th>
                 <th className="px-4 py-3 font-semibold text-foreground">Sale</th>
                 <th className="px-4 py-3 font-semibold text-foreground">Stock</th>
-                <th className="px-4 py-3 font-semibold text-foreground">Inventory</th>
-                <th className="px-4 py-3 font-semibold text-foreground">Actions</th>
                 <th className="px-4 py-3 font-semibold text-foreground">Added</th>
+                <th className="px-4 py-3 font-semibold text-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={8}
+                    colSpan={7}
                     className="px-4 py-10 text-center text-sm text-muted-foreground"
                   >
                     {`No products match “${searchQuery.trim()}”. Try another search.`}
@@ -174,8 +156,18 @@ export function ProductList() {
                 filteredRows.map((row, i) => (
                   <tr
                     key={row.id}
+                    role="link"
+                    tabIndex={0}
+                    onClick={() => router.push(`/products/${row.id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(`/products/${row.id}`);
+                      }
+                    }}
                     className={cn(
-                      "border-b border-border last:border-b-0",
+                      "cursor-pointer border-b border-border last:border-b-0 transition-colors hover:bg-surface-hover",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       i % 2 === 1 ? "bg-surface-muted/50" : "bg-surface",
                     )}
                   >
@@ -186,44 +178,20 @@ export function ProductList() {
                     <td className="px-4 py-3 tabular-nums text-foreground">
                       {row.stock_quantity.toLocaleString()}
                     </td>
-                    <td className="px-4 py-3 align-top">
-                      <StockAdjustControls
-                        productId={row.id}
-                        currentStock={row.stock_quantity}
-                        defaultUnitCost={row.cost_price}
-                        pricingMode={row.pricing_mode ?? "manual"}
-                      />
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <div className="flex flex-wrap gap-1.5">
-                        <Link
-                          href={`/products/${row.id}`}
-                          className={cn(
-                            "inline-flex h-9 items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-surface-hover",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ring-offset)]",
-                          )}
-                        >
-                          View
-                        </Link>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-9 px-3 py-1.5 text-xs"
-                          onClick={() => setLotsModalProductId(row.id)}
-                        >
-                          Lots
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className="h-9 px-3 py-1.5 text-xs"
-                          onClick={() => setEditingRow(row)}
-                        >
-                          Edit
-                        </Button>
-                      </div>
-                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-9 px-3 py-1.5 text-xs"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingRow(row);
+                        }}
+                      >
+                        Edit
+                      </Button>
+                    </td>
                   </tr>
                 ))
               )}

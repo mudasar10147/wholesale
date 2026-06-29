@@ -12,8 +12,10 @@ import { fetchSalesForProduct } from "@/lib/firestore/productSalesQuery";
 import { fetchStockLotsForProduct } from "@/lib/firestore/stockLotsQuery";
 import type { SaleDocRow } from "@/lib/firestore/salesDrilldown";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
+import { computeProductPurchaseStats } from "@/lib/inventory/productPurchaseStats";
 import { getSignedProductImageUrl } from "@/lib/upload/productImages";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
+import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import {
@@ -163,6 +165,7 @@ export function ProductProfileContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [showLots, setShowLots] = useState(false);
 
   const loadProfile = useCallback(
     async (opts?: { soft?: boolean }) => {
@@ -291,6 +294,8 @@ export function ProductProfileContent() {
     };
   }, [lots, product]);
 
+  const purchaseStats = useMemo(() => computeProductPurchaseStats(lots), [lots]);
+
   const marginPct = useMemo(() => {
     if (!product) return null;
     const cost = typeof product.cost_price === "number" ? product.cost_price : 0;
@@ -368,6 +373,10 @@ export function ProductProfileContent() {
         />
       ) : null}
 
+      {showLots ? (
+        <ProductLotsModal row={product} onDismiss={() => setShowLots(false)} />
+      ) : null}
+
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <Link
           href="/products"
@@ -434,6 +443,84 @@ export function ProductProfileContent() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>Purchases</CardTitle>
+            <CardDescription>
+              Stock-in receipts for this product (where and when it was bought).
+            </CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full shrink-0 sm:w-auto"
+            onClick={() => setShowLots(true)}
+          >
+            View all lots
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
+              <p className="text-sm text-muted-foreground">Units purchased</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">
+                {purchaseStats.totalUnitsPurchased.toLocaleString()}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
+              <p className="text-sm text-muted-foreground">Total purchase value</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">
+                {formatMoney(purchaseStats.totalPurchaseValue)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
+              <p className="text-sm text-muted-foreground">Receipts</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums">{purchaseStats.receiptCount}</p>
+            </div>
+          </div>
+
+          {purchaseStats.recentReceipts.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No stock-in purchases recorded yet. Opening balances and adjustments are not counted here.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full min-w-[480px] border-collapse text-left text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-surface-muted">
+                    <th className="px-3 py-2 font-semibold">Shop</th>
+                    <th className="px-3 py-2 font-semibold">Date</th>
+                    <th className="px-3 py-2 font-semibold">Qty</th>
+                    <th className="px-3 py-2 font-semibold">Unit cost</th>
+                    <th className="px-3 py-2 font-semibold">Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {purchaseStats.recentReceipts.map((receipt, i) => (
+                    <tr key={i} className="border-b border-border last:border-b-0">
+                      <td className="px-3 py-2 text-foreground">{receipt.source}</td>
+                      <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                        {receipt.receivedAt
+                          ? receipt.receivedAt.toLocaleDateString(undefined, {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                            })
+                          : "—"}
+                      </td>
+                      <td className="px-3 py-2 tabular-nums">{receipt.qty.toLocaleString()}</td>
+                      <td className="px-3 py-2 tabular-nums">{formatMoney(receipt.unitCost)}</td>
+                      <td className="px-3 py-2 tabular-nums font-medium">{formatMoney(receipt.value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

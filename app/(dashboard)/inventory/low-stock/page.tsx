@@ -1,26 +1,13 @@
-import { Suspense } from "react";
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
-import { LowStockPageContent } from "@/app/components/inventory/LowStockPageContent";
-import { PageHeader } from "@/app/components/layout/PageHeader";
+import { redirect } from "next/navigation";
 
-export default function LowStockPage() {
-  return (
-    <AdminOnly>
-      <div className="space-y-10">
-        <PageHeader
-          title="Low stock & reorder alerts"
-          description="Find products at or below your chosen stock level. Adjust the threshold to see what needs restocking."
-        />
-        <Suspense
-          fallback={
-            <p className="text-sm text-muted-foreground" role="status">
-              Loading…
-            </p>
-          }
-        >
-          <LowStockPageContent />
-        </Suspense>
-      </div>
-    </AdminOnly>
-  );
+export default async function LowStockPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const { threshold } = await searchParams;
+  const value = Array.isArray(threshold) ? threshold[0] : threshold;
+  const params = new URLSearchParams({ tab: "stock", low: "1" });
+  if (value) params.set("threshold", value);
+  redirect(`/inventory?${params.toString()}`);
 }

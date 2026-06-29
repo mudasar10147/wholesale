@@ -122,7 +122,7 @@ export function DashboardExtendedKpiGrid({
           }
           hint={
             ytdWeeklySales?.avgWeeklySales != null
-              ? `${formatMoney(ytdWeeklySales.totalSales)} total ÷ ${ytdWeeklySales.weeksElapsed.toFixed(1)} weeks (${ytdWeeklySales.rangeLabel}). Posted invoice & walk-in sales.`
+              ? `${formatMoney(ytdWeeklySales.totalSales)} total ÷ ${ytdWeeklySales.weeksElapsed.toFixed(1)} weeks (${ytdWeeklySales.rangeLabel}). Posted invoices and historical counter sales.`
               : "No sales recorded yet this year."
           }
         />

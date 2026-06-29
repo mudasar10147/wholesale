@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
@@ -68,7 +69,13 @@ function nextItem(seed = ""): ItemInput {
   return { id: crypto.randomUUID(), productId: seed, quantity: "1", unitPrice: "", lineDiscount: "0" };
 }
 
-export function AddInvoiceForm() {
+type AddInvoiceFormProps = {
+  /** When set, navigate here after a draft invoice is created (e.g. back to the sales list). */
+  redirectTo?: string;
+};
+
+export function AddInvoiceForm({ redirectTo }: AddInvoiceFormProps = {}) {
+  const router = useRouter();
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
@@ -292,6 +299,7 @@ export function AddInvoiceForm() {
       );
       setStockGateMessage(null);
       const customer = customers.find((c) => c.id === customerId);
+      let printErrorMessage: string | null = null;
       if (customer) {
         const productNames = new Map(products.map((p) => [p.id, p.name] as const));
         const createdAtLabel = new Date().toLocaleString(undefined, {
@@ -315,20 +323,22 @@ export function AddInvoiceForm() {
           );
         } catch (printErr) {
           console.error(printErr);
-          setSuccess(
-            `Draft invoice created: ${result.invoiceId}. POS receipt did not open (${printErr instanceof Error ? printErr.message : "unknown error"}).`,
-          );
-          setLastCreatedId(result.invoiceId);
-          setOrderId(createOrderId());
-          setInvoiceDiscount("0");
-          setDeliveryCharge("0");
-          setNotes("");
-          setItems([nextItem()]);
-          return;
+          printErrorMessage =
+            printErr instanceof Error ? printErr.message : "unknown error";
         }
       }
+
+      if (redirectTo) {
+        router.push(redirectTo);
+        return;
+      }
+
       setLastCreatedId(result.invoiceId);
-      setSuccess(`Draft invoice created: ${result.invoiceId}`);
+      setSuccess(
+        printErrorMessage
+          ? `Draft invoice created: ${result.invoiceId}. POS receipt did not open (${printErrorMessage}).`
+          : `Draft invoice created: ${result.invoiceId}`,
+      );
       setOrderId(createOrderId());
       setInvoiceDiscount("0");
       setDeliveryCharge("0");

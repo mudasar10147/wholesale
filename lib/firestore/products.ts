@@ -35,6 +35,8 @@ export type CreateProductInput = {
   initial_quantity: number;
   /** Required when initial_quantity > 0 — where stock was purchased. */
   purchase_source?: string;
+  /** Optional trader (supplier) link for the initial stock-in receipt. */
+  trader_id?: string;
   target_margin_percent?: number;
   pricing_mode?: PricingMode;
   image?: {
@@ -144,6 +146,7 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
           globalDefault: settings.globalDefaultTargetMarginPercent,
         },
         input.purchase_source ?? "",
+        input.trader_id,
       );
     }
   });

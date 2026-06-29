@@ -1,7 +1,7 @@
-import { AddInvoiceForm } from "@/app/components/invoices/AddInvoiceForm";
 import { InvoiceDraftList } from "@/app/components/invoices/InvoiceDraftList";
 import { ReturnList } from "@/app/components/invoices/ReturnList";
 import { PageHeader } from "@/app/components/layout/PageHeader";
+import { ButtonLink } from "@/app/components/ui/Button";
 import {
   Card,
   CardContent,
@@ -16,20 +16,12 @@ export default function SalesPage() {
       <PageHeader
         title="Sales"
         description="Create draft invoices, then post them to finalize sales and decrement stock from invoice items."
+        action={
+          <ButtonLink href="/sales/new" variant="primary">
+            Create New Invoice
+          </ButtonLink>
+        }
       />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Create draft invoice</CardTitle>
-          <CardDescription>
-            Attach products as invoice items with quantity, unit sale price, discount, delivery
-            allocation, and automatic line total calculations.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AddInvoiceForm />
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>

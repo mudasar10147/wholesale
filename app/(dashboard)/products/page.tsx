@@ -1,49 +1,26 @@
+import { Suspense } from "react";
 import { AdminOnly } from "@/app/components/auth/AdminOnly";
-import { AddProductForm } from "@/app/components/products/AddProductForm";
-import { ProductList } from "@/app/components/products/ProductList";
+import { ProductManagementPageContent } from "@/app/components/products/ProductManagementPageContent";
 import { PageHeader } from "@/app/components/layout/PageHeader";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/app/components/ui/Card";
 
 export default function ProductsPage() {
   return (
     <AdminOnly>
-    <div className="space-y-10">
-      <PageHeader
-        title="Products"
-        description="Add items, adjust stock with stock in / stock out, and see live updates from Firestore."
-      />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Add product</CardTitle>
-          <CardDescription>
-            Required: name, cost price, sale price, and initial purchase quantity. Quantity is recorded
-            as a stock purchase (inventory and cash on hand). Category is optional.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AddProductForm />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>All products</CardTitle>
-          <CardDescription>
-            Sorted by most recently added. Use Inventory to add or remove stock without leaving this page.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ProductList />
-        </CardContent>
-      </Card>
-    </div>
+      <div className="space-y-10">
+        <PageHeader
+          title="Products"
+          description="Add items, browse your catalog, and complete product details. Open a product to see its full history."
+        />
+        <Suspense
+          fallback={
+            <p className="text-sm text-muted-foreground" role="status">
+              Loading…
+            </p>
+          }
+        >
+          <ProductManagementPageContent />
+        </Suspense>
+      </div>
     </AdminOnly>
   );
 }

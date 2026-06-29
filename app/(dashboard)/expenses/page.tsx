@@ -1,4 +1,5 @@
-import { AddExpenseForm } from "@/app/components/expenses/AddExpenseForm";
+import { AddExpenseButton } from "@/app/components/expenses/AddExpenseButton";
+import { ExpenseKpiCards } from "@/app/components/expenses/ExpenseKpiCards";
 import { ExpenseList } from "@/app/components/expenses/ExpenseList";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import {
@@ -15,17 +16,10 @@ export default function ExpensesPage() {
       <PageHeader
         title="Expenses"
         description="Record business spending. Each entry is stored in Firestore with the time it was added."
+        action={<AddExpenseButton />}
       />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Add expense</CardTitle>
-          <CardDescription>Enter a title and amount. The date is set automatically when you save.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <AddExpenseForm />
-        </CardContent>
-      </Card>
+      <ExpenseKpiCards />
 
       <Card>
         <CardHeader>

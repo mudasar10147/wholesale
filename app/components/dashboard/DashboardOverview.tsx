@@ -27,8 +27,6 @@ import { ProfitBreakdownCard } from "@/app/components/dashboard/ProfitBreakdownC
 import { StockSummary } from "@/app/components/dashboard/StockSummary";
 import { CashInHandCard } from "@/app/components/dashboard/CashInHandCard";
 import { CashInHandStatCard } from "@/app/components/dashboard/CashInHandStatCard";
-import { CashEntryForm } from "@/app/components/dashboard/CashEntryForm";
-import { CashEntryLedgerTable } from "@/app/components/dashboard/CashEntryLedgerTable";
 import { TotalAssetsCard } from "@/app/components/dashboard/TotalAssetsCard";
 import { DashboardExtendedKpiGrid } from "@/app/components/dashboard/DashboardExtendedKpiGrid";
 import { DashboardSecondaryStatRow } from "@/app/components/dashboard/DashboardSecondaryStatRow";
@@ -329,20 +327,6 @@ export function DashboardOverview() {
         loading={cashLoading}
         onSaved={() => void load()}
       />
-
-      <section aria-labelledby="cash-entry-ledger-heading" className="space-y-4">
-        <div>
-          <h2 id="cash-entry-ledger-heading" className="text-base font-semibold text-foreground">
-            Cash entry ledger
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            Add or remove manual cash entries (such as owner investment or withdrawals). These
-            entries are included in cash-in-hand calculations.
-          </p>
-        </div>
-        <CashEntryForm onCreated={() => load()} />
-        <CashEntryLedgerTable onChanged={() => load()} />
-      </section>
 
       <TotalAssetsCard
         cashSnapshot={cashSnapshot}

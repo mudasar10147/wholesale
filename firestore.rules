@@ -75,6 +75,42 @@ service cloud.firestore {
       && data.updated_at is timestamp
       && (!('archived_at' in data) || data.archived_at is timestamp);
     }
+    function validTraderBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['name', 'phone', 'address', 'contact_person', 'city', 'notes', 'is_active', 'created_at', 'updated_at', 'archived_at']
+      )
+      && data.name is string
+      && data.name.size() >= 2
+      && data.name.size() <= 120
+      && (!('phone' in data) || (data.phone is string && data.phone.size() <= 25))
+      && (!('address' in data) || (data.address is string && data.address.size() <= 300))
+      && (!('contact_person' in data) || (data.contact_person is string && data.contact_person.size() <= 120))
+      && (!('city' in data) || (data.city is string && data.city.size() <= 120))
+      && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+      && data.is_active is bool
+      && data.created_at is timestamp
+      && data.updated_at is timestamp
+      && (!('archived_at' in data) || data.archived_at is timestamp);
+    }
+    function validPartyBase(data) {
+      return hasOnlyKeys(
+        data,
+        ['name', 'phone', 'address', 'contact_person', 'city', 'notes', 'is_active', 'created_at', 'updated_at', 'archived_at']
+      )
+      && data.name is string
+      && data.name.size() >= 2
+      && data.name.size() <= 120
+      && (!('phone' in data) || (data.phone is string && data.phone.size() <= 25))
+      && (!('address' in data) || (data.address is string && data.address.size() <= 300))
+      && (!('contact_person' in data) || (data.contact_person is string && data.contact_person.size() <= 120))
+      && (!('city' in data) || (data.city is string && data.city.size() <= 120))
+      && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+      && data.is_active is bool
+      && data.created_at is timestamp
+      && data.updated_at is timestamp
+      && (!('archived_at' in data) || data.archived_at is timestamp);
+    }
     // No hasOnlyKeys: extra fields from legacy/console data must not block updates.
     function validInvoiceBase(data) {
       return data.customer_id is string
@@ -160,6 +196,10 @@ service cloud.firestore {
             && data.purchase_source is string
             && data.purchase_source.size() > 0);
     }
+    function validStockLotTraderField(data) {
+      return !('trader_id' in data)
+        || (data.trader_id is string && data.trader_id.size() > 0);
+    }
     function validStockLotBase(data) {
       return data.product_id is string
       && data.product_id.size() > 0
@@ -173,6 +213,7 @@ service cloud.firestore {
       && data.source in ['stock_in', 'opening_balance', 'adjustment']
       && (!('reference_id' in data) || (data.reference_id is string && data.reference_id.size() > 0))
       && validStockLotPurchaseSourceField(data)
+      && validStockLotTraderField(data)
       && data.received_at is timestamp
       && data.created_at is timestamp
       && data.updated_at is timestamp;
@@ -260,12 +301,15 @@ service cloud.firestore {
       && data.updated_at is timestamp;
     }
     function validCashEntryBase(data) {
-      return hasOnlyKeys(data, ['entry_type', 'amount', 'date', 'note', 'created_at'])
+      return hasOnlyKeys(data, ['entry_type', 'amount', 'date', 'note', 'party_id', 'party_name', 'loan_kind', 'created_at'])
       && data.entry_type in ['add', 'remove']
       && data.amount is number
       && data.amount > 0
       && data.date is timestamp
       && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+      && (!('party_id' in data) || (data.party_id is string && data.party_id.size() <= 200))
+      && (!('party_name' in data) || (data.party_name is string && data.party_name.size() <= 120))
+      && (!('loan_kind' in data) || (data.loan_kind in ['borrowed', 'repaid', 'lent', 'collected'] && 'party_id' in data))
       && data.created_at is timestamp;
     }
     // Clerk may only edit invoices while they stay draft (no post / void / payment paths).
@@ -571,6 +615,20 @@ service cloud.firestore {
       allow read: if isStaff();
       allow create: if isStaff() && validCustomerBase(request.resource.data) && request.resource.data.is_active == true;
       allow update: if isStaff() && validCustomerBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at;
+      allow delete: if isAdmin();
+    }
+    match /traders/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validTraderBase(request.resource.data) && request.resource.data.is_active == true;
+      allow update: if isAdmin() && validTraderBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at;
+      allow delete: if isAdmin();
+    }
+    match /parties/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validPartyBase(request.resource.data) && request.resource.data.is_active == true;
+      allow update: if isAdmin() && validPartyBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at;
       allow delete: if isAdmin();
     }
@@ -888,7 +946,8 @@ service cloud.firestore {
     }
     match /walk_in_sessions/{sessionId} {
       allow read: if isStaff();
-      allow create: if isStaff() && validWalkInSessionCreate(request.resource.data);
+      // Walk-in sales discontinued in app; existing sessions remain readable. No new sessions.
+      allow create: if false;
       allow update: if isStaff() && walkInStaffEditPending(resource.data, request.resource.data)
         || (isAdmin() && walkInApprove(resource.data, request.resource.data))
         || (isAdmin() && walkInReject(resource.data, request.resource.data))
@@ -898,8 +957,7 @@ service cloud.firestore {
     }
     match /walk_in_sessions/{sessionId}/lines/{lineId} {
       allow read: if isStaff();
-      allow create: if isStaff() && validWalkInLine(request.resource.data)
-        && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';
+      allow create: if false;
       allow update: if isStaff() && validWalkInLine(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at
         && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';

@@ -27,7 +27,7 @@ import { buildPosReceiptInputFromCalc, printPosReceipt } from "@/lib/invoices/po
 import { normalizeOrderId } from "@/lib/validation/contracts";
 import type { CustomerDoc, InvoiceDoc, InvoiceItemDoc, InvoiceReturnDoc, InvoiceReturnItemDoc, ProductDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
-import { Button } from "@/app/components/ui/Button";
+import { Button, ButtonLink } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import {
   Card,
@@ -489,76 +489,69 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             style={{ width: "auto" }}
             priority
           />
-          <Link
-            href="/sales"
-            className="inline-flex w-fit items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs hover:bg-surface-hover"
-          >
+          <ButtonLink href="/sales" variant="outline" size="sm" className="w-fit">
             ← Sales
-          </Link>
+          </ButtonLink>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="px-3 py-1.5 text-xs"
-            onClick={() => void handleCopy()}
-          >
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Document actions */}
+          <Button type="button" variant="outline" size="sm" onClick={() => void handleCopy()}>
             Copy
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="px-3 py-1.5 text-xs"
-            onClick={handleDownload}
-          >
+          <Button type="button" variant="outline" size="sm" onClick={handleDownload}>
             Download .txt
           </Button>
           <Button
             type="button"
             variant="outline"
-            className="px-3 py-1.5 text-xs"
+            size="sm"
             disabled={pdfWorking}
             onClick={() => void handleDownloadPdf()}
           >
             {pdfWorking ? "PDF…" : "Download PDF"}
           </Button>
-          {isDraft ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="px-3 py-1.5 text-xs"
-              onClick={() => {
-                setEditBanner(null);
-                setReceiptPrintNotice(null);
-                setEditing((e) => !e);
-              }}
-            >
-              {editing ? "Close editor" : "Edit draft"}
-            </Button>
-          ) : null}
           {(isDraft || isPosted) && items.length > 0 ? (
             <Button
               type="button"
               variant="outline"
-              className="px-3 py-1.5 text-xs"
+              size="sm"
               disabled={working !== null}
               onClick={() => void handlePrintPosReceipt()}
             >
               Print receipt
             </Button>
           ) : null}
+
+          {/* Lifecycle actions */}
+          {isDraft ? (
+            <>
+              <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditBanner(null);
+                  setReceiptPrintNotice(null);
+                  setEditing((e) => !e);
+                }}
+              >
+                {editing ? "Close editor" : "Edit draft"}
+              </Button>
+            </>
+          ) : null}
           {isPosted && isAdmin && hasReturnableLines ? (
-            <Link
-              href={`/sales/${invoice.id}/return/new`}
-              className="inline-flex items-center justify-center rounded-lg border border-border-strong bg-surface px-3 py-1.5 text-xs font-medium text-foreground shadow-xs hover:bg-surface-hover"
-            >
-              Create return
-            </Link>
+            <>
+              <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
+              <ButtonLink href={`/sales/${invoice.id}/return/new`} variant="outline" size="sm">
+                Create return
+              </ButtonLink>
+            </>
           ) : null}
           {isDraft && isAdmin ? (
             <Button
               type="button"
-              className="px-3 py-1.5 text-xs"
+              size="sm"
               disabled={working !== null || editing || draftHasStockShortfall}
               title={
                 draftHasStockShortfall
@@ -576,7 +569,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             <Button
               type="button"
               variant="outline"
-              className="px-3 py-1.5 text-xs"
+              size="sm"
               disabled={working !== null || editing || isFullyPaid}
               onClick={() => setShowPaymentModal(true)}
             >
@@ -586,8 +579,8 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           {(isDraft || isPosted) && isAdmin ? (
             <Button
               type="button"
-              variant="outline"
-              className="px-3 py-1.5 text-xs text-destructive"
+              variant="destructive"
+              size="sm"
               disabled={working !== null || editing || !!voidBlockedMessage}
               title={voidBlockedMessage || undefined}
               onClick={() =>
@@ -600,8 +593,8 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           {isDraft ? (
             <Button
               type="button"
-              variant="outline"
-              className="px-3 py-1.5 text-xs text-destructive"
+              variant="destructive"
+              size="sm"
               disabled={working !== null || editing}
               onClick={() => {
                 if (

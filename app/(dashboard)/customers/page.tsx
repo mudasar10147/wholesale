@@ -1,4 +1,6 @@
+import { AddCustomerButton } from "@/app/components/customers/AddCustomerButton";
 import { CustomerCrudPanel } from "@/app/components/customers/CustomerCrudPanel";
+import { CustomerKpiCards } from "@/app/components/customers/CustomerKpiCards";
 import { CustomerLedgerTable } from "@/app/components/customers/CustomerLedgerTable";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import {
@@ -15,14 +17,17 @@ export default function CustomersPage() {
       <PageHeader
         title="Customers"
         description="Create, edit, and archive customer records for invoice-based sales tracking."
+        action={<AddCustomerButton />}
       />
+
+      <CustomerKpiCards />
 
       <Card>
         <CardHeader>
           <CardTitle>Customer management</CardTitle>
           <CardDescription>
-            Add new customers, update their details, archive old records, or merge duplicates into
-            one customer (updates all linked invoices and deletes the duplicate).
+            Update customer details, archive old records, or merge duplicates into one customer
+            (moves all linked invoices and deletes the duplicate).
           </CardDescription>
         </CardHeader>
         <CardContent>

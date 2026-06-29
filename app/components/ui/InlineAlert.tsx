@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-type InlineAlertVariant = "error" | "success" | "info";
+type InlineAlertVariant = "error" | "success" | "info" | "warning";
 
 const variantClasses: Record<InlineAlertVariant, string> = {
   error: "border-destructive/30 bg-destructive-muted text-destructive",
   success: "border-success/30 bg-success-muted text-success",
   info: "border-border bg-surface-muted text-muted-foreground",
+  warning: "border-accent/40 bg-accent-muted text-accent-foreground",
 };
 
 type InlineAlertProps = {

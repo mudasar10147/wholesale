@@ -9,6 +9,10 @@ export const COLLECTIONS = {
   expenses: "expenses",
   cashEntries: "cash_entries",
   customers: "customers",
+  /** Suppliers we buy stock from. */
+  traders: "traders",
+  /** People/companies tied to manual cash entries (owner, investor, lender, bank…). */
+  parties: "parties",
   invoices: "invoices",
   invoiceItems: "invoice_items",
   invoiceItemCogs: "invoice_item_cogs",

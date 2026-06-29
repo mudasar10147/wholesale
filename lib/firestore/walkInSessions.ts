@@ -1,3 +1,7 @@
+/**
+ * Walk-in session helpers (feature discontinued in app; kept for data model / admin scripts).
+ * Approved walk-in sales remain in `sales` with `walk_in_session_id` for reporting.
+ */
 import {
   collection,
   deleteDoc,

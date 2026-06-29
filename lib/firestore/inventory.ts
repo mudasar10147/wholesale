@@ -63,12 +63,14 @@ export function applyStockInInTransaction(
     globalDefault: number;
   } | undefined,
   purchaseSource: string,
+  traderId?: string,
 ): void {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
   }
   assertNonNegativeMoney("Sale price", salePrice);
   const resolvedPurchaseSource = normalizePurchaseSource(purchaseSource);
+  const resolvedTraderId = traderId?.trim() || undefined;
   const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
 
   const patch: {
@@ -99,6 +101,7 @@ export function applyStockInInTransaction(
     qty_remaining: quantity,
     source: "stock_in",
     purchase_source: resolvedPurchaseSource,
+    ...(resolvedTraderId ? { trader_id: resolvedTraderId } : {}),
     received_at: serverTimestamp(),
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
@@ -121,6 +124,7 @@ export async function stockIn(
   unitCost: number | undefined,
   salePrice: number | undefined,
   purchaseSource: string,
+  traderId?: string,
 ): Promise<void> {
   const settings = await loadPricingSettings(db);
   const ref = doc(db, COLLECTIONS.products, productId);
@@ -144,6 +148,7 @@ export async function stockIn(
         globalDefault: settings.globalDefaultTargetMarginPercent,
       },
       purchaseSource,
+      traderId,
     );
   });
 }

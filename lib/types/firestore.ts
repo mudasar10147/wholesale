@@ -96,6 +96,14 @@ export type ExpenseDoc = {
 export type CashEntryType = "add" | "remove";
 
 /**
+ * Loan classification for a cash entry. Presence of this field marks the entry
+ * as a loan movement (must also have a `party_id`). The cash direction is
+ * derived from the kind: `borrowed`/`collected` are cash in, `repaid`/`lent`
+ * are cash out.
+ */
+export type LoanEntryKind = "borrowed" | "repaid" | "lent" | "collected";
+
+/**
  * Document shape for `cash_entries/{entryId}`.
  * Manual cash inflow/outflow entries for ledger-style adjustments.
  */
@@ -104,6 +112,12 @@ export type CashEntryDoc = {
   amount: number;
   date: Timestamp;
   note?: string;
+  /** Optional link to the party (person/company) this cash came from or went to. */
+  party_id?: string;
+  /** Denormalized party name captured at entry time for display. */
+  party_name?: string;
+  /** When set, this entry is a loan movement (requires `party_id`). */
+  loan_kind?: LoanEntryKind;
   created_at: Timestamp;
 };
 
@@ -142,6 +156,41 @@ export type CustomerDoc = {
   phone?: string;
   email?: string;
   address?: string;
+  is_active: boolean;
+  archived_at?: Timestamp;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+/**
+ * Supplier we buy stock from, for `traders/{traderId}`.
+ */
+export type TraderDoc = {
+  name: string;
+  phone?: string;
+  address?: string;
+  contact_person?: string;
+  city?: string;
+  notes?: string;
+  is_active: boolean;
+  archived_at?: Timestamp;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+/**
+ * Document shape for `parties/{partyId}`.
+ * A party is any person or company tied to a manual cash entry — e.g. the
+ * owner, an investor, a lender, or a bank. Kept separate from customers and
+ * traders since manual cash movements are independent of sales/purchases.
+ */
+export type PartyDoc = {
+  name: string;
+  phone?: string;
+  address?: string;
+  contact_person?: string;
+  city?: string;
+  notes?: string;
   is_active: boolean;
   archived_at?: Timestamp;
   created_at: Timestamp;
@@ -302,6 +351,8 @@ export type StockLotDoc = {
   reference_id?: string;
   /** Where this stock-in receipt was purchased (required on new stock_in). */
   purchase_source?: string;
+  /** Optional link to the trader (supplier) this receipt was purchased from. */
+  trader_id?: string;
   received_at: Timestamp;
   created_at: Timestamp;
   updated_at: Timestamp;

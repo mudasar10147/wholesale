@@ -91,7 +91,7 @@ export function StockSummary({ data, loading }: StockSummaryProps) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-foreground">Low stock</h3>
             <Link
-              href={`/inventory/low-stock?threshold=${LOW_STOCK_THRESHOLD}`}
+              href={`/inventory?tab=stock&low=1&threshold=${LOW_STOCK_THRESHOLD}`}
               className="text-xs font-medium text-primary underline-offset-2 hover:underline"
             >
               View all

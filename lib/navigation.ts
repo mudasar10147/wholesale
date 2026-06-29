@@ -12,18 +12,13 @@ export type NavItem = {
 export const navItems: readonly NavItem[] = [
   { href: "/", label: "Dashboard", roles: ["admin"] },
   { href: "/products", label: "Products", roles: ["admin"] },
-  { href: "/products/pricing", label: "Pricing & margin", roles: ["admin"] },
-  { href: "/inventory/discard", label: "Discard stock", roles: ["admin"] },
-  { href: "/inventory/low-stock", label: "Low stock", roles: ["admin"] },
-  {
-    href: "/products/completeness",
-    label: "Catalog completeness",
-    roles: ["admin"],
-  },
+  { href: "/inventory", label: "Inventory", roles: ["admin"] },
   { href: "/sales", label: "Sales", roles: ["admin", "clerk"] },
-  { href: "/walk-in", label: "Walk-in", roles: ["admin", "clerk"] },
   { href: "/expenses", label: "Expenses", roles: ["admin", "clerk"] },
+  { href: "/cash", label: "Cash ledger", roles: ["admin"] },
+  { href: "/loans", label: "Loans", roles: ["admin"] },
   { href: "/customers", label: "Customers", roles: ["admin", "clerk"] },
+  { href: "/traders", label: "Traders", roles: ["admin"] },
   { href: "/reports/fifo", label: "FIFO Reports", roles: ["admin"] },
   { href: "/reports/purchases", label: "Purchase report", roles: ["admin"] },
 ];
