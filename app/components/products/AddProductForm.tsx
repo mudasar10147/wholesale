@@ -34,7 +34,6 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
   const [salePrice, setSalePrice] = useState("");
   const [stockQuantity, setStockQuantity] = useState("");
   const [traderId, setTraderId] = useState("");
-  const [traderName, setTraderName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -131,7 +130,6 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
         cost_price: cost.value,
         sale_price: sale.value,
         initial_quantity: stock.value,
-        purchase_source: stock.value > 0 ? traderName.trim() : undefined,
         trader_id: stock.value > 0 ? traderId : undefined,
         image,
         ...(pricingSettings
@@ -262,9 +260,8 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
             <TraderSelectInput
               id="product-trader"
               value={traderId}
-              onChange={(id, nm) => {
+              onChange={(id) => {
                 setTraderId(id);
-                setTraderName(nm);
               }}
               disabled={submitting}
               aria-invalid={numbersInvalid}

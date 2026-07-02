@@ -6,8 +6,12 @@ import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { archiveCustomer } from "@/lib/firestore/customers";
+import { computeCustomerEngagement, type CustomerEngagementSegment } from "@/lib/customers/customerEngagement";
+import { useCustomerEngagementSettings } from "@/lib/firestore/customerEngagementSettings";
+import { getInvoiceEffectiveTotal } from "@/lib/invoices/invoiceEffective";
 import type { CustomerDoc, InvoiceDoc } from "@/lib/types/firestore";
 import { CustomerFormModal } from "@/app/components/customers/CustomerFormModal";
+import { EngagementSegmentBadge } from "@/app/components/customers/EngagementSegmentBadge";
 import { MergeCustomersModal } from "@/app/components/customers/MergeCustomersModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -52,6 +56,7 @@ function MergeIcon({ className }: { className?: string }) {
 }
 
 export function CustomerCrudPanel() {
+  const { settings } = useCustomerEngagementSettings();
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingError, setLoadingError] = useState<string | null>(null);
@@ -63,6 +68,7 @@ export function CustomerCrudPanel() {
   const [invoiceCountByCustomerId, setInvoiceCountByCustomerId] = useState<Map<string, number>>(
     () => new Map(),
   );
+  const [invoices, setInvoices] = useState<Array<InvoiceDoc & { id: string }>>([]);
 
   useEffect(() => {
     const db = getDb();
@@ -87,13 +93,16 @@ export function CustomerCrudPanel() {
     const db = getDb();
     const unsub = onSnapshot(collection(db, COLLECTIONS.invoices), (snap) => {
       const counts = new Map<string, number>();
+      const nextInvoices: Array<InvoiceDoc & { id: string }> = [];
       snap.forEach((docSnap) => {
         const inv = docSnap.data() as InvoiceDoc;
+        nextInvoices.push({ id: docSnap.id, ...inv });
         if (inv.status === "void") return;
         const id = inv.customer_id;
         if (!id) return;
         counts.set(id, (counts.get(id) ?? 0) + 1);
       });
+      setInvoices(nextInvoices);
       setInvoiceCountByCustomerId(counts);
     });
     return () => unsub();
@@ -111,6 +120,37 @@ export function CustomerCrudPanel() {
       : rows;
     return [...base].sort(compareCustomerName);
   }, [rows, search]);
+
+  const segmentByCustomerId = useMemo(() => {
+    const invoiceInputs = invoices
+      .filter((inv) => inv.status === "posted")
+      .map((inv) => {
+        const orderDate = inv.posted_at?.toDate() ?? inv.created_at?.toDate();
+        if (!orderDate) return null;
+        return {
+          customer_id: inv.customer_id,
+          orderDate,
+          effectiveTotal: getInvoiceEffectiveTotal(inv),
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+
+    const engagementRows = computeCustomerEngagement(
+      rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        phone: c.phone,
+        email: c.email,
+        is_active: c.is_active !== false,
+      })),
+      invoiceInputs,
+      { settings },
+    );
+
+    return new Map<string, CustomerEngagementSegment>(
+      engagementRows.map((r) => [r.customerId, r.displaySegment]),
+    );
+  }, [rows, invoices, settings]);
 
   const editingRow = useMemo(() => rows.find((r) => r.id === editingId) ?? null, [rows, editingId]);
 
@@ -209,12 +249,19 @@ export function CustomerCrudPanel() {
                     )}
                   >
                     <td className="px-4 py-3 font-medium text-foreground">
-                      {row.name}
-                      {(invoiceCountByCustomerId.get(row.id) ?? 0) > 0 ? (
-                        <span className="ml-2 text-xs font-normal text-muted-foreground">
-                          ({invoiceCountByCustomerId.get(row.id)} inv.)
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span>
+                          {row.name}
+                          {(invoiceCountByCustomerId.get(row.id) ?? 0) > 0 ? (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              ({invoiceCountByCustomerId.get(row.id)} inv.)
+                            </span>
+                          ) : null}
                         </span>
-                      ) : null}
+                        {row.is_active && segmentByCustomerId.has(row.id) ? (
+                          <EngagementSegmentBadge segment={segmentByCustomerId.get(row.id)!} />
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.phone || "—"}</td>
                     <td className="px-4 py-3 text-muted-foreground">{row.email || "—"}</td>

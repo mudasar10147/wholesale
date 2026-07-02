@@ -1,17 +1,16 @@
 import type { StockLotDoc } from "@/lib/types/firestore";
-
-/** Mirrors `UNSPECIFIED_PURCHASE_SOURCE` in purchaseReports (kept local to avoid a value import). */
-const UNSPECIFIED_PURCHASE_SOURCE = "Unspecified";
+import { traderNameForLot, type TraderLookup } from "./traderLookup.ts";
 
 export type ProductPurchaseLotInput = Pick<
   StockLotDoc,
-  "source" | "qty_in" | "unit_cost" | "purchase_source"
+  "source" | "qty_in" | "unit_cost" | "purchase_source" | "trader_id"
 > & {
   received_at?: { toDate(): Date } | null;
 };
 
 export type ProductPurchaseReceipt = {
-  source: string;
+  traderId?: string;
+  traderName: string;
   receivedAt: Date | null;
   qty: number;
   unitCost: number;
@@ -39,6 +38,7 @@ function toReceiptDate(lot: ProductPurchaseLotInput): Date | null {
  */
 export function computeProductPurchaseStats(
   lots: readonly ProductPurchaseLotInput[],
+  traders: TraderLookup,
   recentLimit = 10,
 ): ProductPurchaseStats {
   let totalUnitsPurchased = 0;
@@ -53,7 +53,8 @@ export function computeProductPurchaseStats(
     totalUnitsPurchased += qty;
     totalPurchaseValue += value;
     receipts.push({
-      source: lot.purchase_source?.trim() || UNSPECIFIED_PURCHASE_SOURCE,
+      traderId: lot.trader_id?.trim() || undefined,
+      traderName: traderNameForLot(lot, traders),
       receivedAt: toReceiptDate(lot),
       qty,
       unitCost,

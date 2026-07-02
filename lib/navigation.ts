@@ -21,6 +21,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/traders", label: "Traders", roles: ["admin"] },
   { href: "/reports/fifo", label: "FIFO Reports", roles: ["admin"] },
   { href: "/reports/purchases", label: "Purchase report", roles: ["admin"] },
+  { href: "/settings", label: "Settings", roles: ["admin"] },
 ];
 
 export function isNavVisibleForUser(

@@ -10,7 +10,7 @@ import {
 import { inheritPricingFieldsForNewProduct } from "@/lib/pricing/automaticPricing";
 import { automaticSalePrice } from "@/lib/pricing/metrics";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { applyStockInInTransaction } from "@/lib/firestore/inventory";
+import { applyStockInInTransaction, loadTraderNameForStockIn } from "@/lib/firestore/inventory";
 import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
 import type { PricingMode, ProductDoc } from "@/lib/types/firestore";
 
@@ -33,9 +33,7 @@ export type CreateProductInput = {
   sale_price: number;
   /** Units bought on create; 0 = catalog SKU only (no stock lot or cash purchase). */
   initial_quantity: number;
-  /** Required when initial_quantity > 0 — where stock was purchased. */
-  purchase_source?: string;
-  /** Optional trader (supplier) link for the initial stock-in receipt. */
+  /** Required when initial_quantity > 0 — trader from Traders management. */
   trader_id?: string;
   target_margin_percent?: number;
   pricing_mode?: PricingMode;
@@ -76,11 +74,16 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
     throw new Error("Sale price must be zero or greater.");
   }
   if (input.initial_quantity > 0) {
-    const source = input.purchase_source?.trim() ?? "";
-    if (!source) {
-      throw new Error("Purchase source (shop) is required when adding initial stock.");
+    const traderId = input.trader_id?.trim() ?? "";
+    if (!traderId) {
+      throw new Error("Trader is required when adding initial stock.");
     }
   }
+
+  const traderName =
+    input.initial_quantity > 0
+      ? await loadTraderNameForStockIn(db, input.trader_id!.trim())
+      : "";
 
   const settings = await loadPricingSettings(db);
   const cat = input.category?.trim();
@@ -145,8 +148,8 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
           categoryTemplates: settings.categoryTemplates,
           globalDefault: settings.globalDefaultTargetMarginPercent,
         },
-        input.purchase_source ?? "",
-        input.trader_id,
+        input.trader_id!.trim(),
+        traderName,
       );
     }
   });

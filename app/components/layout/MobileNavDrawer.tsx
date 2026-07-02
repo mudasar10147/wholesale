@@ -6,6 +6,7 @@ import { signOut } from "firebase/auth";
 import { getAuthClient } from "@/lib/firebase";
 import { AppBrand } from "@/app/components/layout/AppBrand";
 import { DashboardNavLinks } from "@/app/components/layout/DashboardNavLinks";
+import { SidebarNewInvoiceButton } from "@/app/components/layout/SidebarNewInvoiceButton";
 import { Button } from "@/app/components/ui/Button";
 
 type MobileNavDrawerProps = {
@@ -51,16 +52,16 @@ export function MobileNavDrawer({ open, onClose, panelId }: MobileNavDrawerProps
         id={panelId}
         className="absolute left-0 top-0 flex h-full w-[min(18rem,85vw)] flex-col border-r border-sidebar-border bg-sidebar shadow-[var(--shadow-sidebar)] transition-transform duration-[var(--duration-normal)] ease-[var(--ease-out)]"
       >
-        <div className="border-b border-sidebar-border px-5 py-6" style={{ paddingTop: "max(1.5rem, env(safe-area-inset-top))" }}>
+        <div className="border-b border-sidebar-border px-5 py-4" style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}>
           <p id={titleId} className="sr-only">
             Main navigation
           </p>
           <AppBrand />
         </div>
-        <div className="flex flex-1 flex-col overflow-y-auto px-3 py-4">
-          <p className="px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.12em] text-sidebar-muted">
-            Menu
-          </p>
+        <div className="shrink-0 px-3 pt-3">
+          <SidebarNewInvoiceButton onNavigate={onClose} />
+        </div>
+        <div className="flex flex-1 flex-col overflow-y-auto px-3 py-3">
           <DashboardNavLinks onNavigate={onClose} />
         </div>
         <div className="border-t border-sidebar-border px-5 py-4">

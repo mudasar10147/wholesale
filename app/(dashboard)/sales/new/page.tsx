@@ -9,7 +9,12 @@ import {
   CardTitle,
 } from "@/app/components/ui/Card";
 
-export default function NewInvoicePage() {
+type PageProps = {
+  searchParams: Promise<{ customerId?: string }>;
+};
+
+export default async function NewInvoicePage({ searchParams }: PageProps) {
+  const { customerId } = await searchParams;
   return (
     <div className="space-y-10">
       <PageHeader
@@ -31,7 +36,7 @@ export default function NewInvoicePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <AddInvoiceForm redirectTo="/sales" />
+          <AddInvoiceForm redirectTo="/sales" initialCustomerId={customerId?.trim()} />
         </CardContent>
       </Card>
     </div>

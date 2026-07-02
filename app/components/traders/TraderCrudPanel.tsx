@@ -8,7 +8,7 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { archiveTrader } from "@/lib/firestore/traders";
 import type { StockLotDoc, TraderDoc } from "@/lib/types/firestore";
-import { TraderForm } from "@/app/components/traders/TraderForm";
+import { TraderFormModal } from "@/app/components/traders/TraderFormModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { cn } from "@/lib/utils";
@@ -97,25 +97,6 @@ export function TraderCrudPanel() {
 
   return (
     <div className="space-y-6">
-      <TraderForm
-        key={editingId ?? "new"}
-        traderId={editingId ?? undefined}
-        initial={
-          editingRow
-            ? {
-                name: editingRow.name,
-                phone: editingRow.phone,
-                address: editingRow.address,
-                contact_person: editingRow.contact_person,
-                city: editingRow.city,
-                notes: editingRow.notes,
-              }
-            : undefined
-        }
-        onSaved={() => setEditingId(null)}
-        onCancel={editingId ? () => setEditingId(null) : undefined}
-      />
-
       <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
         <span>
           Active: <strong className="text-foreground">{activeCount}</strong>
@@ -136,7 +117,7 @@ export function TraderCrudPanel() {
       {!loading && !loadingError ? (
         rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No traders yet. Create one using the form above.
+            No traders yet. Use Create trader to add one.
           </p>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border">
@@ -221,6 +202,22 @@ export function TraderCrudPanel() {
             </table>
           </div>
         )
+      ) : null}
+
+      {editingId && editingRow ? (
+        <TraderFormModal
+          traderId={editingId}
+          initial={{
+            name: editingRow.name,
+            phone: editingRow.phone,
+            address: editingRow.address,
+            contact_person: editingRow.contact_person,
+            city: editingRow.city,
+            notes: editingRow.notes,
+          }}
+          onDismiss={() => setEditingId(null)}
+          onSaved={() => setFeedback("Trader updated.")}
+        />
       ) : null}
     </div>
   );

@@ -5,20 +5,27 @@ import assert from "node:assert/strict";
 import {
   aggregatePurchasesByDay,
   aggregatePurchasesByMonth,
-  aggregatePurchasesByShop,
+  aggregatePurchasesByTrader,
   aggregatePurchasesByWeek,
   aggregateStockInByProductForPeriod,
   computePurchaseKpis,
   filterPurchaseLotsByRange,
   filterStockInLotsInPeriod,
-  UNSPECIFIED_PURCHASE_SOURCE,
+  UNLINKED_TRADER_KEY,
+  UNLINKED_TRADER_LABEL,
   type PurchaseLotInput,
   type StockInDetailLotInput,
 } from "./purchaseReports.ts";
+import { buildTraderLookup } from "./traderLookup.ts";
 
 function ts(date: Date): { toDate(): Date } {
   return { toDate: () => date };
 }
+
+const traders = buildTraderLookup([
+  { id: "t-hall", name: "Hall Road", city: "Lahore", phone: "0300" },
+  { id: "t-other", name: "Other Market" },
+]);
 
 const lots: PurchaseLotInput[] = [
   {
@@ -26,6 +33,7 @@ const lots: PurchaseLotInput[] = [
     qty_in: 10,
     unit_cost: 100,
     purchase_source: "Hall Road",
+    trader_id: "t-hall",
     received_at: ts(new Date(2026, 5, 9, 14, 30)),
   },
   {
@@ -33,6 +41,7 @@ const lots: PurchaseLotInput[] = [
     qty_in: 5,
     unit_cost: 50,
     purchase_source: "Hall Road",
+    trader_id: "t-hall",
     received_at: ts(new Date(2026, 5, 9, 16, 0)),
   },
   {
@@ -52,21 +61,25 @@ const lots: PurchaseLotInput[] = [
     qty_in: 2,
     unit_cost: 10,
     purchase_source: "Other Market",
+    trader_id: "t-other",
     received_at: ts(new Date(2026, 4, 1)),
   },
 ];
 
-const byShop = aggregatePurchasesByShop(lots);
-const hallRoad = byShop.find((r) => r.key === "Hall Road");
+const byTrader = aggregatePurchasesByTrader(lots, traders);
+const hallRoad = byTrader.find((r) => r.key === "t-hall");
 assert.ok(hallRoad);
+assert.equal(hallRoad.label, "Hall Road");
+assert.equal(hallRoad.city, "Lahore");
 assert.equal(hallRoad.totalQty, 15);
 assert.equal(hallRoad.totalValue, 1250);
 assert.equal(hallRoad.receiptCount, 2);
 
-const unspecified = byShop.find((r) => r.key === UNSPECIFIED_PURCHASE_SOURCE);
-assert.ok(unspecified);
-assert.equal(unspecified.totalQty, 3);
-assert.equal(unspecified.totalValue, 60);
+const unlinked = byTrader.find((r) => r.key === UNLINKED_TRADER_KEY);
+assert.ok(unlinked);
+assert.equal(unlinked.label, UNLINKED_TRADER_LABEL);
+assert.equal(unlinked.totalQty, 3);
+assert.equal(unlinked.totalValue, 60);
 
 const byDay = aggregatePurchasesByDay(lots);
 const june9 = byDay.find((r) => r.key === "2026-06-09");

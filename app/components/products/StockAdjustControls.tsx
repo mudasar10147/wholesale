@@ -89,7 +89,7 @@ export function StockAdjustControls({
     }
     setPending("in");
     try {
-      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice, traderName, traderId);
+      await stockIn(getDb(), productId, parsed.value, cost.value, salePrice, traderId, traderName);
       setSalePriceInput("");
     } catch (e) {
       setError(getFirestoreUserMessage(e));

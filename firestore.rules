@@ -197,8 +197,8 @@ service cloud.firestore {
             && data.purchase_source.size() > 0);
     }
     function validStockLotTraderField(data) {
-      return !('trader_id' in data)
-        || (data.trader_id is string && data.trader_id.size() > 0);
+      return data.source != 'stock_in'
+        || ('trader_id' in data && data.trader_id is string && data.trader_id.size() > 0);
     }
     function validStockLotBase(data) {
       return data.product_id is string
@@ -298,6 +298,45 @@ service cloud.firestore {
       && data.global_default_target_margin_percent >= 0
       && data.global_default_target_margin_percent < 100
       && data.category_templates is map
+      && data.updated_at is timestamp;
+    }
+    function validCustomerEngagementSettings(data) {
+      return hasOnlyKeys(data, [
+        'rolling_window_days',
+        'premium_min_orders',
+        'premium_min_spend',
+        'premium_discount_percent',
+        'silver_min_orders',
+        'silver_min_spend',
+        'silver_max_spend',
+        'silver_discount_percent',
+        'bronze_orders',
+        'bronze_max_spend',
+        'updated_at',
+      ])
+      && data.rolling_window_days is number
+      && data.rolling_window_days >= 7
+      && data.rolling_window_days <= 365
+      && data.premium_min_orders is number
+      && data.premium_min_orders >= 1
+      && data.premium_min_spend is number
+      && data.premium_min_spend >= 0
+      && data.premium_discount_percent is number
+      && data.premium_discount_percent >= 0
+      && data.premium_discount_percent <= 100
+      && data.silver_min_orders is number
+      && data.silver_min_orders >= 1
+      && data.silver_min_spend is number
+      && data.silver_min_spend >= 0
+      && data.silver_max_spend is number
+      && data.silver_max_spend > data.silver_min_spend
+      && data.silver_discount_percent is number
+      && data.silver_discount_percent >= 0
+      && data.silver_discount_percent <= 100
+      && data.bronze_orders is number
+      && data.bronze_orders >= 1
+      && data.bronze_max_spend is number
+      && data.bronze_max_spend >= 0
       && data.updated_at is timestamp;
     }
     function validCashEntryBase(data) {
@@ -608,6 +647,7 @@ service cloud.firestore {
         && (
           (docId == 'cash' && validCashSettings(request.resource.data))
           || (docId == 'pricing' && validPricingSettings(request.resource.data))
+          || (docId == 'customer_engagement' && validCustomerEngagementSettings(request.resource.data))
         );
       allow delete: if false;
     }

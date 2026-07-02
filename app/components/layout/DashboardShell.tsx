@@ -23,9 +23,9 @@ export function DashboardShell({ children }: DashboardShellProps) {
   }, [pathname]);
 
   return (
-    <div className="flex min-h-screen bg-transparent">
+    <div className="min-h-screen bg-transparent md:pl-[17rem]">
       <Sidebar />
-      <div className="relative flex min-h-screen min-w-0 flex-1 flex-col shadow-[var(--shadow-sidebar)]">
+      <div className="relative flex min-h-screen min-w-0 flex-col shadow-[var(--shadow-sidebar)]">
         <AdminClaimStatusBar />
         <MobileTopBar
           menuOpen={mobileNavOpen}

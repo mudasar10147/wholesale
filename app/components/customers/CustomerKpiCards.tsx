@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { computeCustomerEngagement } from "@/lib/customers/customerEngagement";
+import { useCustomerEngagementSettings } from "@/lib/firestore/customerEngagementSettings";
 import {
   getInvoiceAmountDue,
   getInvoiceEffectiveTotal,
@@ -16,6 +18,7 @@ function money(n: number): string {
 }
 
 export function CustomerKpiCards() {
+  const { settings } = useCustomerEngagementSettings();
   const [customers, setCustomers] = useState<Array<CustomerDoc & { id: string }>>([]);
   const [invoices, setInvoices] = useState<Array<InvoiceDoc & { id: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -58,18 +61,52 @@ export function CustomerKpiCards() {
       }
     }
 
+    const invoiceInputs = invoices
+      .filter((inv) => inv.status === "posted")
+      .map((inv) => {
+        const orderDate = inv.posted_at?.toDate() ?? inv.created_at?.toDate();
+        if (!orderDate) return null;
+        return {
+          customer_id: inv.customer_id,
+          orderDate,
+          effectiveTotal: getInvoiceEffectiveTotal(inv),
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+
+    const engagementRows = computeCustomerEngagement(
+      customers.map((c) => ({
+        id: c.id,
+        name: c.name,
+        phone: c.phone,
+        email: c.email,
+        is_active: c.is_active !== false,
+      })),
+      invoiceInputs,
+      { settings },
+    );
+
+    let premium = 0;
+    let needsFollowUp = 0;
+    for (const row of engagementRows) {
+      if (row.displaySegment === "premium") premium += 1;
+      if (row.displaySegment === "needs_follow_up") needsFollowUp += 1;
+    }
+
     return {
       activeCustomers,
       invoicedCustomers: invoicedCustomerIds.size,
       revenue,
       outstanding,
+      premium,
+      needsFollowUp,
     };
-  }, [customers, invoices]);
+  }, [customers, invoices, settings]);
 
   if (loading) {
     return (
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
           <div key={i} className="h-[104px] animate-pulse rounded-xl border border-border bg-surface-muted/40" />
         ))}
       </div>
@@ -77,8 +114,18 @@ export function CustomerKpiCards() {
   }
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <StatCard label="Active customers" value={kpis.activeCustomers.toLocaleString()} />
+      <StatCard
+        label="Premium customers"
+        value={kpis.premium.toLocaleString()}
+        hint={`${settings.premiumMinOrders}+ orders and ${settings.premiumMinSpend.toLocaleString()}+ PKR in ${settings.rollingWindowDays} days`}
+      />
+      <StatCard
+        label="Needs follow-up"
+        value={kpis.needsFollowUp.toLocaleString()}
+        hint="No order in 30+ days (previously active)"
+      />
       <StatCard
         label="Customers invoiced"
         value={kpis.invoicedCustomers.toLocaleString()}

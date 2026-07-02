@@ -149,6 +149,25 @@ export const PRICING_SETTINGS_DOC_ID = "pricing";
 export const DEFAULT_GLOBAL_TARGET_MARGIN_PERCENT = 15;
 
 /**
+ * Document shape for `settings/customer_engagement` — tier thresholds and tier discounts.
+ */
+export type CustomerEngagementSettingsDoc = {
+  rolling_window_days: number;
+  premium_min_orders: number;
+  premium_min_spend: number;
+  premium_discount_percent: number;
+  silver_min_orders: number;
+  silver_min_spend: number;
+  silver_max_spend: number;
+  silver_discount_percent: number;
+  bronze_orders: number;
+  bronze_max_spend: number;
+  updated_at: Timestamp;
+};
+
+export const CUSTOMER_ENGAGEMENT_SETTINGS_DOC_ID = "customer_engagement";
+
+/**
  * Document shape for `customers/{customerId}`.
  */
 export type CustomerDoc = {
@@ -349,9 +368,9 @@ export type StockLotDoc = {
   qty_remaining: number;
   source: StockLotSource;
   reference_id?: string;
-  /** Where this stock-in receipt was purchased (required on new stock_in). */
+  /** Denormalized trader name at receipt time (from Traders management). */
   purchase_source?: string;
-  /** Optional link to the trader (supplier) this receipt was purchased from. */
+  /** Link to `traders/{traderId}` — required on new stock-in receipts. */
   trader_id?: string;
   received_at: Timestamp;
   created_at: Timestamp;

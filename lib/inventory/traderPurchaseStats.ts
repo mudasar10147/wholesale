@@ -2,7 +2,7 @@ import type { StockLotDoc } from "@/lib/types/firestore";
 
 export type TraderLotInput = Pick<
   StockLotDoc,
-  "source" | "qty_in" | "unit_cost" | "purchase_source" | "trader_id" | "product_id"
+  "source" | "qty_in" | "unit_cost" | "trader_id" | "product_id"
 > & {
   received_at?: { toDate(): Date } | null;
 };
@@ -39,27 +39,14 @@ function toReceiptDate(lot: TraderLotInput): Date | null {
   }
 }
 
-/**
- * Whether a lot is a stock-in receipt purchased from the given trader.
- * Matches by `trader_id` when present, else falls back to the legacy
- * free-text `purchase_source` matching the trader's name (case-insensitive).
- */
-export function lotBelongsToTrader(
-  lot: TraderLotInput,
-  traderId: string,
-  traderName: string,
-): boolean {
+export function lotBelongsToTrader(lot: TraderLotInput, traderId: string): boolean {
   if (lot.source !== "stock_in") return false;
-  if (lot.trader_id) return lot.trader_id === traderId;
-  const name = traderName.trim().toLowerCase();
-  if (!name) return false;
-  return lot.purchase_source?.trim().toLowerCase() === name;
+  return lot.trader_id === traderId;
 }
 
 export function computeTraderPurchaseStats(
   lots: readonly TraderLotInput[],
   traderId: string,
-  traderName: string,
   recentLimit = 12,
 ): TraderPurchaseStats {
   let totalUnitsPurchased = 0;
@@ -68,7 +55,7 @@ export function computeTraderPurchaseStats(
   const byProductMap = new Map<string, TraderProductLine>();
 
   for (const lot of lots) {
-    if (!lotBelongsToTrader(lot, traderId, traderName)) continue;
+    if (!lotBelongsToTrader(lot, traderId)) continue;
     const qty = typeof lot.qty_in === "number" ? lot.qty_in : 0;
     const unitCost = typeof lot.unit_cost === "number" ? lot.unit_cost : 0;
     const value = qty * unitCost;

@@ -1,6 +1,11 @@
 import type { StockLotDoc } from "@/lib/types/firestore";
+import {
+  UNLINKED_TRADER_KEY,
+  UNLINKED_TRADER_LABEL,
+  type TraderLookup,
+} from "./traderLookup.ts";
 
-export const UNSPECIFIED_PURCHASE_SOURCE = "Unspecified";
+export { UNLINKED_TRADER_KEY, UNLINKED_TRADER_LABEL };
 
 export type PurchaseLotInput = Pick<
   StockLotDoc,
@@ -26,8 +31,10 @@ export type PurchaseAggregateRow = {
   totalQty: number;
   totalValue: number;
   receiptCount: number;
-  /** Set when this group is linked to a trader (clickable in the report). */
   traderId?: string;
+  contactPerson?: string;
+  phone?: string;
+  city?: string;
 };
 
 export type PurchaseReportRange = "7" | "30" | "all";
@@ -42,9 +49,28 @@ function lotPurchaseValue(lot: PurchaseLotInput): number {
   return qty * cost;
 }
 
-function purchaseSourceLabel(lot: PurchaseLotInput): string {
-  const raw = lot.purchase_source?.trim();
-  return raw || UNSPECIFIED_PURCHASE_SOURCE;
+function traderRowMeta(
+  traderId: string | undefined,
+  lookup: TraderLookup,
+): Pick<PurchaseAggregateRow, "label" | "traderId" | "contactPerson" | "phone" | "city"> {
+  if (!traderId) {
+    return { label: UNLINKED_TRADER_LABEL };
+  }
+  const entry = lookup.get(traderId);
+  if (!entry) {
+    return { label: UNLINKED_TRADER_LABEL, traderId };
+  }
+  return {
+    label: entry.name,
+    traderId,
+    contactPerson: entry.contact_person,
+    phone: entry.phone,
+    city: entry.city,
+  };
+}
+
+function traderKeyForLot(lot: PurchaseLotInput): string {
+  return lot.trader_id?.trim() || UNLINKED_TRADER_KEY;
 }
 
 function calendarDayKey(date: Date): string {
@@ -227,47 +253,40 @@ function aggregateByKey(
   return [...map.values()];
 }
 
-export function aggregatePurchasesByShop(lots: PurchaseLotInput[]): PurchaseAggregateRow[] {
-  return aggregateByKey(
-    lots,
-    (lot) => purchaseSourceLabel(lot),
-    (key) => key,
-  ).sort((a, b) => {
-    if (a.key === UNSPECIFIED_PURCHASE_SOURCE) return 1;
-    if (b.key === UNSPECIFIED_PURCHASE_SOURCE) return -1;
-    return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
-  });
-}
-
 /**
- * Group stock-in purchases by trader. Groups by purchase source name so legacy
- * free-text lots merge with newer trader-linked lots; `traderId` is attached
- * when any lot in the group is linked to a trader (making the row clickable).
+ * Group stock-in purchases by trader id from Traders management.
  */
-export function aggregatePurchasesByTrader(lots: PurchaseLotInput[]): PurchaseAggregateRow[] {
+export function aggregatePurchasesByTrader(
+  lots: PurchaseLotInput[],
+  traders: TraderLookup,
+): PurchaseAggregateRow[] {
   const map = new Map<string, PurchaseAggregateRow>();
 
   for (const lot of lots) {
     if (!isStockInLot(lot)) continue;
-    const label = purchaseSourceLabel(lot);
-    const key = label.toLowerCase();
+    const key = traderKeyForLot(lot);
+    const traderId = lot.trader_id?.trim() || undefined;
     const qty = typeof lot.qty_in === "number" ? lot.qty_in : 0;
     const value = lotPurchaseValue(lot);
-    const traderId = lot.trader_id?.trim() || undefined;
     const existing = map.get(key);
     if (existing) {
       existing.totalQty += qty;
       existing.totalValue += value;
       existing.receiptCount += 1;
-      if (!existing.traderId && traderId) existing.traderId = traderId;
     } else {
-      map.set(key, { key, label, totalQty: qty, totalValue: value, receiptCount: 1, traderId });
+      map.set(key, {
+        key,
+        ...traderRowMeta(traderId, traders),
+        totalQty: qty,
+        totalValue: value,
+        receiptCount: 1,
+      });
     }
   }
 
   return [...map.values()].sort((a, b) => {
-    if (a.label === UNSPECIFIED_PURCHASE_SOURCE) return 1;
-    if (b.label === UNSPECIFIED_PURCHASE_SOURCE) return -1;
+    if (a.key === UNLINKED_TRADER_KEY) return 1;
+    if (b.key === UNLINKED_TRADER_KEY) return -1;
     return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
   });
 }

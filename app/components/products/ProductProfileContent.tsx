@@ -13,6 +13,7 @@ import { fetchStockLotsForProduct } from "@/lib/firestore/stockLotsQuery";
 import type { SaleDocRow } from "@/lib/firestore/salesDrilldown";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 import { computeProductPurchaseStats } from "@/lib/inventory/productPurchaseStats";
+import { useTraderLookup } from "@/app/components/traders/useTraderLookup";
 import { getSignedProductImageUrl } from "@/lib/upload/productImages";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
@@ -166,6 +167,7 @@ export function ProductProfileContent() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [showLots, setShowLots] = useState(false);
+  const traderLookup = useTraderLookup();
 
   const loadProfile = useCallback(
     async (opts?: { soft?: boolean }) => {
@@ -294,7 +296,10 @@ export function ProductProfileContent() {
     };
   }, [lots, product]);
 
-  const purchaseStats = useMemo(() => computeProductPurchaseStats(lots), [lots]);
+  const purchaseStats = useMemo(
+    () => computeProductPurchaseStats(lots, traderLookup),
+    [lots, traderLookup],
+  );
 
   const marginPct = useMemo(() => {
     if (!product) return null;
@@ -490,7 +495,7 @@ export function ProductProfileContent() {
               <table className="w-full min-w-[480px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-border bg-surface-muted">
-                    <th className="px-3 py-2 font-semibold">Shop</th>
+                    <th className="px-3 py-2 font-semibold">Trader</th>
                     <th className="px-3 py-2 font-semibold">Date</th>
                     <th className="px-3 py-2 font-semibold">Qty</th>
                     <th className="px-3 py-2 font-semibold">Unit cost</th>
@@ -500,7 +505,18 @@ export function ProductProfileContent() {
                 <tbody>
                   {purchaseStats.recentReceipts.map((receipt, i) => (
                     <tr key={i} className="border-b border-border last:border-b-0">
-                      <td className="px-3 py-2 text-foreground">{receipt.source}</td>
+                      <td className="px-3 py-2 text-foreground">
+                        {receipt.traderId ? (
+                          <Link
+                            href={`/traders/${receipt.traderId}`}
+                            className="text-primary underline-offset-2 hover:underline"
+                          >
+                            {receipt.traderName}
+                          </Link>
+                        ) : (
+                          receipt.traderName
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                         {receipt.receivedAt
                           ? receipt.receivedAt.toLocaleDateString(undefined, {

@@ -12,6 +12,7 @@ import {
   updateLotAndSyncProduct,
 } from "@/lib/firestore/lotAdmin";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { traderNameForLot, type TraderLookup } from "@/lib/inventory/traderLookup";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 import {
   parseNonNegativeDecimal,
@@ -23,6 +24,7 @@ import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 import { TraderSelectInput } from "@/app/components/products/TraderSelectInput";
+import { useTraderLookup } from "@/app/components/traders/useTraderLookup";
 import { cn } from "@/lib/utils";
 
 type ProductRow = ProductDoc & { id: string };
@@ -40,7 +42,15 @@ function formatDate(ts: Timestamp) {
   }
 }
 
-function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
+function LotEditRow({
+  productId,
+  lot,
+  traderLookup,
+}: {
+  productId: string;
+  lot: LotRow;
+  traderLookup: TraderLookup;
+}) {
   const [qty, setQty] = useState(() => String(lot.qty_remaining));
   const [cost, setCost] = useState(() => String(lot.unit_cost));
   const [pending, setPending] = useState(false);
@@ -119,8 +129,8 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
         getDb(),
         productId,
         lot.id,
-        convertTraderName,
         convertTraderId,
+        convertTraderName,
       );
       setConverting(false);
       setConvertTraderId("");
@@ -138,7 +148,7 @@ function LotEditRow({ productId, lot }: { productId: string; lot: LotRow }) {
     <tr className="border-b border-border align-top">
       <td className="px-3 py-2 text-muted-foreground">{lot.source}</td>
       <td className="px-3 py-2 text-muted-foreground">
-        {lot.source === "stock_in" ? lot.purchase_source?.trim() || "—" : "—"}
+        {lot.source === "stock_in" ? traderNameForLot(lot, traderLookup) : "—"}
       </td>
       <td className="px-3 py-2 tabular-nums">{lot.qty_in}</td>
       <td className="px-3 py-2">
@@ -252,6 +262,7 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
   const [adjNote, setAdjNote] = useState("");
   const [adjPending, setAdjPending] = useState(false);
   const [adjError, setAdjError] = useState<string | null>(null);
+  const traderLookup = useTraderLookup();
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -467,7 +478,7 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
               </thead>
               <tbody>
                 {lots.map((lot) => (
-                  <LotEditRow key={lot.id} productId={row.id} lot={lot} />
+                  <LotEditRow key={lot.id} productId={row.id} lot={lot} traderLookup={traderLookup} />
                 ))}
               </tbody>
             </table>

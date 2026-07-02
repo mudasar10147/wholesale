@@ -72,9 +72,11 @@ function nextItem(seed = ""): ItemInput {
 type AddInvoiceFormProps = {
   /** When set, navigate here after a draft invoice is created (e.g. back to the sales list). */
   redirectTo?: string;
+  /** Pre-select customer when opening from customer engagement actions. */
+  initialCustomerId?: string;
 };
 
-export function AddInvoiceForm({ redirectTo }: AddInvoiceFormProps = {}) {
+export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceFormProps = {}) {
   const router = useRouter();
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
@@ -97,6 +99,12 @@ export function AddInvoiceForm({ redirectTo }: AddInvoiceFormProps = {}) {
   useEffect(() => {
     setStockGateMessage(null);
   }, [items, customerId, orderId, invoiceDiscount, deliveryCharge, notes]);
+
+  useEffect(() => {
+    if (initialCustomerId?.trim()) {
+      setCustomerId(initialCustomerId.trim());
+    }
+  }, [initialCustomerId]);
 
   useEffect(() => {
     const db = getDb();

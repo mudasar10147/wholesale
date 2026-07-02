@@ -12,6 +12,7 @@
     "test:purchase-reports": "node --experimental-strip-types lib/inventory/purchaseReports.test.ts",
     "test:product-purchase-stats": "node --experimental-strip-types lib/inventory/productPurchaseStats.test.ts",
     "test:loans": "node --experimental-strip-types lib/finance/loanBalances.test.ts",
+    "test:engagement": "node --experimental-strip-types lib/customers/customerEngagement.test.ts",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"
   },

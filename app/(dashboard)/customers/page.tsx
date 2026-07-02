@@ -1,15 +1,7 @@
 import { AddCustomerButton } from "@/app/components/customers/AddCustomerButton";
-import { CustomerCrudPanel } from "@/app/components/customers/CustomerCrudPanel";
 import { CustomerKpiCards } from "@/app/components/customers/CustomerKpiCards";
-import { CustomerLedgerTable } from "@/app/components/customers/CustomerLedgerTable";
+import { CustomerPageTabs } from "@/app/components/customers/CustomerPageTabs";
 import { PageHeader } from "@/app/components/layout/PageHeader";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/app/components/ui/Card";
 
 export default function CustomersPage() {
   return (
@@ -22,31 +14,7 @@ export default function CustomersPage() {
 
       <CustomerKpiCards />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Customer management</CardTitle>
-          <CardDescription>
-            Update customer details, archive old records, or merge duplicates into one customer
-            (moves all linked invoices and deletes the duplicate).
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <CustomerCrudPanel />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Customer ledger</CardTitle>
-          <CardDescription>
-            Revenue analytics by customer: purchased, paid/unpaid, discounts, delivery charges,
-            and net revenue contribution.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <CustomerLedgerTable />
-        </CardContent>
-      </Card>
+      <CustomerPageTabs />
     </div>
   );
 }

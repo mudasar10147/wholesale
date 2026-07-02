@@ -22,8 +22,8 @@ export default function PurchaseReportsPage() {
           <CardHeader>
             <CardTitle>Stock-in purchases</CardTitle>
             <CardDescription>
-              Aggregates stock-in lots only. Each stock-in creates one receipt with trader, quantity,
-              cost, and received date. Create traders here or from the Traders page.
+              Aggregates stock-in lots by trader from Traders management. Each receipt links to a
+              trader record with contact details.
             </CardDescription>
           </CardHeader>
           <CardContent>

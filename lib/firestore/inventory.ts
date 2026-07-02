@@ -1,6 +1,7 @@
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   increment,
   runTransaction,
@@ -13,7 +14,19 @@ import { COLLECTIONS } from "@/lib/firestore/collections";
 import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
 import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
 import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
-import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
+import type { ProductDoc, StockLotDoc, TraderDoc } from "@/lib/types/firestore";
+
+function resolveTraderId(traderId: string | undefined): string {
+  const id = traderId?.trim();
+  if (!id) {
+    throw new Error("Trader is required.");
+  }
+  return id;
+}
+
+function resolveTraderName(traderName: string): string {
+  return normalizePurchaseSource(traderName);
+}
 
 function resolveStockInUnitCost(
   product: ProductDoc | undefined,
@@ -38,12 +51,23 @@ function assertNonNegativeMoney(label: string, value: number | undefined): void 
 export function normalizePurchaseSource(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) {
-    throw new Error("Purchase source (shop) is required.");
+    throw new Error("Trader name is required.");
   }
   if (trimmed.length > 120) {
-    throw new Error("Purchase source must be 120 characters or fewer.");
+    throw new Error("Trader name must be 120 characters or fewer.");
   }
   return trimmed;
+}
+
+/** Load a trader's display name for denormalizing onto stock-in receipts. */
+export async function loadTraderNameForStockIn(db: Firestore, traderId: string): Promise<string> {
+  const resolvedId = resolveTraderId(traderId);
+  const snap = await getDoc(doc(db, COLLECTIONS.traders, resolvedId));
+  if (!snap.exists()) {
+    throw new Error("Trader not found.");
+  }
+  const trader = snap.data() as TraderDoc;
+  return resolveTraderName(trader.name);
 }
 
 /**
@@ -62,15 +86,15 @@ export function applyStockInInTransaction(
     categoryTemplates: Record<string, import("@/lib/types/firestore").CategoryMarginTemplate>;
     globalDefault: number;
   } | undefined,
-  purchaseSource: string,
-  traderId?: string,
+  traderId: string,
+  traderName: string,
 ): void {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
   }
   assertNonNegativeMoney("Sale price", salePrice);
-  const resolvedPurchaseSource = normalizePurchaseSource(purchaseSource);
-  const resolvedTraderId = traderId?.trim() || undefined;
+  const resolvedTraderId = resolveTraderId(traderId);
+  const resolvedPurchaseSource = resolveTraderName(traderName);
   const resolvedUnitCost = resolveStockInUnitCost(product, unitCost);
 
   const patch: {
@@ -101,7 +125,7 @@ export function applyStockInInTransaction(
     qty_remaining: quantity,
     source: "stock_in",
     purchase_source: resolvedPurchaseSource,
-    ...(resolvedTraderId ? { trader_id: resolvedTraderId } : {}),
+    trader_id: resolvedTraderId,
     received_at: serverTimestamp(),
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
@@ -123,8 +147,8 @@ export async function stockIn(
   quantity: number,
   unitCost: number | undefined,
   salePrice: number | undefined,
-  purchaseSource: string,
-  traderId?: string,
+  traderId: string,
+  traderName: string,
 ): Promise<void> {
   const settings = await loadPricingSettings(db);
   const ref = doc(db, COLLECTIONS.products, productId);
@@ -147,8 +171,8 @@ export async function stockIn(
         categoryTemplates: settings.categoryTemplates,
         globalDefault: settings.globalDefaultTargetMarginPercent,
       },
-      purchaseSource,
       traderId,
+      traderName,
     );
   });
 }

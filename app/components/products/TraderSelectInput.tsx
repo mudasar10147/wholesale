@@ -52,31 +52,36 @@ export function TraderSelectInput({
   }, [traders]);
 
   return (
-    <div className="flex gap-2">
-      <Select
-        id={id}
-        value={value}
-        disabled={disabled}
-        aria-invalid={ariaInvalid}
-        aria-describedby={ariaDescribedBy}
-        onChange={(e) => onChange(e.target.value, nameById.get(e.target.value) ?? "")}
-      >
-        <option value="">Select trader…</option>
-        {traders.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </Select>
-      <Button
-        type="button"
-        variant="outline"
-        className="shrink-0"
-        disabled={disabled}
-        onClick={() => setShowModal(true)}
-      >
-        New
-      </Button>
+    <div className="space-y-1.5">
+      <div className="flex gap-2">
+        <Select
+          id={id}
+          value={value}
+          disabled={disabled}
+          aria-invalid={ariaInvalid}
+          aria-describedby={ariaDescribedBy}
+          onChange={(e) => onChange(e.target.value, nameById.get(e.target.value) ?? "")}
+        >
+          <option value="">Select trader…</option>
+          {traders.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </Select>
+        <Button
+          type="button"
+          variant="outline"
+          className="shrink-0"
+          disabled={disabled}
+          onClick={() => setShowModal(true)}
+        >
+          New
+        </Button>
+      </div>
+      {traders.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No traders yet. Add one from the Traders page.</p>
+      ) : null}
 
       {showModal ? (
         <AddTraderModal

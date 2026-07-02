@@ -81,8 +81,8 @@ export function TraderProfileContent() {
   }, []);
 
   const stats = useMemo(
-    () => computeTraderPurchaseStats(lots, traderId, trader?.name ?? ""),
-    [lots, traderId, trader?.name],
+    () => computeTraderPurchaseStats(lots, traderId),
+    [lots, traderId],
   );
 
   if (traderLoading) {

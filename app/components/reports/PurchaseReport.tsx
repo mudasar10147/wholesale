@@ -16,6 +16,7 @@ import {
   type PurchaseReportRange,
 } from "@/lib/inventory/purchaseReports";
 import type { StockLotDoc } from "@/lib/types/firestore";
+import { useTraderLookup } from "@/app/components/traders/useTraderLookup";
 import { AddTraderModal } from "@/app/components/traders/AddTraderModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -41,11 +42,10 @@ const PERIOD_OPTIONS: { value: PeriodGrouping; label: string }[] = [
   { value: "month", label: "By month" },
 ];
 
-function AggregateTable({
+function TraderAggregateTable({
   title,
   rows,
   emptyMessage,
-  firstColHeader = "Name",
   titleRight,
 }: {
   title: string;
@@ -56,9 +56,81 @@ function AggregateTable({
     totalValue: number;
     receiptCount: number;
     traderId?: string;
+    contactPerson?: string;
+    phone?: string;
+    city?: string;
   }>;
   emptyMessage: string;
-  firstColHeader?: string;
+  titleRight?: ReactNode;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        {titleRight}
+      </div>
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <thead>
+              <tr className="border-b border-border bg-surface-muted">
+                <th className="px-3 py-2 font-semibold">Trader</th>
+                <th className="px-3 py-2 font-semibold">Contact</th>
+                <th className="px-3 py-2 font-semibold">City</th>
+                <th className="px-3 py-2 font-semibold text-right">Units</th>
+                <th className="px-3 py-2 font-semibold text-right">Value</th>
+                <th className="px-3 py-2 font-semibold text-right">Receipts</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.key} className="border-b border-border last:border-b-0">
+                  <td className="px-3 py-2 text-foreground">
+                    {row.traderId ? (
+                      <Link
+                        href={`/traders/${row.traderId}`}
+                        className="font-medium text-primary underline-offset-2 hover:underline"
+                      >
+                        {row.label}
+                      </Link>
+                    ) : (
+                      row.label
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">
+                    {row.contactPerson || row.phone || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">{row.city || "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{row.totalQty.toLocaleString()}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{money(row.totalValue)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">{row.receiptCount.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PeriodAggregateTable({
+  title,
+  rows,
+  emptyMessage,
+  titleRight,
+}: {
+  title: string;
+  rows: Array<{
+    key: string;
+    label: string;
+    totalQty: number;
+    totalValue: number;
+    receiptCount: number;
+  }>;
+  emptyMessage: string;
   titleRight?: ReactNode;
 }) {
   return (
@@ -74,7 +146,7 @@ function AggregateTable({
           <table className="w-full min-w-[480px] border-collapse text-left text-sm">
             <thead>
               <tr className="border-b border-border bg-surface-muted">
-                <th className="px-3 py-2 font-semibold">{firstColHeader}</th>
+                <th className="px-3 py-2 font-semibold">Period</th>
                 <th className="px-3 py-2 font-semibold text-right">Units</th>
                 <th className="px-3 py-2 font-semibold text-right">Value</th>
                 <th className="px-3 py-2 font-semibold text-right">Receipts</th>
@@ -83,18 +155,7 @@ function AggregateTable({
             <tbody>
               {rows.map((row) => (
                 <tr key={row.key} className="border-b border-border last:border-b-0">
-                  <td className="px-3 py-2 text-foreground">
-                    {row.traderId ? (
-                      <Link
-                        href={`/traders/${row.traderId}`}
-                        className="text-primary underline-offset-2 hover:underline"
-                      >
-                        {row.label}
-                      </Link>
-                    ) : (
-                      row.label
-                    )}
-                  </td>
+                  <td className="px-3 py-2 text-foreground">{row.label}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{row.totalQty.toLocaleString()}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{money(row.totalValue)}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{row.receiptCount.toLocaleString()}</td>
@@ -109,6 +170,7 @@ function AggregateTable({
 }
 
 export function PurchaseReport() {
+  const traderLookup = useTraderLookup();
   const [lots, setLots] = useState<LotRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +203,10 @@ export function PurchaseReport() {
   );
 
   const kpis = useMemo(() => computePurchaseKpis(filteredLots), [filteredLots]);
-  const byTrader = useMemo(() => aggregatePurchasesByTrader(filteredLots), [filteredLots]);
+  const byTrader = useMemo(
+    () => aggregatePurchasesByTrader(filteredLots, traderLookup),
+    [filteredLots, traderLookup],
+  );
   const byPeriod = useMemo(() => {
     if (period === "week") return aggregatePurchasesByWeek(filteredLots);
     if (period === "month") return aggregatePurchasesByMonth(filteredLots);
@@ -171,7 +236,7 @@ export function PurchaseReport() {
             href="/traders"
             className="text-sm font-medium text-primary underline-offset-2 hover:underline"
           >
-            View all traders
+            Manage traders
           </Link>
         </div>
         <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-surface-muted p-1">
@@ -194,8 +259,8 @@ export function PurchaseReport() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Stock-in receipts only. Time grouping uses each lot&apos;s received timestamp in your local
-        timezone (weeks run Monday–Sunday).
+        Stock-in receipts grouped by traders from Traders management. Time grouping uses each
+        lot&apos;s received timestamp in your local timezone (weeks run Monday–Sunday).
       </p>
 
       {showTraderModal ? (
@@ -221,15 +286,14 @@ export function PurchaseReport() {
         </div>
       </div>
 
-      <AggregateTable
+      <TraderAggregateTable
         title="By trader"
         rows={byTrader}
         emptyMessage="No stock-in receipts in this period."
       />
 
-      <AggregateTable
+      <PeriodAggregateTable
         title="Over time"
-        firstColHeader="Period"
         rows={byPeriod}
         emptyMessage="No stock-in receipts in this period."
         titleRight={
