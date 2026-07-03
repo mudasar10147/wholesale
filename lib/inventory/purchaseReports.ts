@@ -3,7 +3,7 @@ import {
   UNLINKED_TRADER_KEY,
   UNLINKED_TRADER_LABEL,
   type TraderLookup,
-} from "./traderLookup.ts";
+} from "./traderLookup";
 
 export { UNLINKED_TRADER_KEY, UNLINKED_TRADER_LABEL };
 

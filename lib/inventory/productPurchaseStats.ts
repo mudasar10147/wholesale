@@ -1,5 +1,5 @@
 import type { StockLotDoc } from "@/lib/types/firestore";
-import { traderNameForLot, type TraderLookup } from "./traderLookup.ts";
+import { traderNameForLot, type TraderLookup } from "./traderLookup";
 
 export type ProductPurchaseLotInput = Pick<
   StockLotDoc,

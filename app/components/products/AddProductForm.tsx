@@ -154,7 +154,6 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
       setSalePrice("");
       setStockQuantity("");
       setTraderId("");
-      setTraderName("");
       setSuccess(true);
       onCreated?.();
     } catch (err) {

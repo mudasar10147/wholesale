@@ -1,31 +1,36 @@
 import type { InvoiceDoc } from "@/lib/types/firestore";
 
+export type InvoiceBalanceFields = Pick<
+  InvoiceDoc,
+  "total_amount" | "paid_amount" | "posted_total_amount" | "returned_amount"
+>;
+
 function roundMoney2(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.round(n * 100) / 100;
 }
 
-export function getInvoicePostedTotal(invoice: InvoiceDoc): number {
+export function getInvoicePostedTotal(invoice: InvoiceBalanceFields): number {
   return roundMoney2(
     typeof invoice.posted_total_amount === "number" ? invoice.posted_total_amount : invoice.total_amount,
   );
 }
 
-export function getInvoiceReturnedAmount(invoice: InvoiceDoc): number {
+export function getInvoiceReturnedAmount(invoice: InvoiceBalanceFields): number {
   return roundMoney2(typeof invoice.returned_amount === "number" ? invoice.returned_amount : 0);
 }
 
-export function getInvoiceEffectiveTotal(invoice: InvoiceDoc): number {
+export function getInvoiceEffectiveTotal(invoice: InvoiceBalanceFields): number {
   return roundMoney2(Math.max(0, getInvoicePostedTotal(invoice) - getInvoiceReturnedAmount(invoice)));
 }
 
-export function getInvoicePaidAmount(invoice: InvoiceDoc): number {
+export function getInvoicePaidAmount(invoice: InvoiceBalanceFields): number {
   const paid = roundMoney2(typeof invoice.paid_amount === "number" ? invoice.paid_amount : 0);
   const effective = getInvoiceEffectiveTotal(invoice);
   return roundMoney2(Math.min(Math.max(0, paid), effective));
 }
 
-export function getInvoiceAmountDue(invoice: InvoiceDoc): number {
+export function getInvoiceAmountDue(invoice: InvoiceBalanceFields): number {
   return roundMoney2(Math.max(0, getInvoiceEffectiveTotal(invoice) - getInvoicePaidAmount(invoice)));
 }
 
@@ -72,7 +77,7 @@ export function getInvoiceLineReturnBreakdown(
 }
 
 export function derivePaymentStatus(
-  invoice: InvoiceDoc,
+  invoice: InvoiceBalanceFields,
   paidAmount: number,
 ): "unpaid" | "partial" | "paid" {
   const effective = getInvoiceEffectiveTotal(invoice);

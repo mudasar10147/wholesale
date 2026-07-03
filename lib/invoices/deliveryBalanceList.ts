@@ -3,7 +3,7 @@ import {
   getInvoiceAmountDue,
   getInvoiceEffectiveTotal,
   getInvoicePaidAmount,
-} from "./invoiceEffective.ts";
+} from "./invoiceEffective";
 
 export type DeliveryBalanceInvoiceInput = Pick<
   InvoiceDoc,

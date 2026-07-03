@@ -1,5 +1,5 @@
-import type { CustomerEngagementTierSettings } from "./customerEngagementConfig.ts";
-import { defaultCustomerEngagementTierSettings } from "./customerEngagementConfig.ts";
+import type { CustomerEngagementTierSettings } from "./customerEngagementConfig";
+import { defaultCustomerEngagementTierSettings } from "./customerEngagementConfig";
 
 export type CustomerEngagementTier = "premium" | "silver" | "bronze" | "none";
 
