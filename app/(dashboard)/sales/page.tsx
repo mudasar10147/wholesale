@@ -1,7 +1,7 @@
 import { InvoiceDraftList } from "@/app/components/invoices/InvoiceDraftList";
+import { SalesPageHeaderActions } from "@/app/components/invoices/SalesPageHeaderActions";
 import { ReturnList } from "@/app/components/invoices/ReturnList";
 import { PageHeader } from "@/app/components/layout/PageHeader";
-import { ButtonLink } from "@/app/components/ui/Button";
 import {
   Card,
   CardContent,
@@ -16,11 +16,7 @@ export default function SalesPage() {
       <PageHeader
         title="Sales"
         description="Create draft invoices, then post them to finalize sales and decrement stock from invoice items."
-        action={
-          <ButtonLink href="/sales/new" variant="primary">
-            Create New Invoice
-          </ButtonLink>
-        }
+        action={<SalesPageHeaderActions />}
       />
 
       <Card>

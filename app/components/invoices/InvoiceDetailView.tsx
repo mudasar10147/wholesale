@@ -9,7 +9,7 @@ import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { deleteDraftInvoice, postInvoice, recordInvoicePayment, voidInvoice } from "@/lib/firestore/invoices";
+import { deleteDraftInvoice, postInvoice, recordInvoicePayment, updatePostedInvoiceDiscount, voidInvoice } from "@/lib/firestore/invoices";
 import { formatInvoiceVoidBlockedMessage } from "@/lib/firestore/invoiceReturns";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
 import { listStockShortfallsForDraft } from "@/lib/invoices/draftStockGate";
@@ -36,6 +36,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/app/components/ui/Card";
+import { ApplyPostedInvoiceDiscountModal } from "@/app/components/invoices/ApplyPostedInvoiceDiscountModal";
 import { EditDraftInvoiceForm } from "@/app/components/invoices/EditDraftInvoiceForm";
 import { RecordInvoicePaymentModal } from "@/app/components/invoices/RecordInvoicePaymentModal";
 import { countDraftReturns, InvoiceReturnLinks } from "@/app/components/invoices/ReturnList";
@@ -97,6 +98,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
   const [linkedReturns, setLinkedReturns] = useState<Array<{ id: string; data: InvoiceReturnDoc }>>([]);
   const [returnLineItems, setReturnLineItems] = useState<Array<{ id: string; data: InvoiceReturnItemDoc }>>([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
 
   useEffect(() => {
     if (!invoiceId) {
@@ -566,15 +568,27 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             </Button>
           ) : null}
           {isPosted && isAdmin ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={working !== null || editing || isFullyPaid}
-              onClick={() => setShowPaymentModal(true)}
-            >
-              {isFullyPaid ? "Paid" : unpaidAmount > 0.01 ? `Record payment (${formatMoney(unpaidAmount)} due)` : "Record payment"}
-            </Button>
+            <>
+              <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={working !== null || editing}
+                onClick={() => setShowDiscountModal(true)}
+              >
+                Apply discount
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={working !== null || editing || isFullyPaid}
+                onClick={() => setShowPaymentModal(true)}
+              >
+                {isFullyPaid ? "Paid" : unpaidAmount > 0.01 ? `Record payment (${formatMoney(unpaidAmount)} due)` : "Record payment"}
+              </Button>
+            </>
           ) : null}
           {(isDraft || isPosted) && isAdmin ? (
             <Button
@@ -896,6 +910,34 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           {plainText}
         </pre>
       </div>
+
+      {showDiscountModal && isPosted ? (
+        <ApplyPostedInvoiceDiscountModal
+          orderId={invoice.order_id}
+          subtotalAmount={invoice.subtotal_amount}
+          deliveryCharge={invoice.delivery_charge}
+          currentDiscount={invoice.discount_amount}
+          currentTotal={postedTotal}
+          returnedAmount={returnedAmount}
+          paidAmount={paidAmount}
+          amountDue={unpaidAmount}
+          pending={working === "apply-discount"}
+          onDismiss={() => setShowDiscountModal(false)}
+          onSubmit={async (discountAmount) => {
+            setActionError(null);
+            setWorking("apply-discount");
+            try {
+              await updatePostedInvoiceDiscount(getDb(), invoice.id, discountAmount);
+              setShowDiscountModal(false);
+            } catch (err) {
+              logFirestoreError("invoice apply discount", err);
+              throw err;
+            } finally {
+              setWorking(null);
+            }
+          }}
+        />
+      ) : null}
 
       {showPaymentModal && isPosted ? (
         <RecordInvoicePaymentModal

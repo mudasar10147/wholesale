@@ -392,6 +392,48 @@ service cloud.firestore {
           )
         );
     }
+    function invoicePostedDiscountUpdateOnly(res, req) {
+      return res.status == 'posted'
+        && req.status == 'posted'
+        && req.stock_reversal_applied == false
+        && postedAtUnchanged(res, req)
+        && voidedAtUnchanged(res, req)
+        && req.customer_id == res.customer_id
+        && req.order_id == res.order_id
+        && req.item_ids == res.item_ids
+        && req.subtotal_amount == res.subtotal_amount
+        && req.delivery_charge == res.delivery_charge
+        && req.posted_subtotal_amount == res.posted_subtotal_amount
+        && req.posted_delivery_charge == res.posted_delivery_charge
+        && req.posted_cogs_amount == res.posted_cogs_amount
+        && req.discount_amount is number
+        && req.discount_amount >= 0
+        && req.discount_amount <= req.subtotal_amount
+        && approxHeaderMoneyEq(
+          req.total_amount,
+          req.subtotal_amount - req.discount_amount + req.delivery_charge
+        )
+        && approxHeaderMoneyEq(req.posted_discount_amount, req.discount_amount)
+        && approxHeaderMoneyEq(req.posted_total_amount, req.total_amount)
+        && req.payment_status in ['unpaid', 'partial', 'paid']
+        && req.paid_amount is number
+        && req.paid_amount >= 0
+        && req.paid_amount <= req.posted_total_amount
+        && req.paid_amount <= res.paid_amount
+        && (
+          (!('returned_amount' in res) && !('returned_amount' in req))
+          || (
+            ('returned_amount' in res)
+            && ('returned_amount' in req)
+            && req.returned_amount == res.returned_amount
+            && req.posted_total_amount >= req.returned_amount - 100.0
+          )
+        )
+        && (
+          !('return_ids' in res) && (!('return_ids' in req) || req.return_ids is list)
+          || req.return_ids == res.return_ids
+        );
+    }
     function invoiceReturnPostedAtUnchanged(res, req) {
       return (!('posted_at' in res) && !('posted_at' in req)) || req.posted_at == res.posted_at;
     }
@@ -743,6 +785,9 @@ service cloud.firestore {
             )
             || (
               invoicePostedPaymentUpdateOnly(resource.data, request.resource.data)
+            )
+            || (
+              invoicePostedDiscountUpdateOnly(resource.data, request.resource.data)
             )
             || (
               invoicePostedReturnAdjustmentOnly(resource.data, request.resource.data)

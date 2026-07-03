@@ -20,6 +20,7 @@ import {
   getInvoiceAmountDue,
   getInvoiceEffectiveTotal,
   getInvoicePaidAmount,
+  getInvoiceReturnedAmount,
 } from "@/lib/invoices/invoiceEffective";
 import {
   formatInvoiceVoidBlockedMessage,
@@ -1013,6 +1014,77 @@ export async function recordInvoicePayment(
     tx.update(invoiceRef, {
       paid_amount: nextPaid,
       payment_status: derivePaymentStatus(invoice, nextPaid),
+      updated_at: serverTimestamp(),
+    });
+  });
+}
+
+export async function updatePostedInvoiceDiscount(
+  db: Firestore,
+  invoiceId: string,
+  discountAmount: number,
+): Promise<void> {
+  const trimmedId = invoiceId.trim().toUpperCase();
+  if (!trimmedId) {
+    throw new Error("Invoice ID is required.");
+  }
+
+  const discount = roundMoney2(discountAmount);
+  if (!Number.isFinite(discount) || discount < 0) {
+    throw new Error("Invoice discount must be zero or greater.");
+  }
+
+  const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(invoiceRef);
+    if (!snap.exists()) {
+      throw new Error("Invoice not found.");
+    }
+    const invoice = snap.data() as InvoiceDoc | undefined;
+    if (!invoice) {
+      throw new Error("Invoice not found.");
+    }
+    if (invoice.status !== "posted") {
+      throw new Error("Only posted invoices can receive a discount adjustment.");
+    }
+    if (invoice.stock_reversal_applied) {
+      throw new Error("Cannot adjust discount on a voided invoice.");
+    }
+
+    const subtotal = roundMoney2(invoice.subtotal_amount);
+    const delivery = roundMoney2(invoice.delivery_charge);
+    if (discount > subtotal + 0.01) {
+      throw new Error("Invoice discount cannot exceed subtotal.");
+    }
+
+    const total = roundMoney2(Math.max(0, subtotal - discount + delivery));
+    const returned = getInvoiceReturnedAmount(invoice);
+    if (returned > total + 0.01) {
+      throw new Error(
+        "Discount is too large — the new total would be less than returns already posted on this invoice.",
+      );
+    }
+
+    const updatedInvoice: InvoiceDoc = {
+      ...invoice,
+      discount_amount: discount,
+      total_amount: total,
+      posted_discount_amount: discount,
+      posted_total_amount: total,
+    };
+    const effectiveTotal = getInvoiceEffectiveTotal(updatedInvoice);
+    let paid = getInvoicePaidAmount(invoice);
+    if (paid > effectiveTotal + 0.01) {
+      paid = effectiveTotal;
+    }
+
+    tx.update(invoiceRef, {
+      discount_amount: discount,
+      total_amount: total,
+      posted_discount_amount: discount,
+      posted_total_amount: total,
+      paid_amount: paid,
+      payment_status: derivePaymentStatus(updatedInvoice, paid),
       updated_at: serverTimestamp(),
     });
   });
