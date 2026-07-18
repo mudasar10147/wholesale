@@ -7,11 +7,19 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { updateDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
+import { useInvoiceReturnLines, type ReturnLineDraft } from "@/app/components/invoices/useInvoiceReturnLines";
+import { InvoiceReturnLinesSection } from "@/app/components/invoices/InvoiceReturnLinesSection";
 import {
   buildPosReceiptInputFromCalc,
   printPosReceipt,
 } from "@/lib/invoices/posReceiptPdf";
-import type { CustomerDoc, InvoiceItemDoc, ProductDoc } from "@/lib/types/firestore";
+import type {
+  CustomerDoc,
+  InvoiceItemDoc,
+  InvoiceReturnLineEmbedded,
+  ProductDoc,
+} from "@/lib/types/firestore";
 import {
   parseNonNegativeDecimal,
   parsePositiveIntStrict,
@@ -66,6 +74,8 @@ type Props = {
   initialDelivery: string;
   initialNotes: string;
   initialLines: Array<Pick<InvoiceItemDoc, "product_id" | "quantity" | "unit_price" | "line_discount">>;
+  /** Existing inline return lines on the draft, so editing doesn't wipe them. */
+  initialReturnLines?: InvoiceReturnLineEmbedded[];
   onSaved: () => void;
   onCancel: () => void;
   /** Called after save when POS print succeeds or fails (or skipped) */
@@ -81,6 +91,7 @@ export function EditDraftInvoiceForm({
   initialDelivery,
   initialNotes,
   initialLines,
+  initialReturnLines,
   onSaved,
   onCancel,
   onReceiptPrintResult,
@@ -109,6 +120,20 @@ export function EditDraftInvoiceForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stockGateMessage, setStockGateMessage] = useState<string | null>(null);
+
+  const productNameById = useMemo(
+    () => new Map(products.map((p) => [p.id, p.name] as const)),
+    [products],
+  );
+  const [initialReturnRows] = useState<ReturnLineDraft[]>(() =>
+    (initialReturnLines ?? []).map((rl) => ({
+      id: crypto.randomUUID(),
+      purchaseLineId: rl.original_invoice_item_id,
+      quantity: String(rl.quantity_returned),
+      mode: rl.quantity_discard >= rl.quantity_returned && rl.quantity_returned > 0 ? "discard" : "restock",
+    })),
+  );
+  const returnLines = useInvoiceReturnLines(customerId, initialReturnRows);
 
   useEffect(() => {
     setStockGateMessage(null);
@@ -289,6 +314,11 @@ export function EditDraftInvoiceForm({
       return;
     }
 
+    if (returnLines.resolved.hasInvalid) {
+      setError("Check the return lines: pick a purchase and a quantity within what's returnable.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       await updateDraftInvoice(
@@ -301,6 +331,7 @@ export function EditDraftInvoiceForm({
           delivery_charge: delivery.value,
           notes,
           lines: linePayload,
+          return_lines: returnLines.resolved.inputs,
         },
         { allowInsufficientStockForDraft },
       );
@@ -327,6 +358,13 @@ export function EditDraftInvoiceForm({
               created_at_label: invoiceCreatedAtLabel,
               calc,
               productNames,
+              returnLines: returnLines.resolved.display.map((d) => ({
+                product_name: productNames.get(d.productId) ?? d.productId,
+                quantity: d.quantity,
+                unit_price: d.unitPrice,
+                line_total: d.lineTotal,
+                mode: d.mode,
+              })),
             }),
           );
           onReceiptPrintResult?.({ ok: true });
@@ -390,6 +428,18 @@ export function EditDraftInvoiceForm({
         <div className="flex items-center justify-between">
           <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Items</h4>
         </div>
+
+        <InvoiceReturnLinesSection
+          purchaseLines={returnLines.purchaseLines}
+          rows={returnLines.rows}
+          updateRow={returnLines.updateRow}
+          removeRow={returnLines.removeRow}
+          loading={returnLines.loading}
+          error={returnLines.error}
+          productNameById={productNameById}
+          disabled={submitting}
+        />
+
         <div className="space-y-3">
           {items.map((line) => {
             const selected = products.find((p) => p.id === line.productId);
@@ -469,9 +519,32 @@ export function EditDraftInvoiceForm({
             );
           })}
         </div>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {customerId ? null : (
+            <span className="mr-auto text-xs text-muted-foreground">
+              Pick a customer to return or discard items.
+            </span>
+          )}
           <Button type="button" variant="outline" onClick={addLine} disabled={submitting} className="text-xs">
             Add line
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="text-xs"
+            onClick={returnLines.addReturn}
+            disabled={submitting || !customerId}
+          >
+            Return
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="text-xs"
+            onClick={returnLines.addDiscard}
+            disabled={submitting || !customerId}
+          >
+            Discard
           </Button>
         </div>
       </div>
@@ -526,6 +599,30 @@ export function EditDraftInvoiceForm({
               Total: <strong className="text-foreground">{money(calcPreview.total_amount)}</strong>
             </span>
           </div>
+          {returnLines.resolved.creditTotal > 0
+            ? (() => {
+                const counter = calculateCounterSaleSummary(calcPreview.total_amount, [
+                  { line_total: returnLines.resolved.creditTotal },
+                ]);
+                return (
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-1">
+                    <span>
+                      Returns credit:{" "}
+                      <strong className="text-foreground">−{money(counter.returns_credit_amount)}</strong>
+                    </span>
+                    <span>
+                      Net due: <strong className="text-foreground">{money(counter.net_amount_due)}</strong>
+                    </span>
+                    {counter.cash_refund_amount > 0 ? (
+                      <span>
+                        Cash refund:{" "}
+                        <strong className="text-foreground">{money(counter.cash_refund_amount)}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })()
+            : null}
         </div>
       ) : null}
 

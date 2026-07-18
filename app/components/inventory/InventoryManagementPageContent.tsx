@@ -15,8 +15,9 @@ import {
 import type { ProductDoc } from "@/lib/types/firestore";
 import { DiscardInventoryForm } from "@/app/components/inventory/DiscardInventoryForm";
 import { InventoryDiscardList } from "@/app/components/inventory/InventoryDiscardList";
+import { InventoryHealthDashboard } from "@/app/components/inventory/InventoryHealthDashboard";
+import { InventoryMovementLog } from "@/app/components/inventory/InventoryMovementLog";
 import { InventoryStockOperationsTab } from "@/app/components/inventory/InventoryStockOperationsTab";
-import { PricingMarginPageContent } from "@/app/components/pricing/PricingMarginPageContent";
 import { ProductStockInSummary } from "@/app/components/products/ProductStockInSummary";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { StatCard } from "@/app/components/ui/StatCard";
@@ -29,9 +30,9 @@ import {
 } from "@/app/components/ui/Card";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "stock" | "discard" | "pricing";
+type Tab = "overview" | "stock" | "discard";
 
-const TAB_IDS: readonly Tab[] = ["overview", "stock", "discard", "pricing"];
+const TAB_IDS: readonly Tab[] = ["overview", "stock", "discard"];
 
 function formatMoney(n: number) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -91,7 +92,6 @@ export function InventoryManagementPageContent() {
       stock_quantity: row.stock_quantity,
       cost_price: row.cost_price,
       sale_price: row.sale_price,
-      pricing_mode: row.pricing_mode,
     }));
     const lowStockCount = filterLowStockProducts(
       lowStockInputs,
@@ -127,7 +127,6 @@ export function InventoryManagementPageContent() {
     { id: "overview", label: "Overview" },
     { id: "stock", label: "Stock" },
     { id: "discard", label: "Discard" },
-    { id: "pricing", label: "Pricing" },
   ];
 
   return (
@@ -180,6 +179,20 @@ export function InventoryManagementPageContent() {
           </div>
 
           <ProductStockInSummary />
+
+          <InventoryHealthDashboard />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Inventory movements</CardTitle>
+              <CardDescription>
+                Audited transactions from stock in/out, adjustments, and invoices (go-forward).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <InventoryMovementLog />
+            </CardContent>
+          </Card>
 
           <Card>
             <CardHeader>
@@ -234,7 +247,6 @@ export function InventoryManagementPageContent() {
         </div>
       ) : null}
 
-      {activeTab === "pricing" ? <PricingMarginPageContent /> : null}
     </div>
   );
 }

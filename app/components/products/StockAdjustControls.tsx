@@ -21,7 +21,6 @@ type StockAdjustControlsProps = {
   currentStock: number;
   /** Shown as default for the unit cost field; updates when the product row updates. */
   defaultUnitCost: number;
-  pricingMode?: "manual" | "automatic";
 };
 
 function defaultCostInputString(n: number): string {
@@ -33,7 +32,6 @@ export function StockAdjustControls({
   productId,
   currentStock,
   defaultUnitCost,
-  pricingMode = "manual",
 }: StockAdjustControlsProps) {
   const [qty, setQty] = useState("1");
   const [unitCost, setUnitCost] = useState(() => defaultCostInputString(defaultUnitCost));
@@ -142,7 +140,7 @@ export function StockAdjustControls({
         />
       </div>
 
-      <div className={cn("grid gap-3", pricingMode !== "automatic" ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+      <div className="grid gap-3 sm:grid-cols-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={qtyId}>Quantity</Label>
           <Input
@@ -170,28 +168,25 @@ export function StockAdjustControls({
             aria-label="Purchase unit cost for stock in"
           />
         </div>
-        {pricingMode !== "automatic" ? (
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor={saleId}>Sale price</Label>
-            <Input
-              id={saleId}
-              className="h-10 tabular-nums"
-              inputMode="decimal"
-              min={0}
-              step="any"
-              value={salePriceInput}
-              onChange={(e) => setSalePriceInput(e.target.value)}
-              placeholder="Optional"
-              aria-label="Optional new sale price for stock in"
-            />
-          </div>
-        ) : null}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={saleId}>Sale price</Label>
+          <Input
+            id={saleId}
+            className="h-10 tabular-nums"
+            inputMode="decimal"
+            min={0}
+            step="any"
+            value={salePriceInput}
+            onChange={(e) => setSalePriceInput(e.target.value)}
+            placeholder="Optional"
+            aria-label="Optional new sale price for stock in"
+          />
+        </div>
       </div>
 
       <p className="text-xs leading-snug text-muted-foreground">
-        {pricingMode === "automatic"
-          ? "Receipt cost feeds FIFO lots; list sale price recalculates from target margin after stock in."
-          : "Receipt cost feeds FIFO lots. Quantity and cost are required for stock in; sale price is optional and updates the product list price immediately (not per lot)."}
+        Receipt cost feeds FIFO lots. Quantity and cost are required for stock in; sale price is
+        optional and updates the product list price immediately (not per lot).
       </p>
 
       {error ? (

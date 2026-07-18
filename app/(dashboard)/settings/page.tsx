@@ -1,6 +1,7 @@
 import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import { CustomerEngagementSettingsForm } from "@/app/components/settings/CustomerEngagementSettingsForm";
+import { NewArrivalSettingsForm } from "@/app/components/settings/NewArrivalSettingsForm";
 import {
   Card,
   CardContent,
@@ -15,8 +16,22 @@ export default function SettingsPage() {
       <div className="space-y-10">
         <PageHeader
           title="Settings"
-          description="Configure business rules used across the app. Changes apply to customer engagement tiers on the Customers page."
+          description="Configure business rules used across the app — the new arrival window and customer engagement tiers."
         />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>New arrivals</CardTitle>
+            <CardDescription>
+              Set how long a newly created product is flagged as a new arrival. The “New” tag
+              shows across products, inventory and the social planner while a product is inside
+              this window.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <NewArrivalSettingsForm />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

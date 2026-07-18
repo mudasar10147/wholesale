@@ -9,6 +9,9 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { createDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
+import { useInvoiceReturnLines } from "@/app/components/invoices/useInvoiceReturnLines";
+import { InvoiceReturnLinesSection } from "@/app/components/invoices/InvoiceReturnLinesSection";
 import {
   buildPosReceiptInputFromCalc,
   printPosReceipt,
@@ -95,6 +98,12 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
   const [success, setSuccess] = useState<string | null>(null);
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
   const [stockGateMessage, setStockGateMessage] = useState<string | null>(null);
+
+  const productNameById = useMemo(
+    () => new Map(products.map((p) => [p.id, p.name] as const)),
+    [products],
+  );
+  const returnLines = useInvoiceReturnLines(customerId);
 
   useEffect(() => {
     setStockGateMessage(null);
@@ -286,6 +295,11 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
       return;
     }
 
+    if (returnLines.resolved.hasInvalid) {
+      setError("Check the return lines: pick a purchase and a quantity within what's returnable.");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const calc = calculateInvoiceSummary({
@@ -302,6 +316,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
           delivery_charge: delivery.value,
           notes,
           lines: linePayload,
+          return_lines: returnLines.resolved.inputs,
         },
         { allowInsufficientStockForDraft },
       );
@@ -327,6 +342,13 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
               created_at_label: createdAtLabel,
               calc,
               productNames,
+              returnLines: returnLines.resolved.display.map((d) => ({
+                product_name: productNames.get(d.productId) ?? d.productId,
+                quantity: d.quantity,
+                unit_price: d.unitPrice,
+                line_total: d.lineTotal,
+                mode: d.mode,
+              })),
             }),
           );
         } catch (printErr) {
@@ -352,6 +374,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
       setDeliveryCharge("0");
       setNotes("");
       setItems([nextItem()]);
+      returnLines.reset();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
     } finally {
@@ -407,6 +430,18 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-foreground">Invoice items</h3>
         </div>
+
+        <InvoiceReturnLinesSection
+          purchaseLines={returnLines.purchaseLines}
+          rows={returnLines.rows}
+          updateRow={returnLines.updateRow}
+          removeRow={returnLines.removeRow}
+          loading={returnLines.loading}
+          error={returnLines.error}
+          productNameById={productNameById}
+          disabled={submitting}
+        />
+
         <div className="space-y-3">
           {items.map((line) => {
             const selected = products.find((p) => p.id === line.productId);
@@ -486,9 +521,30 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
             );
           })}
         </div>
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {customerId ? null : (
+            <span className="mr-auto text-xs text-muted-foreground">
+              Pick a customer to return or discard items.
+            </span>
+          )}
           <Button type="button" variant="outline" onClick={addLine} disabled={submitting}>
             Add line
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={returnLines.addReturn}
+            disabled={submitting || !customerId}
+          >
+            Return
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={returnLines.addDiscard}
+            disabled={submitting || !customerId}
+          >
+            Discard
           </Button>
         </div>
       </div>
@@ -544,6 +600,30 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
               Total: <strong className="text-foreground">{money(calcPreview.total_amount)}</strong>
             </span>
           </div>
+          {returnLines.resolved.creditTotal > 0
+            ? (() => {
+                const counter = calculateCounterSaleSummary(calcPreview.total_amount, [
+                  { line_total: returnLines.resolved.creditTotal },
+                ]);
+                return (
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 border-t border-border pt-1">
+                    <span>
+                      Returns credit:{" "}
+                      <strong className="text-foreground">−{money(counter.returns_credit_amount)}</strong>
+                    </span>
+                    <span>
+                      Net due: <strong className="text-foreground">{money(counter.net_amount_due)}</strong>
+                    </span>
+                    {counter.cash_refund_amount > 0 ? (
+                      <span>
+                        Cash refund:{" "}
+                        <strong className="text-foreground">{money(counter.cash_refund_amount)}</strong>
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              })()
+            : null}
         </div>
       ) : null}
 

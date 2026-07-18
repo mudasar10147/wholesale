@@ -2,7 +2,6 @@ import {
   collection,
   doc,
   getDoc,
-  getDocs,
   increment,
   runTransaction,
   serverTimestamp,
@@ -11,9 +10,18 @@ import {
   type Transaction,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
-import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
+import {
+  fetchStockLotIdsForProduct,
+  isFirestoreContentionError,
+} from "@/lib/firestore/stockLotsQuery";
+import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
+import { assertStockLotInvariant } from "@/lib/inventory/invariantCheck";
+import {
+  notifyInventoryPosted,
+  recordInventoryTransactionInTx,
+} from "@/lib/inventory/inventoryTransactionService";
 import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
+import { getAuthClient } from "@/lib/firebase";
 import type { ProductDoc, StockLotDoc, TraderDoc } from "@/lib/types/firestore";
 
 function resolveTraderId(traderId: string | undefined): string {
@@ -82,13 +90,9 @@ export function applyStockInInTransaction(
   quantity: number,
   unitCost: number | undefined,
   salePrice: number | undefined,
-  pricingContext: {
-    categoryTemplates: Record<string, import("@/lib/types/firestore").CategoryMarginTemplate>;
-    globalDefault: number;
-  } | undefined,
   traderId: string,
   traderName: string,
-): void {
+): string {
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");
   }
@@ -108,14 +112,6 @@ export function applyStockInInTransaction(
   if (salePrice !== undefined) {
     patch.sale_price = salePrice;
   }
-  if (pricingContext && salePrice === undefined) {
-    applyAutomaticPricingToPatch(
-      product,
-      patch,
-      pricingContext.categoryTemplates,
-      pricingContext.globalDefault,
-    );
-  }
   tx.update(productRef, patch);
   const lotRef = doc(collection(db, COLLECTIONS.stockLots));
   tx.set(lotRef, {
@@ -126,6 +122,7 @@ export function applyStockInInTransaction(
     source: "stock_in",
     purchase_source: resolvedPurchaseSource,
     trader_id: resolvedTraderId,
+    warehouse_id: DEFAULT_WAREHOUSE_ID,
     received_at: serverTimestamp(),
     created_at: serverTimestamp(),
     updated_at: serverTimestamp(),
@@ -134,6 +131,7 @@ export function applyStockInInTransaction(
     created_at: unknown;
     updated_at: unknown;
   });
+  return lotRef.id;
 }
 
 /**
@@ -150,15 +148,29 @@ export async function stockIn(
   traderId: string,
   traderName: string,
 ): Promise<void> {
-  const settings = await loadPricingSettings(db);
   const ref = doc(db, COLLECTIONS.products, productId);
-  await runTransaction(db, async (tx) => {
+  const uid = getAuthClient().currentUser?.uid;
+  let txnResult: ReturnType<typeof recordInventoryTransactionInTx> = null;
+
+  const runStockInTx = async () => {
+    const sortedLotIds = await fetchStockLotIdsForProduct(db, productId);
+    await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) {
       throw new Error("Product not found.");
     }
     const product = snap.data() as ProductDoc | undefined;
-    applyStockInInTransaction(
+    const beforeStock = typeof product?.stock_quantity === "number" ? product.stock_quantity : 0;
+
+    const lotsForCheck: Array<{ id: string; data: StockLotDoc }> = [];
+    for (const id of sortedLotIds) {
+      const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, id));
+      if (lotSnap.exists()) {
+        lotsForCheck.push({ id, data: lotSnap.data() as StockLotDoc });
+      }
+    }
+
+    const lotId = applyStockInInTransaction(
       tx,
       db,
       productId,
@@ -167,14 +179,89 @@ export async function stockIn(
       quantity,
       unitCost,
       salePrice,
-      {
-        categoryTemplates: settings.categoryTemplates,
-        globalDefault: settings.globalDefaultTargetMarginPercent,
-      },
       traderId,
       traderName,
     );
-  });
+
+    const unitCostUsed = unitCost ?? (typeof product?.cost_price === "number" ? product.cost_price : 0);
+    lotsForCheck.push({
+      id: lotId,
+      data: {
+        product_id: productId,
+        unit_cost: unitCostUsed,
+        qty_in: quantity,
+        qty_remaining: quantity,
+        source: "stock_in",
+        warehouse_id: DEFAULT_WAREHOUSE_ID,
+        received_at: product?.created_at ?? ({} as StockLotDoc["received_at"]),
+        created_at: product?.created_at ?? ({} as StockLotDoc["created_at"]),
+        updated_at: product?.created_at ?? ({} as StockLotDoc["updated_at"]),
+      },
+    });
+
+    txnResult = recordInventoryTransactionInTx(tx, db, {
+      type: "PURCHASE_RECEIPT",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "stock_in",
+      source_document_id: productId,
+      posted_by_uid: uid,
+      lines: [
+        {
+          product_id: productId,
+          warehouse_id: DEFAULT_WAREHOUSE_ID,
+          direction: "in",
+          quantity,
+          unit_cost: unitCostUsed,
+          lot_id: lotId,
+          before_on_hand: beforeStock,
+          after_on_hand: beforeStock + quantity,
+        },
+      ],
+    });
+
+    const afterProduct: ProductDoc = {
+      ...(product as ProductDoc),
+      stock_quantity: beforeStock + quantity,
+      cost_price: unitCostUsed,
+    };
+    assertStockLotInvariant(productId, afterProduct, lotsForCheck);
+    });
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await runStockInTx();
+      break;
+    } catch (e) {
+      if (!isFirestoreContentionError(e) || attempt === 2) throw e;
+    }
+  }
+
+  if (txnResult) {
+    const unitCostUsed =
+      unitCost ??
+      (await (async () => {
+        const s = await getDoc(ref);
+        const p = s.data() as ProductDoc | undefined;
+        return typeof p?.cost_price === "number" ? p.cost_price : 0;
+      })());
+    await notifyInventoryPosted(txnResult, {
+      type: "PURCHASE_RECEIPT",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "stock_in",
+      source_document_id: productId,
+      posted_by_uid: uid,
+      lines: [
+        {
+          product_id: productId,
+          warehouse_id: DEFAULT_WAREHOUSE_ID,
+          direction: "in",
+          quantity,
+          unit_cost: unitCostUsed,
+        },
+      ],
+    });
+  }
 }
 
 /**
@@ -189,20 +276,12 @@ export async function stockOut(
     throw new Error("Quantity must be a positive whole number.");
   }
   const ref = doc(db, COLLECTIONS.products, productId);
-  const lotCandidatesSnap = await getDocs(collection(db, COLLECTIONS.stockLots));
-  const lotCandidateIds: string[] = [];
-  lotCandidatesSnap.forEach((d) => {
-    const data = d.data() as Partial<StockLotDoc>;
-    if (data.product_id === productId) {
-      lotCandidateIds.push(d.id);
-    }
-  });
+  const uid = getAuthClient().currentUser?.uid;
+  let txnResult: ReturnType<typeof recordInventoryTransactionInTx> = null;
 
-  /** Stable order so transaction reads are deterministic across retries. */
-  const sortedLotCandidateIds = [...lotCandidateIds].sort();
-  const settings = await loadPricingSettings(db);
-
-  await runTransaction(db, async (transaction) => {
+  const runStockOutTx = async () => {
+    const sortedLotCandidateIds = await fetchStockLotIdsForProduct(db, productId);
+    await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(ref);
     if (!snap.exists) {
       throw new Error("Product not found.");
@@ -249,22 +328,72 @@ export async function stockOut(
       lotUpdates.map((u) => ({ id: u.id, qty_remaining: u.qty_remaining })),
     );
 
-    const stockPatch: Record<string, unknown> = {
+    transaction.update(ref, {
       stock_quantity: increment(-quantity),
       cost_price: nextCostPrice,
-    };
-    applyAutomaticPricingToPatch(
-      data as ProductDoc,
-      stockPatch,
-      settings.categoryTemplates,
-      settings.globalDefaultTargetMarginPercent,
-    );
-    transaction.update(ref, stockPatch);
+    });
     for (const u of lotUpdates) {
       transaction.update(doc(db, COLLECTIONS.stockLots, u.id), {
         qty_remaining: u.qty_remaining,
         updated_at: serverTimestamp(),
       });
+      const row = lots.find((l) => l.id === u.id);
+      if (row) row.data.qty_remaining = u.qty_remaining;
     }
-  });
+
+    txnResult = recordInventoryTransactionInTx(transaction, db, {
+      type: "STOCK_ISSUE",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "stock_out",
+      source_document_id: productId,
+      posted_by_uid: uid,
+      lines: [
+        {
+          product_id: productId,
+          warehouse_id: DEFAULT_WAREHOUSE_ID,
+          direction: "out",
+          quantity,
+          unit_cost: nextCostPrice,
+          before_on_hand: current,
+          after_on_hand: current - quantity,
+        },
+      ],
+    });
+
+    const afterProduct: ProductDoc = {
+      ...(data as ProductDoc),
+      stock_quantity: current - quantity,
+      cost_price: nextCostPrice,
+    };
+    assertStockLotInvariant(productId, afterProduct, lots);
+    });
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await runStockOutTx();
+      break;
+    } catch (e) {
+      if (!isFirestoreContentionError(e) || attempt === 2) throw e;
+    }
+  }
+
+  if (txnResult) {
+    await notifyInventoryPosted(txnResult, {
+      type: "STOCK_ISSUE",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "stock_out",
+      source_document_id: productId,
+      posted_by_uid: uid,
+      lines: [
+        {
+          product_id: productId,
+          warehouse_id: DEFAULT_WAREHOUSE_ID,
+          direction: "out",
+          quantity,
+          unit_cost: 0,
+        },
+      ],
+    });
+  }
 }

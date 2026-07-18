@@ -13,10 +13,10 @@ import {
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { normalizePurchaseSource } from "@/lib/firestore/inventory";
-import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
-import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
 import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
-import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
+import { assertLegacyInventoryApiAllowed, inventoryEngineConfig } from "@/lib/inventory/config";
+import { postStockAdjustment } from "@/lib/inventory/stockAdjustment";
+import type { StockLotDoc } from "@/lib/types/firestore";
 
 async function prefetchSortedLotIdsForProduct(db: Firestore, productId: string): Promise<string[]> {
   const snap = await getDocs(collection(db, COLLECTIONS.stockLots));
@@ -26,21 +26,6 @@ async function prefetchSortedLotIdsForProduct(db: Firestore, productId: string):
     if (data.product_id === productId) ids.push(d.id);
   });
   return [...ids].sort();
-}
-
-function productPatchWithAutoPricing(
-  product: ProductDoc,
-  patch: Record<string, unknown>,
-  settings: Awaited<ReturnType<typeof loadPricingSettings>>,
-): Record<string, unknown> {
-  const full = { ...patch };
-  applyAutomaticPricingToPatch(
-    product,
-    full,
-    settings.categoryTemplates,
-    settings.globalDefaultTargetMarginPercent,
-  );
-  return full;
 }
 
 /**
@@ -53,6 +38,14 @@ export async function updateLotAndSyncProduct(
   lotId: string,
   input: { unit_cost?: number; qty_remaining?: number },
 ): Promise<void> {
+  if (input.qty_remaining !== undefined) {
+    if (inventoryEngineConfig.directLotEditsDisabled) {
+      throw new Error(
+        "Direct lot quantity edits are disabled. Create a stock adjustment with a reason instead.",
+      );
+    }
+    assertLegacyInventoryApiAllowed("updateLotAndSyncProduct (qty_remaining)");
+  }
   if (input.unit_cost === undefined && input.qty_remaining === undefined) {
     throw new Error("Nothing to update.");
   }
@@ -73,14 +66,12 @@ export async function updateLotAndSyncProduct(
   }
 
   const productRef = doc(db, COLLECTIONS.products, productId);
-  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
-    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -126,10 +117,7 @@ export async function updateLotAndSyncProduct(
       updated_at: serverTimestamp(),
     });
 
-    tx.update(
-      productRef,
-      productPatchWithAutoPricing(product, { cost_price: nextCostPrice }, settings),
-    );
+    tx.update(productRef, { cost_price: nextCostPrice });
   });
 }
 
@@ -138,16 +126,15 @@ export async function updateLotAndSyncProduct(
  * lot with stock (0 when no stock on lots).
  */
 export async function syncProductStockFromLots(db: Firestore, productId: string): Promise<void> {
+  assertLegacyInventoryApiAllowed("syncProductStockFromLots");
   const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
   const productRef = doc(db, COLLECTIONS.products, productId);
-  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
-    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -168,14 +155,7 @@ export async function syncProductStockFromLots(db: Firestore, productId: string)
 
     const nextCost = listCostFromProductLots(lots);
 
-    tx.update(
-      productRef,
-      productPatchWithAutoPricing(
-        product,
-        { stock_quantity: sum, cost_price: nextCost },
-        settings,
-      ),
-    );
+    tx.update(productRef, { stock_quantity: sum, cost_price: nextCost });
   });
 }
 
@@ -190,65 +170,15 @@ export async function createAdjustmentLot(
   unitCost: number,
   referenceNote?: string,
 ): Promise<void> {
-  if (!Number.isInteger(quantity) || quantity <= 0) {
-    throw new Error("Quantity must be a positive whole number.");
+  const reason = referenceNote?.trim();
+  if (!reason) {
+    throw new Error("Reason is required for stock adjustments.");
   }
-  if (typeof unitCost !== "number" || !Number.isFinite(unitCost) || unitCost < 0) {
-    throw new Error("Unit cost must be zero or greater.");
-  }
-  const note = referenceNote?.trim();
-  if (note && note.length > 400) {
-    throw new Error("Note must be at most 400 characters.");
-  }
-
-  const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
-  const productRef = doc(db, COLLECTIONS.products, productId);
-  const newLotRef = doc(collection(db, COLLECTIONS.stockLots));
-  const settings = await loadPricingSettings(db);
-
-  await runTransaction(db, async (tx) => {
-    const productSnap = await tx.get(productRef);
-    if (!productSnap.exists()) {
-      throw new Error("Product not found.");
-    }
-    const product = productSnap.data() as ProductDoc;
-
-    const lots: Array<{ id: string; data: StockLotDoc }> = [];
-    for (const id of sortedLotIds) {
-      const lotRef = doc(db, COLLECTIONS.stockLots, id);
-      const lotSnap = await tx.get(lotRef);
-      if (!lotSnap.exists()) continue;
-      const lotData = lotSnap.data() as StockLotDoc;
-      if (lotData.product_id === productId) {
-        lots.push({ id, data: lotData });
-      }
-    }
-
-    const nextCost = unitCost;
-
-    const payload: Record<string, unknown> = {
-      product_id: productId,
-      unit_cost: unitCost,
-      qty_in: quantity,
-      qty_remaining: quantity,
-      source: "adjustment",
-      received_at: serverTimestamp(),
-      created_at: serverTimestamp(),
-      updated_at: serverTimestamp(),
-    };
-    if (note) {
-      payload.reference_id = note;
-    }
-
-    tx.set(newLotRef, payload);
-    tx.update(
-      productRef,
-      productPatchWithAutoPricing(
-        product,
-        { stock_quantity: increment(quantity), cost_price: nextCost },
-        settings,
-      ),
-    );
+  await postStockAdjustment(db, {
+    productId,
+    quantityDelta: quantity,
+    unitCost,
+    reason,
   });
 }
 
@@ -261,6 +191,7 @@ export async function deleteLotAndSyncProduct(
   productId: string,
   lotId: string,
 ): Promise<void> {
+  assertLegacyInventoryApiAllowed("deleteLotAndSyncProduct");
   const sortedLotIds = await prefetchSortedLotIdsForProduct(db, productId);
   if (!sortedLotIds.includes(lotId)) {
     throw new Error("Lot not found for this product.");
@@ -268,14 +199,12 @@ export async function deleteLotAndSyncProduct(
 
   const productRef = doc(db, COLLECTIONS.products, productId);
   const lotRef = doc(db, COLLECTIONS.stockLots, lotId);
-  const settings = await loadPricingSettings(db);
 
   await runTransaction(db, async (tx) => {
     const productSnap = await tx.get(productRef);
     if (!productSnap.exists()) {
       throw new Error("Product not found.");
     }
-    const product = productSnap.data() as ProductDoc;
 
     const lots: Array<{ id: string; data: StockLotDoc }> = [];
     for (const id of sortedLotIds) {
@@ -302,14 +231,7 @@ export async function deleteLotAndSyncProduct(
     const nextCost = listCostFromProductLots(remaining);
 
     tx.delete(lotRef);
-    tx.update(
-      productRef,
-      productPatchWithAutoPricing(
-        product,
-        { stock_quantity: sum, cost_price: nextCost },
-        settings,
-      ),
-    );
+    tx.update(productRef, { stock_quantity: sum, cost_price: nextCost });
   });
 }
 

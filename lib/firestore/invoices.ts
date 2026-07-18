@@ -15,6 +15,8 @@ import {
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
+import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
+import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
 import {
   derivePaymentStatus,
   getInvoiceAmountDue,
@@ -26,6 +28,12 @@ import {
   formatInvoiceVoidBlockedMessage,
   loadInvoiceReturnBlockers,
 } from "@/lib/firestore/invoiceReturns";
+import {
+  finalizeCounterSaleReturns,
+  resolveReturnLines,
+  sumReturnLinesCredit,
+  type CounterSaleReturnInput,
+} from "@/lib/firestore/counterSaleReturns";
 import type {
   CustomerDoc,
   InvoiceDoc,
@@ -58,6 +66,8 @@ export type CreateInvoiceInput = {
   delivery_charge: number;
   notes?: string;
   lines: InvoiceCalcLineInput[];
+  /** Inline "counter-sale" return lines: items the customer is handing back on this sale. */
+  return_lines?: CounterSaleReturnInput[];
 };
 
 /** Options for saving a draft only. Posting always re-checks stock and FIFO. */
@@ -71,6 +81,99 @@ export type DraftSaveOptions = {
 
 /** Firestore allows at most ~500 document reads+writes per transaction. */
 const FIRESTORE_TXN_DOC_CAP = 500;
+
+function stockLotMismatchMessage(
+  productId: string,
+  product: ProductDoc | undefined,
+  book: number,
+  lotTotal: number,
+): string {
+  const label = product?.name?.trim() || productId;
+  return `Book stock (${book}) does not match lot total (${lotTotal}) for ${label}. Post a stock adjustment before invoicing.`;
+}
+
+function assertBookStockMatchesLots(
+  productId: string,
+  product: ProductDoc | undefined,
+  book: number,
+  lotTotal: number,
+): void {
+  if (book > lotTotal) {
+    throw new Error(stockLotMismatchMessage(productId, product, book, lotTotal));
+  }
+}
+
+async function fulfillInvoiceSaleLedger(
+  db: Firestore,
+  invoiceId: string,
+  neededByProduct: Map<string, number>,
+  postedByUid?: string,
+): Promise<void> {
+  const lines = Array.from(neededByProduct.entries()).map(([product_id, quantity]) => ({
+    product_id,
+    warehouse_id: DEFAULT_WAREHOUSE_ID,
+    direction: "out" as const,
+    quantity,
+    unit_cost: 0,
+  }));
+  if (lines.length === 0) return;
+  const binding: LedgerSourceBinding = {
+    collection: COLLECTIONS.invoices,
+    docId: invoiceId,
+    statusField: "ledger_status",
+    transactionIdField: "inventory_transaction_id",
+    errorField: "ledger_error",
+  };
+  await fulfillLedgerOutbox(
+    db,
+    {
+      type: "SALE",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "invoice",
+      source_document_id: invoiceId,
+      posted_by_uid: postedByUid,
+      lines,
+    },
+    binding,
+    { stockCommitted: true },
+  );
+}
+
+async function fulfillInvoiceVoidLedger(
+  db: Firestore,
+  invoiceId: string,
+  restoreByProduct: Map<string, number>,
+  postedByUid?: string,
+): Promise<void> {
+  const lines = Array.from(restoreByProduct.entries()).map(([product_id, quantity]) => ({
+    product_id,
+    warehouse_id: DEFAULT_WAREHOUSE_ID,
+    direction: "in" as const,
+    quantity,
+    unit_cost: 0,
+  }));
+  if (lines.length === 0) return;
+  const binding: LedgerSourceBinding = {
+    collection: COLLECTIONS.invoices,
+    docId: invoiceId,
+    statusField: "void_ledger_status",
+    transactionIdField: "void_inventory_transaction_id",
+    errorField: "void_ledger_error",
+  };
+  await fulfillLedgerOutbox(
+    db,
+    {
+      type: "SALE_VOID",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "invoice",
+      source_document_id: invoiceId,
+      posted_by_uid: postedByUid,
+      lines,
+    },
+    binding,
+    { stockCommitted: true },
+  );
+}
 
 function sortLotsByReceivedAt(lots: Array<{ id: string; data: StockLotDoc }>): void {
   lots.sort((a, b) => {
@@ -176,22 +279,8 @@ function buildLotsMapsForPost(
       0,
     );
     const gap = Math.max(0, currentStock - lotTotal);
-    if (gap > 0 && product) {
-      const openingCost = typeof product.cost_price === "number" ? product.cost_price : 0;
-      lots.push({
-        id: `__sim_opening__${productId}`,
-        data: {
-          product_id: productId,
-          unit_cost: openingCost,
-          qty_in: gap,
-          qty_remaining: gap,
-          source: "opening_balance",
-          reference_id: productId,
-          received_at: product.created_at,
-          created_at: product.created_at,
-          updated_at: product.created_at,
-        } as StockLotDoc,
-      });
+    if (gap > 0) {
+      assertBookStockMatchesLots(productId, product, currentStock, lotTotal);
     }
     sortLotsByReceivedAt(lots);
     lotsByProductId.set(productId, lots);
@@ -257,6 +346,15 @@ export async function createDraftInvoice(
     skipStockCheck: options?.allowInsufficientStockForDraft === true,
   });
 
+  const resolvedReturnLines = await resolveReturnLines(db, customerId, input.return_lines ?? []);
+  const returnFields =
+    resolvedReturnLines.length > 0
+      ? {
+          return_lines: resolvedReturnLines,
+          returns_credit_amount: sumReturnLinesCredit(resolvedReturnLines),
+        }
+      : {};
+
   const invoiceRef = doc(db, COLLECTIONS.invoices, orderId);
   const itemRefs = input.lines.map(() => doc(collection(db, COLLECTIONS.invoiceItems)));
 
@@ -297,6 +395,7 @@ export async function createDraftInvoice(
       discount_amount: calc.discount_amount,
       delivery_charge: calc.delivery_charge,
       total_amount: calc.total_amount,
+      ...returnFields,
       ...(notes ? { notes } : {}),
       created_at: serverTimestamp(),
       updated_at: serverTimestamp(),
@@ -375,6 +474,15 @@ export async function updateDraftInvoice(
     skipStockCheck: options?.allowInsufficientStockForDraft === true,
   });
 
+  const resolvedReturnLines = await resolveReturnLines(db, customerId, input.return_lines ?? []);
+  const returnFields =
+    resolvedReturnLines.length > 0
+      ? {
+          return_lines: resolvedReturnLines,
+          returns_credit_amount: sumReturnLinesCredit(resolvedReturnLines),
+        }
+      : { return_lines: deleteField(), returns_credit_amount: deleteField() };
+
   if (3 + input.lines.length > FIRESTORE_TXN_DOC_CAP) {
     throw new Error(
       `This invoice has too many lines to save at once (max ${FIRESTORE_TXN_DOC_CAP - 3} lines). Split into multiple invoices.`,
@@ -446,6 +554,7 @@ export async function updateDraftInvoice(
         discount_amount: calc.discount_amount,
         delivery_charge: calc.delivery_charge,
         total_amount: calc.total_amount,
+        ...returnFields,
         ...(notes ? { notes } : { notes: deleteField() }),
         updated_at: serverTimestamp(),
       });
@@ -511,6 +620,7 @@ export async function updateDraftInvoice(
       discount_amount: calc.discount_amount,
       delivery_charge: calc.delivery_charge,
       total_amount: calc.total_amount,
+      ...returnFields,
       ...(notes ? { notes } : { notes: deleteField() }),
       updated_at: serverTimestamp(),
     });
@@ -551,17 +661,14 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     throw new Error("Invoice not found.");
   }
   const preInvoice = preCheck.data() as InvoiceDoc | undefined;
-  if (preInvoice?.status === "posted") {
-    return;
-  }
   if (preInvoice?.status === "void") {
     throw new Error("Cannot post a void invoice.");
   }
-  if (preInvoice?.status !== "draft") {
+  if (preInvoice?.status !== "draft" && preInvoice?.status !== "posted") {
     throw new Error(`Only draft invoices can be posted (current status: ${String(preInvoice?.status)}).`);
   }
 
-  const itemIdsForEstimate = Array.isArray(preInvoice.item_ids) ? preInvoice.item_ids.filter(Boolean) : [];
+  const itemIdsForEstimate = Array.isArray(preInvoice?.item_ids) ? preInvoice.item_ids.filter(Boolean) : [];
   if (itemIdsForEstimate.length === 0) {
     throw new Error("Invoice has no items to post.");
   }
@@ -586,6 +693,18 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     }
     neededByProductEarly.set(productId, (neededByProductEarly.get(productId) ?? 0) + qty);
   }
+
+  const inlineReturnLines = Array.isArray(preInvoice?.return_lines) ? preInvoice.return_lines : [];
+  const hasInlineReturns = inlineReturnLines.length > 0;
+
+  if (preInvoice?.status === "posted") {
+    await fulfillInvoiceSaleLedger(db, trimmedId, neededByProductEarly, auth.currentUser?.uid);
+    if (hasInlineReturns && preInvoice.returns_post_status !== "posted") {
+      await finalizeCounterSaleReturns(db, trimmedId);
+    }
+    return;
+  }
+
   const productIdsForEstimate = Array.from(neededByProductEarly.keys());
 
   const lotsDataByProduct = new Map<string, StockLotRow[]>();
@@ -646,21 +765,8 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     stockSnapshotEarly,
   );
   const dirtyEstimate = simulateFifoForDirtyEstimate(invoiceItemsEarly, lotsByProductForEstimate);
-  const dirtyLotIdsToRead = Array.from(dirtyEstimate).filter((id) => !id.startsWith("__sim_opening__"));
+  const dirtyLotIdsToRead = Array.from(dirtyEstimate);
   const preflightLotsByProduct = cloneLotsByProductForSimulation(lotsByProductForEstimate);
-
-  let openingCountEstimate = 0;
-  for (const pid of productIdsForEstimate) {
-    const rows = lotsDataByProduct.get(pid) ?? [];
-    const lotTotal = rows.reduce(
-      (acc, r) => acc + (typeof r.data.qty_remaining === "number" ? r.data.qty_remaining : 0),
-      0,
-    );
-    const stock = stockSnapshotEarly.get(pid) ?? 0;
-    if (stock > lotTotal) {
-      openingCountEstimate += 1;
-    }
-  }
 
   const postTxnOpEstimate =
     1 +
@@ -669,7 +775,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     dirtyLotIdsToRead.length +
     itemIdsForEstimate.length * 3 +
     dirtyEstimate.size +
-    openingCountEstimate +
     productIdsForEstimate.length +
     1;
   if (postTxnOpEstimate > FIRESTORE_TXN_DOC_CAP) {
@@ -748,13 +853,6 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     }
 
     const lotsByProductId = cloneLotsByProductForSimulation(preflightLotsByProduct);
-    for (const productId of productIds) {
-      const rows = lotsByProductId.get(productId) ?? [];
-      lotsByProductId.set(
-        productId,
-        rows.filter((row) => !row.id.startsWith("__sim_opening__")),
-      );
-    }
 
     const freshDirtyLots = new Map<string, StockLotDoc>();
     for (const lotId of dirtyLotIdsToRead) {
@@ -773,60 +871,16 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       }
     }
 
-    const pendingOpeningLots: Array<{
-      ref: ReturnType<typeof doc>;
-      payload: Record<string, unknown>;
-    }> = [];
-
     for (const productId of productIds) {
       const product = productById.get(productId);
       const currentStock = stockSnapshot.get(productId) ?? 0;
-
       const lots = lotsByProductId.get(productId) ?? [];
-
       const lotTotal = lots.reduce((acc, row) => acc + (row.data.qty_remaining ?? 0), 0);
-      const gap = Math.max(0, currentStock - lotTotal);
-      if (gap > 0) {
-        // Backfill legacy stock into FIFO system once so old products remain postable.
-        const openingRef = doc(collection(db, COLLECTIONS.stockLots));
-        const openingCost = typeof product?.cost_price === "number" ? product.cost_price : 0;
-        pendingOpeningLots.push({
-          ref: openingRef,
-          payload: {
-            product_id: productId,
-            unit_cost: openingCost,
-            qty_in: gap,
-            qty_remaining: gap,
-            source: "opening_balance",
-            reference_id: productId,
-            received_at: product?.created_at ?? serverTimestamp(),
-            created_at: serverTimestamp(),
-            updated_at: serverTimestamp(),
-          },
-        });
-        lots.push({
-          id: openingRef.id,
-          data: {
-            product_id: productId,
-            unit_cost: openingCost,
-            qty_in: gap,
-            qty_remaining: gap,
-            source: "opening_balance",
-            reference_id: productId,
-            received_at: product?.created_at ?? ({} as StockLotDoc["received_at"]),
-            created_at: {} as StockLotDoc["created_at"],
-            updated_at: {} as StockLotDoc["updated_at"],
-          },
-        });
-      }
-
+      assertBookStockMatchesLots(productId, product, currentStock, lotTotal);
       sortLotsByReceivedAt(lots);
       lotsByProductId.set(productId, lots);
     }
 
-    for (const o of pendingOpeningLots) {
-      tx.set(o.ref, o.payload);
-    }
     for (const productId of productIds) {
       const currentStock = stockSnapshot.get(productId) ?? 0;
       const qtyNeeded = neededByProduct.get(productId) ?? 0;
@@ -942,15 +996,26 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     tx.update(invoiceRef, {
       status: "posted",
       stock_reversal_applied: false,
+      ledger_status: "pending",
       posted_subtotal_amount: invoice.subtotal_amount,
       posted_discount_amount: invoice.discount_amount,
       posted_delivery_charge: invoice.delivery_charge,
       posted_total_amount: invoice.total_amount,
       posted_cogs_amount: roundMoney2(postedCogs),
+      ...(hasInlineReturns
+        ? {
+            returns_credit_amount: sumReturnLinesCredit(inlineReturnLines),
+            returns_post_status: "pending",
+          }
+        : {}),
       posted_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     });
     });
+    await fulfillInvoiceSaleLedger(db, trimmedId, neededByProductEarly, auth.currentUser?.uid);
+    if (hasInlineReturns) {
+      await finalizeCounterSaleReturns(db, trimmedId);
+    }
   } catch (e) {
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
     if (
@@ -1198,6 +1263,24 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
   });
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
+
+  const restoreByProductEarly = new Map<string, number>();
+  for (const cid of preloadedConsumptionIds) {
+    const csnap = await getDoc(doc(db, COLLECTIONS.lotConsumptions, cid));
+    if (!csnap.exists()) continue;
+    const cdata = csnap.data() as LotConsumptionDoc;
+    if (cdata.invoice_id !== trimmedId || cdata.reversed_at) continue;
+    const alreadyReturned = restoredByConsumption.get(cid) ?? 0;
+    const alreadyWrittenOff = writtenOffByConsumption.get(cid) ?? 0;
+    const qty = cdata.quantity - alreadyReturned - alreadyWrittenOff;
+    if (qty > 0 && cdata.product_id) {
+      restoreByProductEarly.set(
+        cdata.product_id,
+        (restoreByProductEarly.get(cdata.product_id) ?? 0) + qty,
+      );
+    }
+  }
+
   try {
     await runTransaction(db, async (tx) => {
     const invoiceSnap = await tx.get(invoiceRef);
@@ -1332,12 +1415,14 @@ export async function voidInvoice(db: Firestore, invoiceId: string): Promise<voi
     tx.update(invoiceRef, {
       status: "void",
       stock_reversal_applied: true,
+      void_ledger_status: "pending",
       paid_amount: 0,
       payment_status: "unpaid",
       voided_at: serverTimestamp(),
       updated_at: serverTimestamp(),
     });
   });
+    await fulfillInvoiceVoidLedger(db, trimmedId, restoreByProductEarly, auth.currentUser?.uid);
   } catch (e) {
     logFirestoreError("voidInvoice: transaction failed (Firestore rules — see console)", e);
     throw e;

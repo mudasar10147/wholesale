@@ -10,7 +10,9 @@ type AuthContextValue = {
   isAdmin: boolean;
   /** Clerk: draft invoices, expenses, customers only (custom claim `role: "clerk"`). */
   isClerk: boolean;
-  /** Signed-in user may use the app (admin or clerk). */
+  /** Social: the WhatsApp content planner only (custom claim `role: "social"`). */
+  isSocial: boolean;
+  /** Signed-in user may use the app (admin, clerk, or social). */
   hasAppAccess: boolean;
 };
 
@@ -26,11 +28,17 @@ function isClerkClaim(claims: Record<string, unknown>): boolean {
   return claims.role === "clerk";
 }
 
+/** Matches Firestore rules `isSocial()` — `role` must be the string `social`. */
+function isSocialClaim(claims: Record<string, unknown>): boolean {
+  return claims.role === "social";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isClerk, setIsClerk] = useState(false);
+  const [isSocial, setIsSocial] = useState(false);
 
   useEffect(() => {
     const auth = getAuthClient();
@@ -43,30 +51,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const token = await u.getIdTokenResult(true);
           const claims = token.claims as Record<string, unknown>;
-          const admin = isAdminClaim(claims);
-          const clerk = isClerkClaim(claims);
-          setIsAdmin(admin);
-          setIsClerk(clerk);
+          setIsAdmin(isAdminClaim(claims));
+          setIsClerk(isClerkClaim(claims));
+          setIsSocial(isSocialClaim(claims));
         } catch {
           setIsAdmin(false);
           setIsClerk(false);
+          setIsSocial(false);
         }
         setLoading(false);
       } else {
         setUser(null);
         setIsAdmin(false);
         setIsClerk(false);
+        setIsSocial(false);
         setLoading(false);
       }
     });
     return () => unsub();
   }, []);
 
-  const hasAppAccess = isAdmin || isClerk;
+  const hasAppAccess = isAdmin || isClerk || isSocial;
 
   const value = useMemo(
-    () => ({ user, loading, isAdmin, isClerk, hasAppAccess }),
-    [user, loading, isAdmin, isClerk, hasAppAccess],
+    () => ({ user, loading, isAdmin, isClerk, isSocial, hasAppAccess }),
+    [user, loading, isAdmin, isClerk, isSocial, hasAppAccess],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

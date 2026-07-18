@@ -17,3 +17,35 @@ export async function fetchStockLotsForProduct(db: Firestore, productId: string)
   });
   return out;
 }
+
+/** Sorted lot IDs for a product (per-product query, not full-table scan). */
+export async function fetchStockLotIdsForProduct(db: Firestore, productId: string): Promise<string[]> {
+  const rows = await fetchStockLotsForProduct(db, productId);
+  return rows.map((r) => r.id).sort();
+}
+
+/** Per-product lot IDs for multiple products (one query per product). */
+export async function fetchStockLotIdsByProduct(
+  db: Firestore,
+  productIds: Iterable<string>,
+): Promise<Map<string, string[]>> {
+  const byProduct = new Map<string, string[]>();
+  await Promise.all(
+    [...productIds].map(async (productId) => {
+      byProduct.set(productId, await fetchStockLotIdsForProduct(db, productId));
+    }),
+  );
+  return byProduct;
+}
+
+export function isFirestoreContentionError(e: unknown): boolean {
+  if (!(e instanceof Error)) return false;
+  const msg = e.message.toLowerCase();
+  return (
+    msg.includes("failed-precondition") ||
+    msg.includes("aborted") ||
+    msg.includes("contention") ||
+    msg.includes("deadline")
+  );
+}
+

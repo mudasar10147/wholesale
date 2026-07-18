@@ -10,7 +10,7 @@ function isSafeImagePath(filePath: string): boolean {
   return filePath.startsWith("products/") || filePath.startsWith("uploads/products/");
 }
 
-/** Public read proxy for product images (same-origin fetch for clipboard copy on /whatsapp-post). */
+/** Public read proxy for product images: the same-origin fetch the social planner's "Copy image" needs. */
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);

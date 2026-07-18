@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { createProduct } from "@/lib/firestore/products";
-import { loadPricingSettings, type PricingSettingsData } from "@/lib/firestore/pricingSettings";
-import { inheritPricingFieldsForNewProduct } from "@/lib/pricing/automaticPricing";
-import { automaticSalePrice } from "@/lib/pricing/metrics";
 import { uploadProductImage } from "@/lib/upload/productImages";
 import {
   parseNonNegativeDecimal,
@@ -37,38 +34,6 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  const [pricingSettings, setPricingSettings] = useState<PricingSettingsData | null>(null);
-  const [pricingModeHint, setPricingModeHint] = useState<string | null>(null);
-
-  useEffect(() => {
-    void loadPricingSettings(getDb())
-      .then(setPricingSettings)
-      .catch(() => setPricingSettings(null));
-  }, []);
-
-  useEffect(() => {
-    if (!pricingSettings) return;
-    const cat = category.trim();
-    const cost = parseNonNegativeDecimal(costPrice);
-    const inherited = inheritPricingFieldsForNewProduct(
-      cat || undefined,
-      pricingSettings.categoryTemplates,
-      pricingSettings.globalDefaultTargetMarginPercent,
-      cost.ok ? cost.value : 0,
-    );
-    if (inherited.pricing_mode === "automatic" && cost.ok) {
-      setSalePrice(String(automaticSalePrice(cost.value, inherited.target_margin_percent ?? 15)));
-      setPricingModeHint(
-        `Automatic pricing (${inherited.target_margin_percent}% target) — sale price calculated from cost.`,
-      );
-    } else if (cat && pricingSettings.categoryTemplates[cat]) {
-      setPricingModeHint(
-        `Category template: ${inherited.pricing_mode} mode, ${inherited.target_margin_percent}% target.`,
-      );
-    } else {
-      setPricingModeHint(null);
-    }
-  }, [category, costPrice, pricingSettings]);
 
   const nameInvalid = error === "Name is required.";
   const numbersInvalid = Boolean(error && error !== "Name is required.");
@@ -132,20 +97,6 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
         initial_quantity: stock.value,
         trader_id: stock.value > 0 ? traderId : undefined,
         image,
-        ...(pricingSettings
-          ? (() => {
-              const inherited = inheritPricingFieldsForNewProduct(
-                cat || undefined,
-                pricingSettings.categoryTemplates,
-                pricingSettings.globalDefaultTargetMarginPercent,
-                cost.value,
-              );
-              return {
-                target_margin_percent: inherited.target_margin_percent,
-                pricing_mode: inherited.pricing_mode,
-              };
-            })()
-          : {}),
       });
       setName("");
       setCategory("");
@@ -230,9 +181,6 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
             aria-invalid={numbersInvalid}
             aria-describedby={numbersInvalid ? FORM_ALERT_ID : undefined}
           />
-          {pricingModeHint ? (
-            <p className="text-xs text-muted-foreground">{pricingModeHint}</p>
-          ) : null}
         </div>
         <div className="space-y-2 sm:col-span-2">
           <Label htmlFor="product-stock">Initial purchase quantity</Label>

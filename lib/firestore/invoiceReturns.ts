@@ -11,6 +11,9 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { getAuthClient } from "@/lib/firebase";
+import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
+import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
 import { derivePaymentStatus, getInvoicePaidAmount, getInvoicePostedTotal, getInvoiceReturnedAmount } from "@/lib/invoices/invoiceEffective";
 import {
   calculateReturnSummary,
@@ -29,10 +32,62 @@ import type {
   StockLotDoc,
 } from "@/lib/types/firestore";
 import { normalizeOrderId } from "@/lib/validation/contracts";
-import { getAuthClient } from "@/lib/firebase";
 import { logFirestoreAuthForDebug, logFirestoreError } from "@/lib/firebase/firestoreDebug";
 
 const FIRESTORE_TXN_DOC_CAP = 500;
+
+async function fulfillReturnLedger(
+  db: Firestore,
+  returnId: string,
+  ret: InvoiceReturnDoc,
+  restoreByProduct?: Map<string, number>,
+  postedByUid?: string,
+): Promise<void> {
+  let qtyByProduct = restoreByProduct;
+  if (!qtyByProduct) {
+    qtyByProduct = new Map();
+    const itemIds = Array.isArray(ret.item_ids) ? ret.item_ids.filter(Boolean) : [];
+    for (const itemId of itemIds) {
+      const snap = await getDoc(doc(db, COLLECTIONS.invoiceReturnItems, itemId));
+      if (!snap.exists()) continue;
+      const item = snap.data() as InvoiceReturnItemDoc;
+      if (item.quantity_restock > 0) {
+        qtyByProduct.set(
+          item.product_id,
+          (qtyByProduct.get(item.product_id) ?? 0) + item.quantity_restock,
+        );
+      }
+    }
+  }
+  const lines = Array.from(qtyByProduct.entries()).map(([product_id, quantity]) => ({
+    product_id,
+    warehouse_id: DEFAULT_WAREHOUSE_ID,
+    direction: "in" as const,
+    quantity,
+    unit_cost: 0,
+  }));
+  if (lines.length === 0) return;
+  const binding: LedgerSourceBinding = {
+    collection: COLLECTIONS.invoiceReturns,
+    docId: returnId,
+    statusField: "ledger_status",
+    transactionIdField: "inventory_transaction_id",
+    errorField: "ledger_error",
+  };
+  await fulfillLedgerOutbox(
+    db,
+    {
+      type: "SALES_RETURN",
+      warehouse_id: DEFAULT_WAREHOUSE_ID,
+      source_document_type: "invoice_return",
+      source_document_id: returnId,
+      posted_by_uid: postedByUid,
+      lines,
+    },
+    binding,
+    { stockCommitted: true },
+  );
+}
 
 function roundMoney2(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -552,7 +607,10 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
   const preReturnSnap = await getDoc(returnRef);
   if (!preReturnSnap.exists()) throw new Error("Return not found.");
   const preReturn = preReturnSnap.data() as InvoiceReturnDoc;
-  if (preReturn.status === "posted") return;
+  if (preReturn.status === "posted") {
+    await fulfillReturnLedger(db, trimmedReturnId, preReturn);
+    return;
+  }
   if (preReturn.status !== "draft") throw new Error("Only draft returns can be posted.");
 
   const invoiceId = preReturn.original_invoice_id;
@@ -604,24 +662,14 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
     );
   });
 
-  try {
-    const {
-      pendingRestores,
-      pendingWriteOffs,
-      lineRestockCogsByItemId,
-      lineWriteOffCogsByItemId,
-      restoreByLot,
-      restoreByProduct,
-    } = computePendingReturnAllocations(
-      returnItems,
-      allConsumptions,
-      restoredByConsumption,
-      writtenOffByConsumption,
-    );
+  const restorationDocIds: string[] = [];
+  restorationSnap.forEach((d) => restorationDocIds.push(d.id));
+  const writeOffDocIds: string[] = [];
+  writeOffSnap.forEach((d) => writeOffDocIds.push(d.id));
+  const consumptionDocIds = allConsumptions.map((c) => c.id);
 
-    const totalWriteOffCogs = roundMoney2(
-      [...lineWriteOffCogsByItemId.values()].reduce((sum, n) => sum + n, 0),
-    );
+  try {
+    let restoreByProductForLedger = new Map<string, number>();
 
     await runTransaction(db, async (tx) => {
       const retSnap = await tx.get(returnRef);
@@ -629,6 +677,53 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
       const ret = retSnap.data() as InvoiceReturnDoc;
       if (ret.status === "posted") return;
       if (ret.status !== "draft") throw new Error("Only draft returns can be posted.");
+
+      const restoredByConsumptionFresh = new Map<string, number>();
+      for (const docId of restorationDocIds) {
+        const snap = await tx.get(doc(db, COLLECTIONS.returnLotRestorations, docId));
+        if (!snap.exists()) continue;
+        const row = snap.data() as ReturnLotRestorationDoc;
+        restoredByConsumptionFresh.set(
+          row.consumption_id,
+          (restoredByConsumptionFresh.get(row.consumption_id) ?? 0) + row.quantity,
+        );
+      }
+      const writtenOffByConsumptionFresh = new Map<string, number>();
+      for (const docId of writeOffDocIds) {
+        const snap = await tx.get(doc(db, COLLECTIONS.returnLotWriteOffs, docId));
+        if (!snap.exists()) continue;
+        const row = snap.data() as ReturnLotWriteOffDoc;
+        writtenOffByConsumptionFresh.set(
+          row.consumption_id,
+          (writtenOffByConsumptionFresh.get(row.consumption_id) ?? 0) + row.quantity,
+        );
+      }
+
+      const consumptionsFresh: ConsumptionRow[] = [];
+      for (const cid of consumptionDocIds) {
+        const snap = await tx.get(doc(db, COLLECTIONS.lotConsumptions, cid));
+        if (!snap.exists()) continue;
+        consumptionsFresh.push({ id: cid, data: snap.data() as LotConsumptionDoc });
+      }
+
+      const {
+        pendingRestores,
+        pendingWriteOffs,
+        lineRestockCogsByItemId,
+        lineWriteOffCogsByItemId,
+        restoreByLot,
+        restoreByProduct,
+      } = computePendingReturnAllocations(
+        returnItems,
+        consumptionsFresh,
+        restoredByConsumptionFresh,
+        writtenOffByConsumptionFresh,
+      );
+      restoreByProductForLedger = restoreByProduct;
+
+      const totalWriteOffCogs = roundMoney2(
+        [...lineWriteOffCogsByItemId.values()].reduce((sum, n) => sum + n, 0),
+      );
 
       const invoiceRef = doc(db, COLLECTIONS.invoices, invoiceId);
       const invoiceSnap = await tx.get(invoiceRef);
@@ -764,32 +859,38 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
         });
       }
 
-      const nextReturned = roundMoney2(returnedSoFar + returnTotal);
-      const existingReturnIds = Array.isArray(invoice.return_ids) ? invoice.return_ids.filter(Boolean) : [];
-      const nextReturnIds = existingReturnIds.includes(trimmedReturnId)
-        ? existingReturnIds
-        : [...existingReturnIds, trimmedReturnId];
+      // `credit_note` returns are settled on a different (counter-sale) invoice, so the
+      // ORIGINAL invoice's money is left untouched here — only inventory, sales rows, and
+      // the return doc are written. `reduce_balance`/`cash_refund` still settle the original.
+      if (ret.settlement_type !== "credit_note") {
+        const nextReturned = roundMoney2(returnedSoFar + returnTotal);
+        const existingReturnIds = Array.isArray(invoice.return_ids) ? invoice.return_ids.filter(Boolean) : [];
+        const nextReturnIds = existingReturnIds.includes(trimmedReturnId)
+          ? existingReturnIds
+          : [...existingReturnIds, trimmedReturnId];
 
-      let nextPaid = getInvoicePaidAmount(invoice);
-      if (ret.settlement_type === "cash_refund") {
-        nextPaid = roundMoney2(Math.max(0, nextPaid - refundAmount));
+        let nextPaid = getInvoicePaidAmount(invoice);
+        if (ret.settlement_type === "cash_refund") {
+          nextPaid = roundMoney2(Math.max(0, nextPaid - refundAmount));
+        }
+
+        const nextPaymentStatus = derivePaymentStatus(
+          { ...invoice, returned_amount: nextReturned },
+          nextPaid,
+        );
+
+        tx.update(invoiceRef, {
+          returned_amount: nextReturned,
+          return_ids: nextReturnIds,
+          paid_amount: nextPaid,
+          payment_status: nextPaymentStatus,
+          updated_at: serverTimestamp(),
+        });
       }
-
-      const nextPaymentStatus = derivePaymentStatus(
-        { ...invoice, returned_amount: nextReturned },
-        nextPaid,
-      );
-
-      tx.update(invoiceRef, {
-        returned_amount: nextReturned,
-        return_ids: nextReturnIds,
-        paid_amount: nextPaid,
-        payment_status: nextPaymentStatus,
-        updated_at: serverTimestamp(),
-      });
 
       tx.update(returnRef, {
         status: "posted",
+        ledger_status: "pending",
         refund_amount: refundAmount,
         subtotal_amount: ret.subtotal_amount,
         total_amount: returnTotal,
@@ -798,6 +899,13 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
         updated_at: serverTimestamp(),
       });
     });
+    await fulfillReturnLedger(
+      db,
+      trimmedReturnId,
+      { ...preReturn, status: "posted" } as InvoiceReturnDoc,
+      restoreByProductForLedger,
+      auth.currentUser?.uid,
+    );
   } catch (e) {
     logFirestoreError("postReturn: transaction failed", e);
     if (e instanceof FirebaseError) {

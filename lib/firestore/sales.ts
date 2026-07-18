@@ -7,16 +7,17 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { assertLegacyInventoryApiAllowed } from "@/lib/inventory/config";
 import type { ProductDoc } from "@/lib/types/firestore";
 
 /**
- * Record a sale and decrement product stock in one transaction.
- * Uses the product's current `sale_price` for the sale line.
+ * @deprecated Use invoice drafts instead. Removed when INVENTORY_LEGACY_REMOVED=true.
  */
 export async function recordSale(
   db: Firestore,
   params: { productId: string; quantity: number },
 ): Promise<void> {
+  assertLegacyInventoryApiAllowed("recordSale");
   const { productId, quantity } = params;
   if (!Number.isInteger(quantity) || quantity <= 0) {
     throw new Error("Quantity must be a positive whole number.");

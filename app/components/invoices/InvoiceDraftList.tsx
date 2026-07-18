@@ -473,8 +473,11 @@ export function InvoiceDraftList() {
               const effectiveTotal = getInvoiceEffectiveTotal(row);
               const paidAmount = getInvoicePaidAmount(row);
               const amountDue = getInvoiceAmountDue(row);
+              // Inline counter-sale returns credit (items handed back on this invoice).
+              const returnsCredit = row.returns_credit_amount ?? 0;
+              const draftNet = Math.max(0, row.total_amount - returnsCredit);
               const displayTotal =
-                row.status === "posted" ? effectiveTotal : row.total_amount;
+                row.status === "posted" ? effectiveTotal : draftNet;
               const hasReturns = row.status === "posted" && returnedAmount > 0;
               const showPaymentSummary = row.status === "posted";
               const isFullyPaid = row.payment_status === "paid" || amountDue <= 0.01;
@@ -595,6 +598,9 @@ export function InvoiceDraftList() {
                       {hasReturns ? (
                         <div className="text-xs text-muted-foreground line-through">{formatMoney(postedTotal)}</div>
                       ) : null}
+                      {returnsCredit > 0 ? (
+                        <div className="text-xs text-accent-foreground">Returns −{formatMoney(returnsCredit)}</div>
+                      ) : null}
                       {paidAmount > 0.01 ? (
                         <div className="text-xs font-medium text-success">Paid {formatMoney(paidAmount)}</div>
                       ) : null}
@@ -603,6 +609,12 @@ export function InvoiceDraftList() {
                       ) : effectiveTotal > 0.01 ? (
                         <div className="text-xs font-medium text-success">Paid in full</div>
                       ) : null}
+                    </div>
+                  ) : returnsCredit > 0 ? (
+                    <div className="space-y-0.5">
+                      <div className="font-medium text-foreground">{formatMoney(displayTotal)}</div>
+                      <div className="text-xs text-muted-foreground line-through">{formatMoney(row.total_amount)}</div>
+                      <div className="text-xs text-accent-foreground">Returns −{formatMoney(returnsCredit)}</div>
                     </div>
                   ) : (
                     <span className="font-medium">{formatMoney(displayTotal)}</span>

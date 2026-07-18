@@ -23,6 +23,8 @@ import { formatMoney } from "@/app/components/dashboard/ProfitBreakdownCard";
 import { ReorderListModal } from "@/app/components/inventory/ReorderListModal";
 import { StockAdjustModal } from "@/app/components/inventory/StockAdjustModal";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
+import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
+import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
@@ -99,6 +101,13 @@ export function InventoryStockOperationsTab({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const lowOnly = searchParams.get("low") === "1";
+  const { settings: newArrivalSettings } = useNewArrivalSettings();
+
+  // The DisplayRow projection drops created_at; look it back up by id to badge new arrivals.
+  const createdAtById = useMemo(
+    () => new Map(products.map((p) => [p.id, p.created_at])),
+    [products],
+  );
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
@@ -164,7 +173,6 @@ export function InventoryStockOperationsTab({
         stock_quantity: row.stock_quantity,
         cost_price: row.cost_price,
         sale_price: row.sale_price,
-        pricing_mode: row.pricing_mode,
       })),
     [products],
   );
@@ -259,7 +267,6 @@ export function InventoryStockOperationsTab({
           productName={adjustRow.name}
           currentStock={adjustRow.stock_quantity}
           defaultUnitCost={adjustRow.cost_price}
-          pricingMode={adjustRow.pricing_mode ?? "manual"}
           onDismiss={() => setAdjustProductId(null)}
         />
       ) : null}
@@ -444,12 +451,18 @@ export function InventoryStockOperationsTab({
                       )}
                     >
                       <td className="px-4 py-3 font-medium text-foreground">
-                        <Link
-                          href={`/products/${row.id}`}
-                          className="text-primary underline-offset-2 hover:underline"
-                        >
-                          {row.name}
-                        </Link>
+                        <span className="flex items-center gap-2">
+                          <Link
+                            href={`/products/${row.id}`}
+                            className="text-primary underline-offset-2 hover:underline"
+                          >
+                            {row.name}
+                          </Link>
+                          <NewArrivalBadge
+                            createdAt={createdAtById.get(row.id)}
+                            thresholdDays={newArrivalSettings.thresholdDays}
+                          />
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
                       <td

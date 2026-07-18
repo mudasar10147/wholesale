@@ -3,24 +3,26 @@
 import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/components/auth/AuthProvider";
+import { defaultRouteForUser } from "@/lib/navigation";
 
 type AdminOnlyProps = {
   children: ReactNode;
 };
 
 /**
- * Restricts content to admin users. Clerks are redirected to Sales (Firestore rules already block writes).
+ * Restricts content to admin users. Everyone else is redirected to their own landing
+ * page (Firestore rules already block the reads and writes).
  */
 export function AdminOnly({ children }: AdminOnlyProps) {
-  const { loading, isAdmin } = useAuth();
+  const { loading, isAdmin, isClerk, isSocial } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
     if (!isAdmin) {
-      router.replace("/sales");
+      router.replace(defaultRouteForUser({ isAdmin, isClerk, isSocial }));
     }
-  }, [loading, isAdmin, router]);
+  }, [loading, isAdmin, isClerk, isSocial, router]);
 
   if (loading) {
     return (

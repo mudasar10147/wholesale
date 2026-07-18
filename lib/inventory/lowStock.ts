@@ -1,5 +1,3 @@
-import type { ProductDoc } from "@/lib/types/firestore";
-
 export const DEFAULT_LOW_STOCK_THRESHOLD = 5;
 
 export const LOW_STOCK_THRESHOLD_PRESETS = [0, 5, 10, 20] as const;
@@ -15,7 +13,6 @@ export type LowStockProductInput = {
   stock_quantity: number;
   cost_price: number;
   sale_price: number;
-  pricing_mode?: ProductDoc["pricing_mode"];
 };
 
 export type LowStockProductRow = {
@@ -27,7 +24,6 @@ export type LowStockProductRow = {
   sale_price: number;
   stockValueAtCost: number;
   status: LowStockStatus;
-  pricing_mode: "manual" | "automatic";
 };
 
 export type LowStockKpis = {
@@ -80,7 +76,6 @@ export function toLowStockRow(product: LowStockProductInput): LowStockProductRow
     sale_price: sale,
     stockValueAtCost: stock * cost,
     status: stock === 0 ? "out_of_stock" : "need_reorder",
-    pricing_mode: product.pricing_mode === "automatic" ? "automatic" : "manual",
   };
 }
 

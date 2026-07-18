@@ -4,8 +4,9 @@ import { type FormEvent, useEffect, useState } from "react";
 import Image from "next/image";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { updateProductDetails } from "@/lib/firestore/products";
+import { updateProductDetails, updateProductSalePrice } from "@/lib/firestore/products";
 import type { ProductDoc } from "@/lib/types/firestore";
+import { parseNonNegativeDecimal } from "@/lib/validation/numbers";
 import { deleteProductImageByPath, getSignedProductImageUrl, uploadProductImage } from "@/lib/upload/productImages";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -17,6 +18,9 @@ export type ProductEditRow = ProductDoc & { id: string };
 export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDismiss: () => void }) {
   const [name, setName] = useState(row.name);
   const [category, setCategory] = useState(row.category ?? "");
+  const [salePrice, setSalePrice] = useState(
+    typeof row.sale_price === "number" ? String(row.sale_price) : "",
+  );
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [removeImage, setRemoveImage] = useState(false);
   const [pending, setPending] = useState(false);
@@ -67,6 +71,11 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
       setError("Name is required.");
       return;
     }
+    const sale = parseNonNegativeDecimal(salePrice);
+    if (!sale.ok) {
+      setError(sale.message ?? "Sale price must be zero or greater.");
+      return;
+    }
     setPending(true);
     try {
       if (imageFile) {
@@ -105,6 +114,9 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
           image: { action: "keep" },
         });
       }
+      if (sale.value !== row.sale_price) {
+        await updateProductSalePrice(getDb(), row.id, sale.value);
+      }
       onDismiss();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
@@ -132,7 +144,7 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
         <h2 id="edit-product-title" className="text-lg font-semibold text-foreground">
           Edit product
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">Name, category, and product image.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Name, category, sale price, and product image.</p>
         <form onSubmit={onSubmit} className="mt-4 space-y-4" noValidate>
           <div className="space-y-2">
             <Label htmlFor="edit-product-name">Name</Label>
@@ -155,6 +167,21 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
               onChange={(e) => setCategory(e.target.value)}
               placeholder="e.g. Grains"
             />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-product-sale">Sale price</Label>
+            <Input
+              id="edit-product-sale"
+              inputMode="decimal"
+              min={0}
+              step="any"
+              value={salePrice}
+              onChange={(e) => setSalePrice(e.target.value)}
+              placeholder="0"
+            />
+            <p className="text-xs text-muted-foreground">
+              Cost price is set from stock purchases and can’t be edited here.
+            </p>
           </div>
           <div className="space-y-2">
             <Label htmlFor="edit-product-image">Replace image (optional)</Label>

@@ -6,6 +6,15 @@ import type { Timestamp } from "firebase/firestore";
  */
 export type PricingMode = "manual" | "automatic";
 
+/** Inventory ledger outbox status on source documents (invoice, return, discard, product). */
+export type LedgerStatus = "pending" | "posted" | "failed" | "not_applicable";
+
+export type LedgerOutboxFields = {
+  ledger_status?: LedgerStatus;
+  inventory_transaction_id?: string;
+  ledger_error?: string;
+};
+
 export type ProductDoc = {
   name: string;
   category?: string;
@@ -21,6 +30,10 @@ export type ProductDoc = {
   target_margin_percent?: number;
   pricing_mode?: PricingMode;
   pricing_updated_at?: Timestamp;
+  /** Opening-balance ledger (initial stock on product create). */
+  opening_ledger_status?: LedgerStatus;
+  opening_inventory_transaction_id?: string;
+  opening_ledger_error?: string;
   created_at: Timestamp;
 };
 
@@ -168,6 +181,20 @@ export type CustomerEngagementSettingsDoc = {
 export const CUSTOMER_ENGAGEMENT_SETTINGS_DOC_ID = "customer_engagement";
 
 /**
+ * Document shape for `settings/new_arrival` — how long a product counts as newly arrived.
+ *
+ * "New arrival" means newly *created* (a brand-new SKU), NOT recently restocked. A product
+ * is a new arrival while `now - created_at` is within `threshold_days`.
+ */
+export type NewArrivalSettingsDoc = {
+  threshold_days: number;
+  updated_at: Timestamp;
+};
+
+export const NEW_ARRIVAL_SETTINGS_DOC_ID = "new_arrival";
+export const DEFAULT_NEW_ARRIVAL_THRESHOLD_DAYS = 30;
+
+/**
  * Document shape for `customers/{customerId}`.
  */
 export type CustomerDoc = {
@@ -219,6 +246,28 @@ export type PartyDoc = {
 export type InvoiceStatus = "draft" | "posted" | "void";
 export type InvoicePaymentStatus = "unpaid" | "partial" | "paid";
 
+/** Outbox state for materializing an invoice's inline return lines after the sale posts. */
+export type ReturnsPostStatus = "pending" | "posted";
+
+/**
+ * An inline "counter-sale" return captured on an invoice: an item the customer is handing
+ * back, resolved to a specific line on one of their past posted invoices. Embedded on the
+ * invoice draft; materialized into a real `invoice_returns` doc when the invoice is posted.
+ */
+export type InvoiceReturnLineEmbedded = {
+  original_invoice_id: string;
+  original_invoice_item_id: string;
+  original_order_id: string;
+  product_id: string;
+  quantity_returned: number;
+  quantity_restock: number;
+  quantity_discard: number;
+  /** Original unit price the customer paid. */
+  unit_price: number;
+  /** Proportional credit for this return line, at the original price. */
+  line_total: number;
+};
+
 /**
  * Document shape for `invoices/{invoiceId}`.
  * `customer_id` references `customers/{customerId}`.
@@ -231,6 +280,14 @@ export type InvoiceDoc = {
   payment_status: InvoicePaymentStatus;
   paid_amount: number;
   stock_reversal_applied: boolean;
+  /** Ledger outbox for SALE transaction on post. */
+  ledger_status?: LedgerStatus;
+  inventory_transaction_id?: string;
+  ledger_error?: string;
+  /** Ledger outbox for SALE_VOID transaction on void. */
+  void_ledger_status?: LedgerStatus;
+  void_inventory_transaction_id?: string;
+  void_ledger_error?: string;
   item_ids: string[];
   subtotal_amount: number;
   discount_amount: number;
@@ -245,6 +302,16 @@ export type InvoiceDoc = {
   returned_amount?: number;
   /** Posted return document IDs linked to this invoice. */
   return_ids?: string[];
+  /** Inline counter-sale returns captured on this invoice (present while a draft). */
+  return_lines?: InvoiceReturnLineEmbedded[];
+  /** Sum of return line credits, R. */
+  returns_credit_amount?: number;
+  /** Cash handed back when returns exceed the sale total, max(0, R − sale). */
+  cash_refund_amount?: number;
+  /** IDs of the invoice_returns materialized from `return_lines` at post. */
+  attached_return_ids?: string[];
+  /** Outbox: whether the inline returns have been materialized/posted after the sale. */
+  returns_post_status?: ReturnsPostStatus;
   notes?: string;
   posted_at?: Timestamp;
   voided_at?: Timestamp;
@@ -253,7 +320,14 @@ export type InvoiceDoc = {
 };
 
 export type InvoiceReturnStatus = "draft" | "posted" | "void";
-export type InvoiceReturnSettlementType = "reduce_balance" | "cash_refund";
+/**
+ * How a return's value is settled.
+ * - `reduce_balance` / `cash_refund` settle against the return's OWN original invoice.
+ * - `credit_note` records the return for inventory + returnable tracking but does NOT touch
+ *   the original invoice's balance; the credit is applied elsewhere (e.g. a counter-sale
+ *   invoice that nets the return against a new sale).
+ */
+export type InvoiceReturnSettlementType = "reduce_balance" | "cash_refund" | "credit_note";
 
 /**
  * Document shape for `invoice_returns/{returnId}`.
@@ -265,6 +339,9 @@ export type InvoiceReturnDoc = {
   customer_id: string;
   status: InvoiceReturnStatus;
   settlement_type: InvoiceReturnSettlementType;
+  ledger_status?: LedgerStatus;
+  inventory_transaction_id?: string;
+  ledger_error?: string;
   item_ids: string[];
   subtotal_amount: number;
   total_amount: number;
@@ -368,6 +445,10 @@ export type StockLotDoc = {
   qty_remaining: number;
   source: StockLotSource;
   reference_id?: string;
+  /** Warehouse/location; defaults to `default` when absent. */
+  warehouse_id?: string;
+  /** Link to creating inventory transaction line (go-forward). */
+  inventory_transaction_id?: string;
   /** Denormalized trader name at receipt time (from Traders management). */
   purchase_source?: string;
   /** Link to `traders/{traderId}` — required on new stock-in receipts. */
@@ -426,6 +507,9 @@ export type InventoryDiscardDoc = {
   total_quantity: number;
   total_cogs_amount: number;
   item_ids: string[];
+  ledger_status?: LedgerStatus;
+  inventory_transaction_id?: string;
+  ledger_error?: string;
   created_at: Timestamp;
 };
 
@@ -453,3 +537,197 @@ export type InventoryDiscardLotDoc = {
   cogs_amount: number;
   created_at: Timestamp;
 };
+
+export type WarehouseDoc = {
+  code: string;
+  name: string;
+  is_active: boolean;
+  is_default: boolean;
+  address?: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+export type InventoryTransactionStatus = "draft" | "posted" | "void";
+
+export type InventoryTransactionType =
+  | "PURCHASE_RECEIPT"
+  | "STOCK_ISSUE"
+  | "SALE"
+  | "SALE_VOID"
+  | "SALES_RETURN"
+  | "ADJUSTMENT"
+  | "DAMAGE"
+  | "OPENING_BALANCE"
+  | "TRANSFER";
+
+/**
+ * Header for `inventory_transactions/{transactionId}` — append-only after post.
+ */
+export type InventoryTransactionDoc = {
+  transaction_number: string;
+  type: InventoryTransactionType;
+  status: InventoryTransactionStatus;
+  warehouse_id: string;
+  to_warehouse_id?: string;
+  source_document_type?: string;
+  source_document_id?: string;
+  reason?: string;
+  notes?: string;
+  item_ids: string[];
+  posted_at?: Timestamp;
+  posted_by_uid?: string;
+  voided_at?: Timestamp;
+  voided_by_uid?: string;
+  reverses_transaction_id?: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+export type InventoryTransactionLineDoc = {
+  transaction_id: string;
+  product_id: string;
+  warehouse_id: string;
+  direction: "in" | "out";
+  quantity: number;
+  unit_cost: number;
+  total_cost: number;
+  lot_id?: string;
+  before_on_hand?: number;
+  after_on_hand?: number;
+  created_at: Timestamp;
+};
+
+export type SchemaMigrationDoc = {
+  version: string;
+  applied_at: Timestamp;
+  applied_by?: string;
+  backup_path?: string;
+  records_affected: number;
+  rollback_instructions: string;
+};
+
+export type InventoryShadowDiffDoc = {
+  context: string;
+  product_id?: string;
+  expected: Record<string, unknown>;
+  actual: Record<string, unknown>;
+  created_at: Timestamp;
+};
+
+/* ── Social media planner ─────────────────────────────────────────────────── */
+
+/**
+ * Where a post's products came from — hand-picked, or the suggestion lens that seeded them.
+ * Recorded for the badge on the post card; `custom` means the post carries no products.
+ */
+export type SocialPostKind =
+  | "products"
+  | "random"
+  | "best_sellers"
+  | "aging_stock"
+  | "new_arrivals"
+  | "offer"
+  | "custom";
+
+/**
+ * The medium a post is sent in. Paired with `kind` it yields the post's type — see
+ * `postTypeOf` in `lib/social/postTypes`, which is what the UI actually works in.
+ *
+ * `image` and `video` are legacy: they meant "media with no message", and no new post is
+ * written with them. They are read as their `_text` counterparts.
+ */
+export type SocialPostFormat = "text" | "image" | "image_text" | "video" | "video_text";
+
+export type SocialPostStatus = "draft" | "ready" | "posted" | "skipped";
+
+/** A pasted video/image link (Drive, YouTube, phone upload). Not a stored file. */
+export type SocialMediaLink = {
+  url: string;
+  label?: string;
+};
+
+export type SocialPostDoc = {
+  /** ISO week key, e.g. `2026-W29`. Equality-filtered — needs no composite index. */
+  week_key: string;
+  /** Local calendar day, `YYYY-MM-DD`. */
+  scheduled_date: string;
+  /** 24h local time, `HH:mm`. */
+  scheduled_time: string;
+  kind: SocialPostKind;
+  /** Absent on posts written before formats existed; those are read as `image_text`. */
+  format?: SocialPostFormat;
+  status: SocialPostStatus;
+  caption: string;
+  product_ids: string[];
+  offer_id?: string;
+  media_links: SocialMediaLink[];
+  note?: string;
+  posted_at?: Timestamp;
+  created_by: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+/**
+ * Where a week sits in the approval loop. The social manager builds the week, submits it,
+ * and an admin approves it before anything goes out.
+ *
+ * `revising` is an approved week the manager has pulled back to change: it is editable
+ * again, it can no longer be posted, and it has to be re-approved before it can be.
+ */
+export type SocialWeekPlanStatus =
+  | "draft"
+  | "submitted"
+  | "approved"
+  | "changes_requested"
+  | "revising";
+
+/** Doc id is the ISO week key. A week with no doc has never been submitted — it is a draft. */
+export type SocialWeekPlanDoc = {
+  week_key: string;
+  status: SocialWeekPlanStatus;
+  submitted_by?: string;
+  submitted_at?: Timestamp;
+  reviewed_by?: string;
+  reviewed_at?: Timestamp;
+  /** The admin's reason, set when they send a week back for changes. */
+  review_note?: string;
+  updated_at: Timestamp;
+};
+
+export type SocialOfferDiscountType = "percent" | "flat" | "none";
+
+export type SocialOfferDoc = {
+  title: string;
+  description?: string;
+  discount_type: SocialOfferDiscountType;
+  /** Percent (0–100) or flat currency amount. Ignored when discount_type is "none". */
+  discount_value: number;
+  product_ids: string[];
+  /** `YYYY-MM-DD`. */
+  starts_on: string;
+  ends_on: string;
+  is_active: boolean;
+  created_by: string;
+  created_at: Timestamp;
+  updated_at: Timestamp;
+};
+
+/** Doc id is the ISO week key. */
+export type SocialNoteDoc = {
+  week_key: string;
+  body: string;
+  updated_by: string;
+  updated_at: Timestamp;
+};
+
+/** How every composed caption is worded. Set from the Firestore console; read on every page. */
+export type SocialMediaSettingsDoc = {
+  /** Trailing call-to-action appended to every caption. */
+  footer_line: string;
+  currency_prefix: string;
+  updated_at: Timestamp;
+};
+
+export const SOCIAL_MEDIA_SETTINGS_DOC_ID = "social_media";

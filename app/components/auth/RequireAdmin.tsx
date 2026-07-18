@@ -39,8 +39,9 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
         <h1 className="text-lg font-semibold text-foreground">Not authorized</h1>
         <p className="text-sm text-muted-foreground">
           This account is not allowed to use the app. Ask an owner to set the{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">admin</code> or{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: clerk</code> custom claim on your
+          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">admin</code>,{" "}
+          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: clerk</code>, or{" "}
+          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: social</code> custom claim on your
           user in Firebase.
         </p>
         <Button

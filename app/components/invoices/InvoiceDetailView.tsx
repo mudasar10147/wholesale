@@ -408,6 +408,16 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           created_at_label: formatDate(invoice.created_at),
           calc,
           productNames: productMap,
+          returnLines: (invoice.return_lines ?? []).map((rl) => ({
+            product_name: productMap.get(rl.product_id) ?? rl.product_id,
+            quantity: rl.quantity_returned,
+            unit_price: rl.unit_price,
+            line_total: rl.line_total,
+            mode:
+              rl.quantity_discard >= rl.quantity_returned && rl.quantity_returned > 0
+                ? ("discard" as const)
+                : ("restock" as const),
+          })),
         }),
       );
     } catch (printErr) {
@@ -672,6 +682,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           initialDelivery={String(invoice.delivery_charge)}
           initialNotes={invoice.notes ?? ""}
           initialLines={initialLinesForEdit}
+          initialReturnLines={invoice.return_lines}
           onSaved={() => {
             setEditing(false);
             setEditBanner("Draft updated.");
@@ -855,6 +866,25 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               </div>
             </dl>
 
+            {(invoice.returns_credit_amount ?? 0) > 0 ? (
+              <dl className="mt-3 grid gap-2 border-t border-border pt-3 text-sm sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <dt className="text-muted-foreground">Returns credit (items handed back)</dt>
+                  <dd className="font-semibold tabular-nums text-accent-foreground">
+                    −{formatMoney(invoice.returns_credit_amount ?? 0)}
+                  </dd>
+                </div>
+                {(invoice.cash_refund_amount ?? 0) > 0 ? (
+                  <div className="sm:col-span-2">
+                    <dt className="text-muted-foreground">Cash refunded to customer</dt>
+                    <dd className="font-semibold tabular-nums text-foreground">
+                      {formatMoney(invoice.cash_refund_amount ?? 0)}
+                    </dd>
+                  </div>
+                ) : null}
+              </dl>
+            ) : null}
+
             {returnedAmount > 0 ? (
               <dl className="mt-3 grid gap-2 border-t border-border pt-3 text-sm sm:grid-cols-2">
                 <div className="sm:col-span-2">
@@ -887,8 +917,42 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
                   <dd className="text-lg font-semibold text-foreground">{formatMoney(invoice.total_amount)}</dd>
                 </div>
               ) : null}
+              {isDraft && (invoice.returns_credit_amount ?? 0) > 0 ? (
+                <div>
+                  <dt className="text-muted-foreground">Net payable after returns</dt>
+                  <dd className="text-lg font-bold tabular-nums text-foreground">
+                    {formatMoney(Math.max(0, invoice.total_amount - (invoice.returns_credit_amount ?? 0)))}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
           </div>
+
+          {(invoice.return_lines?.length ?? 0) > 0 ? (
+            <div className="rounded-lg border border-border p-4">
+              <h3 className="text-sm font-semibold text-foreground">Returns &amp; discards on this invoice</h3>
+              <ul className="mt-2 space-y-1 text-sm">
+                {(invoice.return_lines ?? []).map((rl, i) => {
+                  const name = productMap.get(rl.product_id) ?? rl.product_id;
+                  const disposition =
+                    rl.quantity_discard > 0 && rl.quantity_restock > 0
+                      ? `restock ${rl.quantity_restock}, discard ${rl.quantity_discard}`
+                      : rl.quantity_discard >= rl.quantity_returned
+                        ? "discarded"
+                        : "restocked";
+                  return (
+                    <li key={`${rl.original_invoice_item_id}-${i}`} className="flex flex-wrap justify-between gap-2">
+                      <span className="text-foreground">
+                        {name} · x{rl.quantity_returned}{" "}
+                        <span className="text-muted-foreground">({disposition})</span>
+                      </span>
+                      <span className="tabular-nums text-muted-foreground">−{formatMoney(rl.line_total)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
 
           {linkedReturns.length > 0 ? <InvoiceReturnLinks returns={linkedReturns} /> : null}
 

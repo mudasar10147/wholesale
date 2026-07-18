@@ -7,12 +7,12 @@ import {
   updateDoc,
   type Firestore,
 } from "firebase/firestore";
-import { inheritPricingFieldsForNewProduct } from "@/lib/pricing/automaticPricing";
-import { automaticSalePrice } from "@/lib/pricing/metrics";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { getAuthClient } from "@/lib/firebase";
 import { applyStockInInTransaction, loadTraderNameForStockIn } from "@/lib/firestore/inventory";
-import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
-import type { PricingMode, ProductDoc } from "@/lib/types/firestore";
+import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
+import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
+import type { ProductDoc } from "@/lib/types/firestore";
 
 type ProductImageMeta = {
   path: string;
@@ -35,8 +35,6 @@ export type CreateProductInput = {
   initial_quantity: number;
   /** Required when initial_quantity > 0 — trader from Traders management. */
   trader_id?: string;
-  target_margin_percent?: number;
-  pricing_mode?: PricingMode;
   image?: {
     url: string;
     path: string;
@@ -85,24 +83,12 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
       ? await loadTraderNameForStockIn(db, input.trader_id!.trim())
       : "";
 
-  const settings = await loadPricingSettings(db);
   const cat = input.category?.trim();
-  const inherited = inheritPricingFieldsForNewProduct(
-    cat,
-    settings.categoryTemplates,
-    settings.globalDefaultTargetMarginPercent,
-    input.cost_price,
-  );
-
-  const pricing_mode = input.pricing_mode ?? inherited.pricing_mode;
-  const target_margin_percent =
-    input.target_margin_percent ?? inherited.target_margin_percent ?? settings.globalDefaultTargetMarginPercent;
-  let sale_price = input.sale_price;
-  if (pricing_mode === "automatic") {
-    sale_price = automaticSalePrice(input.cost_price, target_margin_percent);
-  }
+  const sale_price = input.sale_price;
 
   const productRef = doc(collection(db, COLLECTIONS.products));
+  const productId = productRef.id;
+  const uid = getAuthClient().currentUser?.uid;
 
   await runTransaction(db, async (tx) => {
     const payload: Record<string, unknown> = {
@@ -110,9 +96,6 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
       cost_price: input.cost_price,
       sale_price,
       stock_quantity: 0,
-      target_margin_percent,
-      pricing_mode,
-      pricing_updated_at: serverTimestamp(),
       created_at: serverTimestamp(),
     };
     if (cat) {
@@ -131,8 +114,6 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
       const seedProduct = {
         cost_price: input.cost_price,
         sale_price,
-        pricing_mode,
-        target_margin_percent,
         category: cat,
       } as ProductDoc;
       applyStockInInTransaction(
@@ -143,18 +124,45 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
         seedProduct,
         input.initial_quantity,
         input.cost_price,
-        pricing_mode === "manual" ? sale_price : undefined,
-        {
-          categoryTemplates: settings.categoryTemplates,
-          globalDefault: settings.globalDefaultTargetMarginPercent,
-        },
+        sale_price,
         input.trader_id!.trim(),
         traderName,
       );
     }
   });
 
-  return productRef.id;
+  if (input.initial_quantity > 0) {
+    const binding: LedgerSourceBinding = {
+      collection: COLLECTIONS.products,
+      docId: productId,
+      statusField: "opening_ledger_status",
+      transactionIdField: "opening_inventory_transaction_id",
+      errorField: "opening_ledger_error",
+    };
+    await fulfillLedgerOutbox(
+      db,
+      {
+        type: "OPENING_BALANCE",
+        warehouse_id: DEFAULT_WAREHOUSE_ID,
+        source_document_type: "product_create",
+        source_document_id: productId,
+        posted_by_uid: uid,
+        lines: [
+          {
+            product_id: productId,
+            warehouse_id: DEFAULT_WAREHOUSE_ID,
+            direction: "in",
+            quantity: input.initial_quantity,
+            unit_cost: input.cost_price,
+          },
+        ],
+      },
+      binding,
+      { stockCommitted: true },
+    );
+  }
+
+  return productId;
 }
 
 /**
@@ -195,4 +203,19 @@ export async function updateProductDetails(
     payload.image_updated_at = serverTimestamp();
   }
   await updateDoc(doc(db, COLLECTIONS.products, productId), payload);
+}
+
+/**
+ * Set a product's sale price manually. Cost price is not editable here — it is derived from
+ * stock receipts (FIFO lots).
+ */
+export async function updateProductSalePrice(
+  db: Firestore,
+  productId: string,
+  salePrice: number,
+): Promise<void> {
+  if (typeof salePrice !== "number" || !Number.isFinite(salePrice) || salePrice < 0) {
+    throw new Error("Sale price must be zero or greater.");
+  }
+  await updateDoc(doc(db, COLLECTIONS.products, productId), { sale_price: salePrice });
 }

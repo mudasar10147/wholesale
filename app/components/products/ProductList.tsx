@@ -14,6 +14,8 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
+import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
+import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
@@ -35,6 +37,7 @@ function formatDate(ts: Timestamp) {
 
 export function ProductList() {
   const router = useRouter();
+  const { settings: newArrivalSettings } = useNewArrivalSettings();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -171,7 +174,15 @@ export function ProductList() {
                       i % 2 === 1 ? "bg-surface-muted/50" : "bg-surface",
                     )}
                   >
-                    <td className="px-4 py-3 font-medium text-foreground">{row.name}</td>
+                    <td className="px-4 py-3 font-medium text-foreground">
+                      <span className="flex items-center gap-2">
+                        {row.name}
+                        <NewArrivalBadge
+                          createdAt={row.created_at}
+                          thresholdDays={newArrivalSettings.thresholdDays}
+                        />
+                      </span>
+                    </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
                     <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.cost_price)}</td>
                     <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.sale_price)}</td>

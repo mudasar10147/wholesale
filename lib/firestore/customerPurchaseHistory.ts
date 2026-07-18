@@ -10,6 +10,7 @@ import {
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { loadReturnedQtyByItemId } from "@/lib/firestore/invoiceReturns";
+import { getInvoiceAmountDue } from "@/lib/invoices/invoiceEffective";
 import type { InvoiceDoc, InvoiceItemDoc } from "@/lib/types/firestore";
 
 export type CustomerPurchaseLine = {
@@ -25,6 +26,8 @@ export type CustomerPurchaseLine = {
   lineDeliveryCharge: number;
   lineTotal: number;
   invoiceDate: Timestamp | null;
+  /** Whether the source invoice is fully paid — inline counter-sale returns require this. */
+  invoiceFullyPaid: boolean;
 };
 
 /**
@@ -65,6 +68,7 @@ export async function fetchCustomerPurchaseLines(
 
       const returnedByItem = await loadReturnedQtyByItemId(db, invoiceId);
       const invoiceDate = invoice.posted_at ?? invoice.created_at ?? null;
+      const invoiceFullyPaid = getInvoiceAmountDue(invoice) <= 0.01;
 
       for (const { id, data } of items) {
         const sold = data.quantity;
@@ -82,6 +86,7 @@ export async function fetchCustomerPurchaseLines(
           lineDeliveryCharge: data.line_delivery_charge,
           lineTotal: data.line_total,
           invoiceDate,
+          invoiceFullyPaid,
         });
       }
     }),

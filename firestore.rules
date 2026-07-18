@@ -13,8 +13,17 @@ service cloud.firestore {
     function isClerk() {
       return isSignedIn() && request.auth.token.role == 'clerk';
     }
+    // Social media manager: the WhatsApp content planner only. Deliberately NOT part of
+    // isStaff() — they must never read sales, stock_lots, customers, or anything financial.
+    // Product suggestions are computed server-side and returned already sanitized.
+    function isSocial() {
+      return isSignedIn() && request.auth.token.role == 'social';
+    }
     function isStaff() {
       return isAdmin() || isClerk();
+    }
+    function isSocialManager() {
+      return isAdmin() || isSocial();
     }
     // Admin customer merge: repoint customer_id only (optionally touch updated_at).
     function adminCustomerIdReassignOnly(res, req) {
@@ -148,6 +157,11 @@ service cloud.firestore {
       && (!('voided_at' in data) || data.voided_at == null || data.voided_at is timestamp)
       && (!('returned_amount' in data) || (data.returned_amount is number && data.returned_amount >= 0))
       && (!('return_ids' in data) || data.return_ids is list)
+      && (!('return_lines' in data) || data.return_lines is list)
+      && (!('returns_credit_amount' in data) || (data.returns_credit_amount is number && data.returns_credit_amount >= 0))
+      && (!('cash_refund_amount' in data) || (data.cash_refund_amount is number && data.cash_refund_amount >= 0))
+      && (!('attached_return_ids' in data) || data.attached_return_ids is list)
+      && (!('returns_post_status' in data) || data.returns_post_status in ['pending', 'posted'])
       && data.created_at is timestamp
       && data.updated_at is timestamp;
     }
@@ -196,9 +210,14 @@ service cloud.firestore {
             && data.purchase_source is string
             && data.purchase_source.size() > 0);
     }
-    function validStockLotTraderField(data) {
+    function validStockLotTraderFieldOnCreate(data) {
       return data.source != 'stock_in'
         || ('trader_id' in data && data.trader_id is string && data.trader_id.size() > 0);
+    }
+    function validStockLotTraderFieldOnUpdate(res, req) {
+      return req.source != 'stock_in'
+        || ('trader_id' in req && req.trader_id is string && req.trader_id.size() > 0)
+        || (res.source == 'stock_in' && !('trader_id' in res));
     }
     function validStockLotBase(data) {
       return data.product_id is string
@@ -213,7 +232,6 @@ service cloud.firestore {
       && data.source in ['stock_in', 'opening_balance', 'adjustment']
       && (!('reference_id' in data) || (data.reference_id is string && data.reference_id.size() > 0))
       && validStockLotPurchaseSourceField(data)
-      && validStockLotTraderField(data)
       && data.received_at is timestamp
       && data.created_at is timestamp
       && data.updated_at is timestamp;
@@ -339,6 +357,13 @@ service cloud.firestore {
       && data.bronze_max_spend >= 0
       && data.updated_at is timestamp;
     }
+    function validNewArrivalSettings(data) {
+      return hasOnlyKeys(data, ['threshold_days', 'updated_at'])
+      && data.threshold_days is number
+      && data.threshold_days >= 1
+      && data.threshold_days <= 365
+      && data.updated_at is timestamp;
+    }
     function validCashEntryBase(data) {
       return hasOnlyKeys(data, ['entry_type', 'amount', 'date', 'note', 'party_id', 'party_name', 'loan_kind', 'created_at'])
       && data.entry_type in ['add', 'remove']
@@ -440,6 +465,13 @@ service cloud.firestore {
     function invoiceReturnVoidedAtUnchanged(res, req) {
       return (!('voided_at' in res) && !('voided_at' in req)) || req.voided_at == res.voided_at;
     }
+    // Post-commit inventory-ledger bookkeeping (fulfillLedgerOutbox) writes these fields
+    // back onto an already-posted return; allow only these keys with status unchanged.
+    function invoiceReturnLedgerBookkeepingOnly(res, req) {
+      return req.diff(res).affectedKeys().hasOnly(['ledger_status', 'inventory_transaction_id', 'ledger_error', 'updated_at'])
+        && req.status == res.status
+        && (!('ledger_status' in req) || req.ledger_status in ['pending', 'posted', 'failed']);
+    }
     function validInvoiceReturnBase(data) {
       return data.return_number is string
       && data.return_number.size() >= 6
@@ -453,7 +485,7 @@ service cloud.firestore {
       && data.customer_id is string
       && data.customer_id.size() > 0
       && data.status in ['draft', 'posted', 'void']
-      && data.settlement_type in ['reduce_balance', 'cash_refund']
+      && data.settlement_type in ['reduce_balance', 'cash_refund', 'credit_note']
       && data.item_ids is list
       && data.item_ids.size() > 0
       && data.subtotal_amount is number
@@ -663,6 +695,235 @@ service cloud.firestore {
           req.paid_amount <= res.paid_amount
         );
     }
+    // Cheap discriminator: did this update change returned_amount? Used to dispatch
+    // posted-invoice updates to exactly one deep validator so a single allow-update
+    // expression tree stays well under Firestore's 1000-expression evaluation cap.
+    function invoiceReturnedAmountChanged(res, req) {
+      return ('returned_amount' in req)
+        && (!('returned_amount' in res) || req.returned_amount != res.returned_amount);
+    }
+    function invoicePostedToVoidOnly(res, req) {
+      return req.status == 'void'
+        && req.stock_reversal_applied == true
+        && req.voided_at is timestamp
+        && postedAtUnchanged(res, req)
+        && req.posted_subtotal_amount == res.posted_subtotal_amount
+        && req.posted_discount_amount == res.posted_discount_amount
+        && req.posted_delivery_charge == res.posted_delivery_charge
+        && req.posted_total_amount == res.posted_total_amount
+        && req.posted_cogs_amount == res.posted_cogs_amount;
+    }
+    // Dispatch posted-invoice updates by what actually changed so only ONE of the
+    // large payment/discount/return validators is evaluated per request.
+    function invoicePostedUpdateAllowed(res, req) {
+      return req.status == 'void'
+        ? invoicePostedToVoidOnly(res, req)
+        : invoiceReturnedAmountChanged(res, req)
+          ? invoicePostedReturnAdjustmentOnly(res, req)
+          : (req.discount_amount != res.discount_amount)
+            ? invoicePostedDiscountUpdateOnly(res, req)
+            : invoicePostedPaymentUpdateOnly(res, req);
+    }
+    function invoiceDraftUpdateAllowed(res, req) {
+      return (
+        req.status == 'draft'
+        && postedAtUnchanged(res, req)
+        && voidedAtUnchanged(res, req)
+        && req.stock_reversal_applied == false
+      ) || (
+        req.status == 'posted'
+        && req.posted_at is timestamp
+        && voidedAtUnchanged(res, req)
+        && approxHeaderMoneyEq(req.posted_subtotal_amount, res.subtotal_amount)
+        && approxHeaderMoneyEq(req.posted_discount_amount, res.discount_amount)
+        && approxHeaderMoneyEq(req.posted_delivery_charge, res.delivery_charge)
+        && approxHeaderMoneyEq(req.posted_total_amount, res.total_amount)
+        && req.posted_cogs_amount is number
+        && req.posted_cogs_amount >= 0
+        && req.stock_reversal_applied == false
+      ) || (
+        req.status == 'void'
+        && req.stock_reversal_applied == false
+        && req.voided_at is timestamp
+        && postedAtUnchanged(res, req)
+        && (
+          !('posted_total_amount' in res)
+          || (
+            req.posted_subtotal_amount == res.posted_subtotal_amount
+            && req.posted_discount_amount == res.posted_discount_amount
+            && req.posted_delivery_charge == res.posted_delivery_charge
+            && req.posted_total_amount == res.posted_total_amount
+            && req.posted_cogs_amount == res.posted_cogs_amount
+          )
+        )
+      );
+    }
+
+    // matches() is a FULL-string match in rules. A size() check is not enough here:
+    // '17/07/2026' is also 10 characters and would sail through one.
+    function isWeekKey(value) {
+      return value is string && value.matches('[0-9]{4}-W[0-9]{2}');
+    }
+    function isDateKey(value) {
+      return value is string && value.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}');
+    }
+    function isTimeOfDay(value) {
+      return value is string && value.matches('([01][0-9]|2[0-3]):[0-5][0-9]');
+    }
+    function validSocialPostBase(data) {
+      return hasOnlyKeys(data, [
+        'week_key',
+        'scheduled_date',
+        'scheduled_time',
+        'kind',
+        'format',
+        'status',
+        'caption',
+        'product_ids',
+        'offer_id',
+        'media_links',
+        'note',
+        'posted_at',
+        'created_by',
+        'created_at',
+        'updated_at',
+      ])
+      && isWeekKey(data.week_key)
+      && isDateKey(data.scheduled_date)
+      && isTimeOfDay(data.scheduled_time)
+      && data.kind in [
+        'products', 'random', 'best_sellers', 'aging_stock', 'new_arrivals', 'offer', 'custom'
+      ]
+      // Optional: posts written before formats existed carry no `format`, and a status
+      // toggle on one of those must not be rejected. 'image' and 'video' are legacy —
+      // still accepted so an old post can be ticked as posted, but never written anew.
+      && (!('format' in data)
+          || data.format in ['text', 'image', 'image_text', 'video', 'video_text'])
+      && data.status in ['draft', 'ready', 'posted', 'skipped']
+      && data.caption is string
+      && data.caption.size() <= 4096
+      && data.product_ids is list
+      && data.product_ids.size() <= 50
+      && data.media_links is list
+      && data.media_links.size() <= 10
+      && data.created_by is string
+      && data.created_by.size() > 0;
+    }
+    // ── Weekly approval loop ───────────────────────────────────────────────
+    // The social manager builds a week and submits it; an admin approves it before any
+    // of it goes out. A week with no plan doc has never been submitted, so it is a draft.
+    function weekPlanPath(weekKey) {
+      return /databases/$(database)/documents/social_week_plans/$(weekKey);
+    }
+    function weekPlanStatus(weekKey) {
+      return exists(weekPlanPath(weekKey))
+        ? get(weekPlanPath(weekKey)).data.status
+        : 'draft';
+    }
+    /**
+     * Open for editing: nobody is reviewing it and it is not yet locked in. `revising` is an
+     * approved week the manager pulled back to change — editable again, but it can no longer
+     * be posted (that needs 'approved') so it has to go back through the admin.
+     */
+    function socialWeekIsOpen(weekKey) {
+      return weekPlanStatus(weekKey) in ['draft', 'changes_requested', 'revising'];
+    }
+    /**
+     * The one write an approved week still takes: ticking a post as posted or skipped.
+     * Everything else about the post is what the admin signed off on.
+     */
+    function socialPostStatusOnlyChange(res, req) {
+      return req.diff(res).affectedKeys().hasOnly(['status', 'posted_at', 'updated_at']);
+    }
+    function validSocialWeekPlan(data, weekKey) {
+      return hasOnlyKeys(data, [
+        'week_key',
+        'status',
+        'submitted_by',
+        'submitted_at',
+        'reviewed_by',
+        'reviewed_at',
+        'review_note',
+        'updated_at',
+      ])
+      && isWeekKey(data.week_key)
+      && data.week_key == weekKey
+      && data.status in ['draft', 'submitted', 'approved', 'changes_requested', 'revising']
+      && (!('review_note' in data)
+          || (data.review_note is string && data.review_note.size() <= 500));
+    }
+    /**
+     * A non-admin may push a week into review, pull it back out before the admin has acted,
+     * or reopen an approved week to change it. Approving is not theirs to do — and neither is
+     * stamping the review, so a manager cannot forge a reviewed_by and call the week signed
+     * off. Because these writes must carry no reviewed_* keys, the client writes the plan doc
+     * whole rather than merging: an approval the manager reopens is void, not preserved.
+     */
+    function socialManagerWeekPlanWrite(data, prevStatus) {
+      return (
+              // Send for approval — including resubmitting a week that was sent back or revised.
+              (prevStatus in ['draft', 'changes_requested', 'revising'] && data.status == 'submitted')
+              // Pull it back before the admin has looked at it.
+              || (prevStatus == 'submitted' && data.status == 'draft')
+              // Reopen an approved week to change it. It cannot be posted again until the
+              // admin re-approves, because canMarkPosted only ever holds for 'approved'.
+              || (prevStatus == 'approved' && data.status == 'revising')
+             )
+        && !('reviewed_by' in data)
+        && !('reviewed_at' in data)
+        && !('review_note' in data)
+        && (data.status != 'submitted'
+            || (data.submitted_by is string && data.submitted_by == request.auth.uid));
+    }
+    function validSocialOfferBase(data) {
+      return hasOnlyKeys(data, [
+        'title',
+        'description',
+        'discount_type',
+        'discount_value',
+        'product_ids',
+        'starts_on',
+        'ends_on',
+        'is_active',
+        'created_by',
+        'created_at',
+        'updated_at',
+      ])
+      && data.title is string
+      && data.title.size() > 0
+      && data.title.size() <= 200
+      && data.discount_type in ['percent', 'flat', 'none']
+      && data.discount_value is number
+      && data.discount_value >= 0
+      && data.product_ids is list
+      && data.product_ids.size() <= 100
+      && isDateKey(data.starts_on)
+      && isDateKey(data.ends_on)
+      && data.ends_on >= data.starts_on
+      && data.is_active is bool
+      && data.created_by is string
+      && data.created_by.size() > 0;
+    }
+    function validSocialNote(data, docId) {
+      return hasOnlyKeys(data, ['week_key', 'body', 'updated_by', 'updated_at'])
+      && isWeekKey(data.week_key)
+      && data.week_key == docId
+      && data.body is string
+      && data.body.size() <= 20000
+      && data.updated_by is string
+      && data.updated_by.size() > 0;
+    }
+    function validSocialMediaSettings(data) {
+      return hasOnlyKeys(data, [
+        'footer_line',
+        'currency_prefix',
+        'updated_at',
+      ])
+      && data.footer_line is string
+      && data.footer_line.size() <= 300
+      && data.currency_prefix is string
+      && data.currency_prefix.size() <= 10;
+    }
 
     // Phase 1 smoke test (optional)
     match /phase1_smoke/{docId} {
@@ -684,12 +945,26 @@ service cloud.firestore {
       allow create, update: if isAdmin() && validCashEntryBase(request.resource.data);
     }
     match /settings/{docId} {
-      allow read: if isAdmin();
-      allow create, update: if isAdmin()
-        && (
-          (docId == 'cash' && validCashSettings(request.resource.data))
-          || (docId == 'pricing' && validPricingSettings(request.resource.data))
-          || (docId == 'customer_engagement' && validCustomerEngagementSettings(request.resource.data))
+      // The social manager reads/writes only their own planner config — never cash or pricing.
+      // The new-arrival window is a non-sensitive display rule read by every product surface,
+      // so any signed-in user may read it (only admins may change it).
+      allow read: if isAdmin()
+        || (docId == 'social_media' && isSocial())
+        || (docId == 'new_arrival' && isSignedIn());
+      allow create, update: if
+        (
+          isAdmin()
+          && (
+            (docId == 'cash' && validCashSettings(request.resource.data))
+            || (docId == 'pricing' && validPricingSettings(request.resource.data))
+            || (docId == 'customer_engagement' && validCustomerEngagementSettings(request.resource.data))
+            || (docId == 'new_arrival' && validNewArrivalSettings(request.resource.data))
+          )
+        )
+        || (
+          docId == 'social_media'
+          && isSocialManager()
+          && validSocialMediaSettings(request.resource.data)
         );
       allow delete: if false;
     }
@@ -720,6 +995,31 @@ service cloud.firestore {
         && request.resource.data.merged_by_uid == request.auth.uid;
       allow update, delete: if false;
     }
+    match /warehouses/{docId} {
+      allow read: if isStaff();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+    match /inventory_transactions/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+    match /inventory_transaction_lines/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+    match /schema_migrations/{docId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+    match /inventory_shadow_diffs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
     match /invoices/{docId} {
       allow read: if isStaff();
       allow create: if isStaff() && validInvoiceBase(request.resource.data)
@@ -739,72 +1039,15 @@ service cloud.firestore {
         && (
           (isClerk() && invoiceDraftToDraftOnly(resource.data, request.resource.data))
           || (isAdmin() && (
-            (
-              resource.data.status == 'draft'
-              && request.resource.data.status == 'draft'
-              && postedAtUnchanged(resource.data, request.resource.data)
-              && voidedAtUnchanged(resource.data, request.resource.data)
-              && request.resource.data.stock_reversal_applied == false
-            )
+            adminCustomerIdReassignOnly(resource.data, request.resource.data)
             || (
               resource.data.status == 'draft'
-              && request.resource.data.status == 'posted'
-              && request.resource.data.posted_at is timestamp
-              && voidedAtUnchanged(resource.data, request.resource.data)
-              && approxHeaderMoneyEq(
-                request.resource.data.posted_subtotal_amount,
-                resource.data.subtotal_amount
-              )
-              && approxHeaderMoneyEq(
-                request.resource.data.posted_discount_amount,
-                resource.data.discount_amount
-              )
-              && approxHeaderMoneyEq(
-                request.resource.data.posted_delivery_charge,
-                resource.data.delivery_charge
-              )
-              && approxHeaderMoneyEq(
-                request.resource.data.posted_total_amount,
-                resource.data.total_amount
-              )
-              && request.resource.data.posted_cogs_amount is number
-              && request.resource.data.posted_cogs_amount >= 0
-              && request.resource.data.stock_reversal_applied == false
-            )
-            || (
-              resource.data.status == 'draft'
-              && request.resource.data.status == 'void'
-              && request.resource.data.stock_reversal_applied == false
-              && request.resource.data.voided_at is timestamp
-              && postedAtUnchanged(resource.data, request.resource.data)
-              && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
-              && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
-              && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
-              && request.resource.data.posted_total_amount == resource.data.posted_total_amount
-              && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
-            )
-            || (
-              invoicePostedPaymentUpdateOnly(resource.data, request.resource.data)
-            )
-            || (
-              invoicePostedDiscountUpdateOnly(resource.data, request.resource.data)
-            )
-            || (
-              invoicePostedReturnAdjustmentOnly(resource.data, request.resource.data)
+              && invoiceDraftUpdateAllowed(resource.data, request.resource.data)
             )
             || (
               resource.data.status == 'posted'
-              && request.resource.data.status == 'void'
-              && request.resource.data.stock_reversal_applied == true
-              && request.resource.data.voided_at is timestamp
-              && postedAtUnchanged(resource.data, request.resource.data)
-              && request.resource.data.posted_subtotal_amount == resource.data.posted_subtotal_amount
-              && request.resource.data.posted_discount_amount == resource.data.posted_discount_amount
-              && request.resource.data.posted_delivery_charge == resource.data.posted_delivery_charge
-              && request.resource.data.posted_total_amount == resource.data.posted_total_amount
-              && request.resource.data.posted_cogs_amount == resource.data.posted_cogs_amount
+              && invoicePostedUpdateAllowed(resource.data, request.resource.data)
             )
-            || adminCustomerIdReassignOnly(resource.data, request.resource.data)
           ))
         );
       allow delete: if isStaff() && resource.data.status == 'draft' && resource.data.stock_reversal_applied == false;
@@ -829,8 +1072,10 @@ service cloud.firestore {
       // Omit exists(product): admin-only create; avoids one exists() per opening_balance lot during invoice post
       // (transactions are limited to 20 cross-document rule reads total).
       allow create: if isAdmin() && validStockLotBase(request.resource.data)
+        && validStockLotTraderFieldOnCreate(request.resource.data)
         && stockLotPurchaseSourceOk('', request.resource.data);
       allow update: if isAdmin() && validStockLotBase(request.resource.data)
+        && validStockLotTraderFieldOnUpdate(resource.data, request.resource.data)
         && request.resource.data.product_id == resource.data.product_id
         && request.resource.data.qty_in == resource.data.qty_in
         && stockLotSourceTransitionAllowed(resource.data, request.resource.data)
@@ -883,6 +1128,7 @@ service cloud.firestore {
         && request.resource.data.order_id == resource.data.order_id
         && (
           adminCustomerIdReassignOnly(resource.data, request.resource.data)
+          || invoiceReturnLedgerBookkeepingOnly(resource.data, request.resource.data)
           || (
             request.resource.data.customer_id == resource.data.customer_id
             && (
@@ -1048,6 +1294,47 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';
       allow delete: if isStaff()
         && get(/databases/$(database)/documents/walk_in_sessions/$(sessionId)).data.status == 'pending';
+    }
+    // Social media planner. Readable and writable only by the social manager and admins.
+    // Writes are gated on the week's approval state: once a week is submitted its content
+    // is frozen, and an approved week only still accepts "I have posted this".
+    match /social_posts/{docId} {
+      allow read: if isSocialManager();
+      allow create: if isSocialManager() && validSocialPostBase(request.resource.data)
+        && (isAdmin() || socialWeekIsOpen(request.resource.data.week_key));
+      allow update: if isSocialManager() && validSocialPostBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.created_by == resource.data.created_by
+        // A post cannot be smuggled out of a locked week into an open one.
+        && request.resource.data.week_key == resource.data.week_key
+        && (isAdmin()
+            || socialWeekIsOpen(resource.data.week_key)
+            || (weekPlanStatus(resource.data.week_key) == 'approved'
+                && socialPostStatusOnlyChange(resource.data, request.resource.data)));
+      allow delete: if isSocialManager()
+        && (isAdmin() || socialWeekIsOpen(resource.data.week_key));
+    }
+    match /social_week_plans/{weekKey} {
+      allow read: if isSocialManager();
+      allow create: if isSocialManager()
+        && validSocialWeekPlan(request.resource.data, weekKey)
+        && (isAdmin() || socialManagerWeekPlanWrite(request.resource.data, 'draft'));
+      allow update: if isSocialManager()
+        && validSocialWeekPlan(request.resource.data, weekKey)
+        && (isAdmin()
+            || socialManagerWeekPlanWrite(request.resource.data, resource.data.status));
+      allow delete: if isAdmin();
+    }
+    match /social_offers/{docId} {
+      allow read, delete: if isSocialManager();
+      allow create: if isSocialManager() && validSocialOfferBase(request.resource.data);
+      allow update: if isSocialManager() && validSocialOfferBase(request.resource.data)
+        && request.resource.data.created_at == resource.data.created_at
+        && request.resource.data.created_by == resource.data.created_by;
+    }
+    match /social_notes/{docId} {
+      allow read, delete: if isSocialManager();
+      allow create, update: if isSocialManager() && validSocialNote(request.resource.data, docId);
     }
     match /{document=**} {
       allow read, write: if false;

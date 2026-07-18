@@ -1,7 +1,6 @@
 import {
   collection,
   doc,
-  getDocs,
   increment,
   runTransaction,
   serverTimestamp,
@@ -9,8 +8,10 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import { applyAutomaticPricingToPatch } from "@/lib/firestore/pricing";
-import { loadPricingSettings } from "@/lib/firestore/pricingSettings";
+import { getAuthClient } from "@/lib/firebase";
+import { fetchStockLotIdsByProduct } from "@/lib/firestore/stockLotsQuery";
+import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
+import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
 import { listCostFromProductLots } from "@/lib/inventory/lotPricing";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
@@ -76,22 +77,7 @@ async function loadLotCandidateIdsByProduct(
   db: Firestore,
   productIds: Set<string>,
 ): Promise<Map<string, string[]>> {
-  const snap = await getDocs(collection(db, COLLECTIONS.stockLots));
-  const byProduct = new Map<string, string[]>();
-  for (const productId of productIds) {
-    byProduct.set(productId, []);
-  }
-  snap.forEach((d) => {
-    const data = d.data() as Partial<StockLotDoc>;
-    const productId = data.product_id;
-    if (productId && productIds.has(productId)) {
-      byProduct.get(productId)!.push(d.id);
-    }
-  });
-  for (const [productId, ids] of byProduct) {
-    byProduct.set(productId, [...ids].sort());
-  }
-  return byProduct;
+  return fetchStockLotIdsByProduct(db, productIds);
 }
 
 function computeFifoDiscardForProduct(
@@ -176,7 +162,7 @@ export async function postInventoryDiscard(
     throw new Error("Notes must be 500 characters or fewer.");
   }
 
-  const pricingSettings = await loadPricingSettings(db);
+  const uid = getAuthClient().currentUser?.uid;
 
   await runTransaction(db, async (tx) => {
     const productSnaps = new Map<string, ProductDoc>();
@@ -237,6 +223,7 @@ export async function postInventoryDiscard(
       total_quantity: totalQuantity,
       total_cogs_amount: totalCogs,
       item_ids: itemIds,
+      ledger_status: "pending",
       created_at: serverTimestamp(),
     });
 
@@ -263,22 +250,14 @@ export async function postInventoryDiscard(
       }
 
       const productRef = doc(db, COLLECTIONS.products, item.product_id);
-      const product = productSnaps.get(item.product_id)!;
       const nextCostPrice = listCostFromProductLots(
         item.lotsForCost,
         item.lotUpdates.map((u) => ({ id: u.id, qty_remaining: u.qty_remaining })),
       );
-      const productPatch: Record<string, unknown> = {
+      tx.update(productRef, {
         stock_quantity: increment(-item.quantity),
         cost_price: nextCostPrice,
-      };
-      applyAutomaticPricingToPatch(
-        product,
-        productPatch,
-        pricingSettings.categoryTemplates,
-        pricingSettings.globalDefaultTargetMarginPercent,
-      );
-      tx.update(productRef, productPatch);
+      });
 
       for (const lotUpdate of item.lotUpdates) {
         tx.update(doc(db, COLLECTIONS.stockLots, lotUpdate.id), {
@@ -288,6 +267,38 @@ export async function postInventoryDiscard(
       }
     }
   });
+
+  const lines = merged.map((line) => ({
+    product_id: line.product_id,
+    warehouse_id: DEFAULT_WAREHOUSE_ID,
+    direction: "out" as const,
+    quantity: line.quantity,
+    unit_cost: 0,
+  }));
+  if (lines.length > 0) {
+    const binding: LedgerSourceBinding = {
+      collection: COLLECTIONS.inventoryDiscards,
+      docId: discardId,
+      statusField: "ledger_status",
+      transactionIdField: "inventory_transaction_id",
+      errorField: "ledger_error",
+    };
+    await fulfillLedgerOutbox(
+      db,
+      {
+        type: "DAMAGE",
+        warehouse_id: DEFAULT_WAREHOUSE_ID,
+        source_document_type: "inventory_discard",
+        source_document_id: discardId,
+        reason,
+        notes,
+        posted_by_uid: uid,
+        lines,
+      },
+      binding,
+      { stockCommitted: true },
+    );
+  }
 
   return discardId;
 }

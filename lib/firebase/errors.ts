@@ -1,4 +1,5 @@
 import { FirebaseError } from "firebase/app";
+import { LedgerFulfillmentError } from "@/lib/inventory/ledgerOutbox";
 
 type ErrorLike = {
   code?: unknown;
@@ -72,6 +73,10 @@ function getFirebaseErrorMessage(error: unknown): string | undefined {
  * User-facing message for Firestore / Firebase client errors.
  */
 export function getFirestoreUserMessage(error: unknown): string {
+  if (error instanceof LedgerFulfillmentError) {
+    return error.message;
+  }
+
   const code = getFirebaseErrorCode(error);
   const message = getFirebaseErrorMessage(error);
 
@@ -89,7 +94,6 @@ export function getFirestoreUserMessage(error: unknown): string {
       case "unavailable":
         return "Service temporarily unavailable. Try again in a moment.";
       case "failed-precondition": {
-        // Often a missing Firestore composite index; the SDK message includes a console link.
         const msg = message?.trim() ?? "";
         if (msg.length > 0 && (msg.includes("index") || msg.includes("console.firebase.google.com"))) {
           return msg.length <= 600 ? msg : `${msg.slice(0, 597)}…`;
@@ -105,16 +109,16 @@ export function getFirestoreUserMessage(error: unknown): string {
       default:
         break;
     }
-    if (message && message.length > 0 && message.length < 200) {
+    if (message && message.length > 0 && message.length < 500) {
       return message;
     }
     return "Something went wrong. Please try again.";
   }
   if (error instanceof Error && error.message) {
-    return error.message;
+    return error.message.length <= 500 ? error.message : `${error.message.slice(0, 497)}…`;
   }
   const details = extractFirestoreErrorDetails(error);
-  if (typeof details.message === "string" && details.message.length > 0 && details.message.length < 200) {
+  if (typeof details.message === "string" && details.message.length > 0 && details.message.length < 500) {
     return details.message;
   }
   return "Something went wrong. Please try again.";

@@ -17,6 +17,7 @@ import { useTraderLookup } from "@/app/components/traders/useTraderLookup";
 import { getSignedProductImageUrl } from "@/lib/upload/productImages";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
+import { ConnectedNewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import {
@@ -399,7 +400,10 @@ export function ProductProfileContent() {
           <ProductHeroImage row={product} />
         </div>
         <div className="min-w-0 flex-1 space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">{product.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">{product.name}</h1>
+            <ConnectedNewArrivalBadge createdAt={product.created_at} />
+          </div>
           <p className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">Category:</span> {product.category?.trim() || "—"}
           </p>

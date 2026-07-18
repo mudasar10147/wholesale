@@ -8,14 +8,12 @@ export function StockAdjustModal({
   productName,
   currentStock,
   defaultUnitCost,
-  pricingMode = "manual",
   onDismiss,
 }: {
   productId: string;
   productName: string;
   currentStock: number;
   defaultUnitCost: number;
-  pricingMode?: "manual" | "automatic";
   onDismiss: () => void;
 }) {
   useEffect(() => {
@@ -61,7 +59,6 @@ export function StockAdjustModal({
           productId={productId}
           currentStock={currentStock}
           defaultUnitCost={defaultUnitCost}
-          pricingMode={pricingMode}
         />
       </div>
     </div>

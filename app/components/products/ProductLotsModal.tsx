@@ -1,23 +1,19 @@
 "use client";
 
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot, query, type Timestamp } from "firebase/firestore";
+import { collection, onSnapshot, query, where, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import {
-  convertOpeningBalanceLotToStockIn,
-  createAdjustmentLot,
-  deleteLotAndSyncProduct,
-  syncProductStockFromLots,
-  updateLotAndSyncProduct,
-} from "@/lib/firestore/lotAdmin";
+import { convertOpeningBalanceLotToStockIn } from "@/lib/firestore/lotAdmin";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { inventoryEngineConfig } from "@/lib/inventory/config";
+import { postStockAdjustment } from "@/lib/inventory/stockAdjustment";
 import { traderNameForLot, type TraderLookup } from "@/lib/inventory/traderLookup";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
+import { ConnectedNewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
 import {
   parseNonNegativeDecimal,
   parseNonNegativeIntStrict,
-  parsePositiveIntStrict,
 } from "@/lib/validation/numbers";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -42,7 +38,7 @@ function formatDate(ts: Timestamp) {
   }
 }
 
-function LotEditRow({
+function LotReadOnlyRow({
   productId,
   lot,
   traderLookup,
@@ -51,71 +47,11 @@ function LotEditRow({
   lot: LotRow;
   traderLookup: TraderLookup;
 }) {
-  const [qty, setQty] = useState(() => String(lot.qty_remaining));
-  const [cost, setCost] = useState(() => String(lot.unit_cost));
-  const [pending, setPending] = useState(false);
-  const [deletePending, setDeletePending] = useState(false);
   const [convertPending, setConvertPending] = useState(false);
   const [converting, setConverting] = useState(false);
   const [convertTraderId, setConvertTraderId] = useState("");
   const [convertTraderName, setConvertTraderName] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setQty(String(lot.qty_remaining));
-    setCost(String(lot.unit_cost));
-    setError(null);
-  }, [lot.id, lot.qty_remaining, lot.unit_cost]);
-
-  async function handleSave() {
-    setError(null);
-    const qtyParsed = parseNonNegativeIntStrict(qty);
-    if (!qtyParsed.ok) {
-      setError(qtyParsed.message ?? "Invalid quantity remaining.");
-      return;
-    }
-    if (qtyParsed.value > lot.qty_in) {
-      setError(`Cannot exceed qty in (${lot.qty_in}).`);
-      return;
-    }
-    const costParsed = parseNonNegativeDecimal(cost);
-    if (!costParsed.ok) {
-      setError(costParsed.message ?? "Invalid unit cost.");
-      return;
-    }
-    if (qtyParsed.value === lot.qty_remaining && costParsed.value === lot.unit_cost) {
-      setError("No changes to save.");
-      return;
-    }
-    setPending(true);
-    try {
-      await updateLotAndSyncProduct(getDb(), productId, lot.id, {
-        qty_remaining: qtyParsed.value,
-        unit_cost: costParsed.value,
-      });
-    } catch (e) {
-      setError(getFirestoreUserMessage(e));
-    } finally {
-      setPending(false);
-    }
-  }
-
-  async function handleDelete() {
-    setError(null);
-    const ok = window.confirm(
-      "Delete this lot permanently? Product stock will be set to the sum of remaining lots. " +
-        "Posted invoices that consumed this lot will still reference it in history.",
-    );
-    if (!ok) return;
-    setDeletePending(true);
-    try {
-      await deleteLotAndSyncProduct(getDb(), productId, lot.id);
-    } catch (e) {
-      setError(getFirestoreUserMessage(e));
-    } finally {
-      setDeletePending(false);
-    }
-  }
 
   async function handleConfirmConvert() {
     setError(null);
@@ -142,8 +78,6 @@ function LotEditRow({
     }
   }
 
-  const busy = pending || deletePending || convertPending;
-
   return (
     <tr className="border-b border-border align-top">
       <td className="px-3 py-2 text-muted-foreground">{lot.source}</td>
@@ -151,99 +85,52 @@ function LotEditRow({
         {lot.source === "stock_in" ? traderNameForLot(lot, traderLookup) : "—"}
       </td>
       <td className="px-3 py-2 tabular-nums">{lot.qty_in}</td>
-      <td className="px-3 py-2">
-        <Input
-          className="h-8 w-20 px-2 py-1 text-sm tabular-nums"
-          inputMode="numeric"
-          value={qty}
-          onChange={(e) => setQty(e.target.value)}
-          aria-label={`Qty remaining for lot ${lot.id}`}
-        />
-      </td>
-      <td className="px-3 py-2">
-        <Input
-          className="h-8 w-24 px-2 py-1 text-sm tabular-nums"
-          inputMode="decimal"
-          value={cost}
-          onChange={(e) => setCost(e.target.value)}
-          aria-label={`Unit cost for lot ${lot.id}`}
-        />
-      </td>
+      <td className="px-3 py-2 tabular-nums font-medium">{lot.qty_remaining}</td>
+      <td className="px-3 py-2 tabular-nums">{formatMoney(lot.unit_cost)}</td>
       <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
         {formatDate(lot.received_at)}
       </td>
       <td className="px-3 py-2">
-        <div className="flex flex-col gap-1.5">
-          <Button type="button" className="h-8 px-2 text-xs" disabled={busy} onClick={handleSave}>
-            {pending ? "…" : "Save row"}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-8 border-destructive/40 px-2 text-xs text-destructive hover:bg-destructive-muted"
-            disabled={busy}
-            onClick={handleDelete}
-          >
-            {deletePending ? "…" : "Delete lot"}
-          </Button>
-          {lot.source === "opening_balance" ? (
-            converting ? (
-              <div className="flex flex-col gap-1.5">
-                <TraderSelectInput
-                  id={`convert-trader-${lot.id}`}
-                  value={convertTraderId}
-                  onChange={(idV, name) => {
-                    setConvertTraderId(idV);
-                    setConvertTraderName(name);
-                  }}
-                  disabled={convertPending}
-                />
-                <div className="flex gap-1.5">
-                  <Button
-                    type="button"
-                    className="h-8 px-2 text-xs"
-                    disabled={convertPending}
-                    onClick={handleConfirmConvert}
-                  >
-                    {convertPending ? "…" : "Confirm"}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-8 px-2 text-xs"
-                    disabled={convertPending}
-                    onClick={() => {
-                      setConverting(false);
-                      setConvertTraderId("");
-                      setConvertTraderName("");
-                      setError(null);
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <Button
-                type="button"
-                variant="outline"
-                className="h-8 px-2 text-xs"
-                disabled={busy}
-                onClick={() => {
-                  setError(null);
-                  setConverting(true);
+        {lot.source === "opening_balance" ? (
+          converting ? (
+            <div className="flex flex-col gap-1.5">
+              <TraderSelectInput
+                id={`convert-trader-${lot.id}`}
+                value={convertTraderId}
+                onChange={(idV, name) => {
+                  setConvertTraderId(idV);
+                  setConvertTraderName(name);
                 }}
-              >
-                Count as stock purchase
-              </Button>
-            )
-          ) : null}
-          {error ? (
-            <span className="text-[11px] text-destructive" role="alert">
-              {error}
-            </span>
-          ) : null}
-        </div>
+                disabled={convertPending}
+              />
+              <div className="flex gap-1.5">
+                <Button type="button" className="h-8 px-2 text-xs" disabled={convertPending} onClick={handleConfirmConvert}>
+                  {convertPending ? "…" : "Confirm"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 px-2 text-xs"
+                  disabled={convertPending}
+                  onClick={() => setConverting(false)}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => setConverting(true)}>
+              Count as stock purchase
+            </Button>
+          )
+        ) : (
+          <span className="text-xs text-muted-foreground">—</span>
+        )}
+        {error ? (
+          <span className="mt-1 block text-[11px] text-destructive" role="alert">
+            {error}
+          </span>
+        ) : null}
       </td>
     </tr>
   );
@@ -253,15 +140,13 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
   const [lots, setLots] = useState<LotRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [syncPending, setSyncPending] = useState(false);
-  const [syncFeedback, setSyncFeedback] = useState<{ variant: "success" | "error"; text: string } | null>(
-    null,
-  );
+  const [adjMode, setAdjMode] = useState<"add" | "remove">("add");
   const [adjQty, setAdjQty] = useState("");
   const [adjCost, setAdjCost] = useState("");
-  const [adjNote, setAdjNote] = useState("");
+  const [adjReason, setAdjReason] = useState("");
   const [adjPending, setAdjPending] = useState(false);
   const [adjError, setAdjError] = useState<string | null>(null);
+  const [adjSuccess, setAdjSuccess] = useState<string | null>(null);
   const traderLookup = useTraderLookup();
 
   useEffect(() => {
@@ -275,16 +160,13 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
   useEffect(() => {
     const db = getDb();
     const unsub = onSnapshot(
-      query(collection(db, COLLECTIONS.stockLots)),
+      query(collection(db, COLLECTIONS.stockLots), where("product_id", "==", row.id)),
       (snap) => {
         setLoadError(null);
         setLoading(false);
         const next: LotRow[] = [];
         snap.forEach((d) => {
-          const data = d.data() as StockLotDoc;
-          if (data.product_id === row.id) {
-            next.push({ id: d.id, ...data });
-          }
+          next.push({ id: d.id, ...(d.data() as StockLotDoc) });
         });
         next.sort((a, b) => a.received_at.toMillis() - b.received_at.toMillis());
         setLots(next);
@@ -307,26 +189,15 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
   );
 
   const mismatch = lotQtySum !== row.stock_quantity;
-
-  async function handleSyncStock() {
-    setSyncFeedback(null);
-    setSyncPending(true);
-    try {
-      await syncProductStockFromLots(getDb(), row.id);
-      setSyncFeedback({ variant: "success", text: "Product stock and cost now match lots." });
-    } catch (e) {
-      setSyncFeedback({ variant: "error", text: getFirestoreUserMessage(e) });
-    } finally {
-      setSyncPending(false);
-    }
-  }
+  const gap = lotQtySum - row.stock_quantity;
 
   async function handleAdjustment(e: FormEvent) {
     e.preventDefault();
     setAdjError(null);
-    const q = parsePositiveIntStrict(adjQty);
-    if (!q.ok) {
-      setAdjError(q.message ?? "Enter a positive whole number for quantity.");
+    setAdjSuccess(null);
+    const q = parseNonNegativeIntStrict(adjQty);
+    if (!q.ok || q.value <= 0) {
+      setAdjError("Enter a positive whole number for quantity.");
       return;
     }
     const c = parseNonNegativeDecimal(adjCost);
@@ -334,12 +205,24 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
       setAdjError(c.message ?? "Invalid unit cost.");
       return;
     }
+    const reason = adjReason.trim();
+    if (!reason) {
+      setAdjError("Reason is required for stock adjustments.");
+      return;
+    }
+    const delta = adjMode === "add" ? q.value : -q.value;
     setAdjPending(true);
     try {
-      await createAdjustmentLot(getDb(), row.id, q.value, c.value, adjNote.trim() || undefined);
+      await postStockAdjustment(getDb(), {
+        productId: row.id,
+        quantityDelta: delta,
+        unitCost: c.value,
+        reason,
+      });
       setAdjQty("");
       setAdjCost("");
-      setAdjNote("");
+      setAdjReason("");
+      setAdjSuccess("Stock adjustment posted.");
     } catch (err) {
       setAdjError(getFirestoreUserMessage(err));
     } finally {
@@ -365,8 +248,9 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
             <h2 id="product-lots-title" className="text-lg font-semibold text-foreground">
               Inventory lots
             </h2>
-            <p className="mt-1 truncate text-sm text-muted-foreground" title={row.name}>
-              {row.name}
+            <p className="mt-1 flex items-center gap-2 truncate text-sm text-muted-foreground" title={row.name}>
+              <span className="truncate">{row.name}</span>
+              <ConnectedNewArrivalBadge createdAt={row.created_at} />
             </p>
           </div>
           <button
@@ -381,9 +265,7 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Product stock
-            </p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Book stock</p>
             <p className="mt-1 tabular-nums text-lg font-semibold text-foreground">
               {row.stock_quantity.toLocaleString()}
             </p>
@@ -391,47 +273,32 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
           <div
             className={cn(
               "rounded-lg border px-4 py-3",
-              mismatch
-                ? "border-destructive/40 bg-destructive-muted/40"
-                : "border-border bg-surface-muted/40",
+              mismatch ? "border-destructive/40 bg-destructive-muted/40" : "border-border bg-surface-muted/40",
             )}
           >
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Sum of lots
-            </p>
-            <p
-              className={cn(
-                "mt-1 tabular-nums text-lg font-semibold",
-                mismatch ? "text-destructive" : "text-foreground",
-              )}
-            >
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sum of lots</p>
+            <p className={cn("mt-1 tabular-nums text-lg font-semibold", mismatch ? "text-destructive" : "text-foreground")}>
               {lotQtySum.toLocaleString()}
             </p>
           </div>
           <div className="rounded-lg border border-border bg-surface-muted/40 px-4 py-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              List cost
-            </p>
-            <p className="mt-1 tabular-nums text-lg font-semibold text-foreground">
-              {formatMoney(row.cost_price)}
-            </p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">List cost</p>
+            <p className="mt-1 tabular-nums text-lg font-semibold text-foreground">{formatMoney(row.cost_price)}</p>
           </div>
         </div>
 
         <p className="mt-4 text-xs leading-relaxed text-muted-foreground">
-          FIFO sales and stock out consume oldest lots first. You can edit unit cost and quantity
-          remaining per lot; receipt size (<code className="text-[11px]">qty_in</code>) and received
-          date cannot be changed. Convert <code className="text-[11px]">opening_balance</code> to{" "}
-          <code className="text-[11px]">stock_in</code> with the row action.{" "}
-          <span className="text-destructive">
-            Delete lot is for bad entries only; product stock is re-synced from remaining lots.
-          </span>
+          FIFO layers are read-only. All quantity changes go through{" "}
+          <strong className="font-medium text-foreground">stock adjustments</strong> (audited inventory
+          transactions). Lot quantities update automatically when you post adjustments, stock in/out, or
+          invoices.
         </p>
 
         {mismatch ? (
           <InlineAlert variant="error" className="mt-3 text-sm">
-            Lot quantities do not match product stock. Use &quot;Sync stock from lots&quot; to set product
-            stock to the sum of lots (trust lots as truth), or adjust rows until they match.
+            Book stock and lots differ by {gap > 0 ? "+" : ""}
+            {gap} units. Post a stock adjustment to correct — do not edit lots directly.
+            {gap > 0 ? " Try removing stock with a reason." : " Try adding stock with a reason."}
           </InlineAlert>
         ) : null}
 
@@ -441,27 +308,10 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
           </InlineAlert>
         ) : null}
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button type="button" disabled={syncPending} onClick={handleSyncStock}>
-            {syncPending ? "Syncing…" : "Sync stock from lots"}
-          </Button>
-          <Button type="button" variant="outline" onClick={onDismiss}>
-            Close
-          </Button>
-        </div>
-        {syncFeedback ? (
-          <InlineAlert variant={syncFeedback.variant} className="mt-2 text-sm">
-            {syncFeedback.text}
-          </InlineAlert>
-        ) : null}
-
         {loading ? (
           <p className="mt-6 text-sm text-muted-foreground">Loading lots…</p>
         ) : lots.length === 0 ? (
-          <p className="mt-6 text-sm text-muted-foreground">
-            No stock lots for this product yet. Lots are created on stock in, invoice post (opening
-            balance), or adjustment below.
-          </p>
+          <p className="mt-6 text-sm text-muted-foreground">No stock lots for this product yet.</p>
         ) : (
           <div className="mt-6 overflow-x-auto rounded-md border border-border">
             <table className="w-full min-w-[720px] border-collapse text-left text-sm">
@@ -478,7 +328,7 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
               </thead>
               <tbody>
                 {lots.map((lot) => (
-                  <LotEditRow key={lot.id} productId={row.id} lot={lot} traderLookup={traderLookup} />
+                  <LotReadOnlyRow key={lot.id} productId={row.id} lot={lot} traderLookup={traderLookup} />
                 ))}
               </tbody>
             </table>
@@ -486,15 +336,35 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
         )}
 
         <form onSubmit={handleAdjustment} className="mt-8 space-y-3 border-t border-border pt-6">
-          <h3 className="text-sm font-semibold text-foreground">Add adjustment lot</h3>
+          <h3 className="text-sm font-semibold text-foreground">Stock adjustment</h3>
           <p className="text-xs text-muted-foreground">
-            Adds units at a given cost when you cannot fix quantity using qty left alone (e.g. found
-            stock). Increases product stock by this quantity.
+            Required reason is stored in the inventory transaction audit log.
+            {inventoryEngineConfig.directLotEditsDisabled
+              ? " Direct lot edits are disabled."
+              : null}
           </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant={adjMode === "add" ? "primary" : "outline"}
+              size="sm"
+              onClick={() => setAdjMode("add")}
+            >
+              Add stock
+            </Button>
+            <Button
+              type="button"
+              variant={adjMode === "remove" ? "primary" : "outline"}
+              size="sm"
+              onClick={() => setAdjMode("remove")}
+            >
+              Remove stock
+            </Button>
+          </div>
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
               <Label htmlFor="adj-qty" className="text-xs text-muted-foreground">
-                Qty
+                Quantity
               </Label>
               <Input
                 id="adj-qty"
@@ -516,28 +386,32 @@ export function ProductLotsModal({ row, onDismiss }: { row: ProductRow; onDismis
                 onChange={(e) => setAdjCost(e.target.value)}
               />
             </div>
-            <div className="flex min-w-[12rem] flex-1 flex-col gap-1">
-              <Label htmlFor="adj-note" className="text-xs text-muted-foreground">
-                Note (optional)
+            <div className="flex min-w-[14rem] flex-1 flex-col gap-1">
+              <Label htmlFor="adj-reason" className="text-xs text-muted-foreground">
+                Reason (required)
               </Label>
               <Input
-                id="adj-note"
+                id="adj-reason"
                 className="h-9"
-                value={adjNote}
-                onChange={(e) => setAdjNote(e.target.value)}
-                placeholder="e.g. Stock count correction"
+                value={adjReason}
+                onChange={(e) => setAdjReason(e.target.value)}
+                placeholder="e.g. Physical count correction"
+                required
               />
             </div>
             <Button type="submit" disabled={adjPending}>
-              {adjPending ? "Adding…" : "Add adjustment"}
+              {adjPending ? "Posting…" : "Post adjustment"}
             </Button>
           </div>
-          {adjError ? (
-            <InlineAlert variant="error" className="text-sm">
-              {adjError}
-            </InlineAlert>
-          ) : null}
+          {adjError ? <InlineAlert variant="error" className="text-sm">{adjError}</InlineAlert> : null}
+          {adjSuccess ? <InlineAlert variant="success" className="text-sm">{adjSuccess}</InlineAlert> : null}
         </form>
+
+        <div className="mt-4 flex justify-end">
+          <Button type="button" variant="outline" onClick={onDismiss}>
+            Close
+          </Button>
+        </div>
       </div>
     </div>
   );

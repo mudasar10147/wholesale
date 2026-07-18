@@ -1,4 +1,5 @@
 import type { InvoiceCalculatedSummary } from "@/lib/invoices/calculations";
+import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
 import type { InvoiceTextLine } from "@/lib/invoices/invoiceText";
 import {
   getPosBusinessAddress,
@@ -11,6 +12,17 @@ import {
   getPosThankYouLine,
 } from "@/lib/invoices/posReceiptBranding";
 import { loadPublicPngAsDataUrl } from "@/lib/pdf/loadPublicImage";
+
+/** A returned/discarded item on the receipt — credited against the sale total. */
+export type PosReturnLine = {
+  product_name: string;
+  quantity: number;
+  /** Original unit price the customer paid. */
+  unit_price: number;
+  /** Proportional credit for this line. */
+  line_total: number;
+  mode: "restock" | "discard";
+};
 
 export type PosReceiptInput = {
   order_id: string;
@@ -28,6 +40,14 @@ export type PosReceiptInput = {
   delivery_charge: number;
   total_amount: number;
   lines: InvoiceTextLine[];
+  /** Inline returns/discards on this invoice. */
+  return_lines?: PosReturnLine[];
+  /** Sum of return credits, R. */
+  returns_credit_amount?: number;
+  /** Payable after returns credit, max(0, total − R). */
+  net_amount_due?: number;
+  /** Cash handed back when R exceeds the sale total. */
+  cash_refund_amount?: number;
 };
 
 export function buildPosReceiptInputFromCalc(params: {
@@ -41,6 +61,7 @@ export function buildPosReceiptInputFromCalc(params: {
   created_at_label: string;
   calc: InvoiceCalculatedSummary;
   productNames: Map<string, string>;
+  returnLines?: PosReturnLine[];
 }): PosReceiptInput {
   const lines: InvoiceTextLine[] = params.calc.lines.map((l) => ({
     product_name: params.productNames.get(l.product_id) ?? l.product_id,
@@ -50,6 +71,12 @@ export function buildPosReceiptInputFromCalc(params: {
     line_delivery_charge: l.line_delivery_charge,
     line_total: l.line_total,
   }));
+
+  const returnLines = params.returnLines ?? [];
+  const counter = calculateCounterSaleSummary(
+    params.calc.total_amount,
+    returnLines.map((r) => ({ line_total: r.line_total })),
+  );
 
   return {
     order_id: params.order_id,
@@ -65,6 +92,14 @@ export function buildPosReceiptInputFromCalc(params: {
     delivery_charge: params.calc.delivery_charge,
     total_amount: params.calc.total_amount,
     lines,
+    ...(returnLines.length > 0
+      ? {
+          return_lines: returnLines,
+          returns_credit_amount: counter.returns_credit_amount,
+          net_amount_due: counter.net_amount_due,
+          cash_refund_amount: counter.cash_refund_amount,
+        }
+      : {}),
   };
 }
 
@@ -275,6 +310,38 @@ async function drawPosReceiptOnDoc(
     doc.setFont("helvetica", "normal");
   }
 
+  // Items handed back are listed FIRST, above the sale items.
+  const returnLines = input.return_lines ?? [];
+  if (returnLines.length > 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.text("Returns / discards", CONTENT_X0, y);
+    y += 4.4;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    for (const r of returnLines) {
+      const label = `${shortProductName(r.product_name, 28)} x${r.quantity}${
+        r.mode === "discard" ? " (discard)" : ""
+      }`;
+      doc.text(label, CONTENT_X0, y);
+      doc.text(`-${money(r.line_total)}`, TOTALS_AMOUNT_RIGHT_X, y, { align: "right" });
+      y += 4;
+    }
+
+    doc.setFont("helvetica", "bold");
+    doc.text("Returns credit", CONTENT_X0, y);
+    doc.text(`-${money(input.returns_credit_amount ?? 0)}`, TOTALS_AMOUNT_RIGHT_X, y, {
+      align: "right",
+    });
+    y += 4.4;
+    doc.setFont("helvetica", "normal");
+
+    doc.setDrawColor(0);
+    doc.line(CONTENT_X0, y, CONTENT_X1, y);
+    y += 4;
+  }
+
   const anyLineDisc = input.lines.some((l) => l.line_discount > 0.001);
   const anyLineDeliv = input.lines.some((l) => l.line_delivery_charge > 0.001);
   const wideTable = anyLineDisc || anyLineDeliv;
@@ -375,6 +442,29 @@ async function drawPosReceiptOnDoc(
   });
   totalsY += 4;
 
+  // The returned/discarded items themselves are listed at the top of the receipt; here we
+  // only net them off the sale total.
+  if (returnLines.length > 0) {
+    totalsY = drawTotalsLine(
+      doc,
+      "Returns credit",
+      `-${money(input.returns_credit_amount ?? 0)}`,
+      totalsY,
+      { bold: true, fontSize: 8 },
+    );
+    totalsY = drawTotalsLine(doc, "NET PAYABLE", money(input.net_amount_due ?? input.total_amount), totalsY, {
+      bold: true,
+      fontSize: 9,
+      lineGap: 5,
+    });
+    if ((input.cash_refund_amount ?? 0) > 0) {
+      totalsY = drawTotalsLine(doc, "Cash refund", money(input.cash_refund_amount ?? 0), totalsY, {
+        fontSize: 8,
+      });
+    }
+    totalsY += 4;
+  }
+
   doc.setDrawColor(0);
   doc.line(CONTENT_X0, totalsY, CONTENT_X1, totalsY);
   totalsY += 6;
@@ -432,8 +522,9 @@ async function buildPosReceiptPdfBlob(input: PosReceiptInput): Promise<Blob> {
   const lines = Math.max(input.lines.length, 1);
   const policyChars = policyParas.reduce((n, p) => n + p.length, 0);
   /** Soft ceiling from line count — must stay well below MAX or it becomes the print page height (see height_microns). */
+  const returnLineCount = input.return_lines?.length ?? 0;
   const softEstimateMm =
-    180 + lines * 10 + Math.ceil(policyChars / 46) * 3.4 + 120;
+    180 + lines * 10 + returnLineCount * 6 + Math.ceil(policyChars / 46) * 3.4 + 120;
   const hardCapMm = Math.min(MAX_RECEIPT_PAGE_HEIGHT_MM - bottomPadMm - safetyMm, softEstimateMm);
   const contentBottom = Number.isFinite(contentBottomRaw)
     ? Math.min(contentBottomRaw, hardCapMm)

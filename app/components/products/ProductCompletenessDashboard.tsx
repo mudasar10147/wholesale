@@ -18,6 +18,8 @@ import {
 } from "@/lib/products/productCompleteness";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
+import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
+import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
@@ -51,6 +53,7 @@ function ProductTable({
   rows: AugmentedRow[];
   onEdit: (id: string) => void;
 }) {
+  const { settings: newArrivalSettings } = useNewArrivalSettings();
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground" role="status">
@@ -105,7 +108,15 @@ function ProductTable({
               <td className="px-3 py-2 align-middle font-mono text-xs text-muted-foreground">
                 {row.id}
               </td>
-              <td className="px-3 py-2 align-middle font-medium text-foreground">{row.name || "—"}</td>
+              <td className="px-3 py-2 align-middle font-medium text-foreground">
+                <span className="flex items-center gap-2">
+                  {row.name || "—"}
+                  <NewArrivalBadge
+                    createdAt={row.created_at}
+                    thresholdDays={newArrivalSettings.thresholdDays}
+                  />
+                </span>
+              </td>
               <td className="px-3 py-2 align-middle text-muted-foreground">{row.category?.trim() || "—"}</td>
               <td className="px-3 py-2 align-middle tabular-nums">
                 {typeof row.cost_price === "number" ? formatMoney(row.cost_price) : "—"}

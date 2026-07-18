@@ -31,6 +31,23 @@ export const COLLECTIONS = {
   walkInSessions: "walk_in_sessions",
   /** Audit log for admin customer merges. */
   customerMerges: "customer_merges",
+  /** Warehouses / locations for inventory (single default in phase 1). */
+  warehouses: "warehouses",
+  /** Posted inventory movement headers (ERP ledger). */
+  inventoryTransactions: "inventory_transactions",
+  inventoryTransactionLines: "inventory_transaction_lines",
+  /** Schema migration manifest. */
+  schemaMigrations: "schema_migrations",
+  /** Shadow engine parity diffs (dev/ops). */
+  inventoryShadowDiffs: "inventory_shadow_diffs",
+  /** Planned WhatsApp posts, one doc per scheduled slot. */
+  socialPosts: "social_posts",
+  /** Discount campaigns a planned post can advertise. */
+  socialOffers: "social_offers",
+  /** Free-form weekly notepad; doc id is the ISO week key, e.g. `2026-W29`. */
+  socialNotes: "social_notes",
+  /** Approval state of one week's plan; doc id is the ISO week key. */
+  socialWeekPlans: "social_week_plans",
 } as const;
 
 export type CollectionName = (typeof COLLECTIONS)[keyof typeof COLLECTIONS];
