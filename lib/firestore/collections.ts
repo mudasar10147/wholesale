@@ -36,6 +36,8 @@ export const COLLECTIONS = {
   /** Posted inventory movement headers (ERP ledger). */
   inventoryTransactions: "inventory_transactions",
   inventoryTransactionLines: "inventory_transaction_lines",
+  /** Immutable repair audit records (M0.5 baseline remediation + M6 workflow). */
+  inventoryRepairs: "inventory_repairs",
   /** Schema migration manifest. */
   schemaMigrations: "schema_migrations",
   /** Shadow engine parity diffs (dev/ops). */

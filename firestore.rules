@@ -1019,6 +1019,14 @@ service cloud.firestore {
       allow create: if isAdmin();
       allow update, delete: if false;
     }
+    // Immutable repair audit (M0.5 baseline remediation + M6 workflow). Written by
+    // the repair identity (Admin SDK, bypasses rules); admins may read the history.
+    // Append-only: a repair record can never be altered or erased from a client.
+    match /inventory_repairs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
     match /schema_migrations/{docId} {
       allow read: if isAdmin();
       allow create, update: if isAdmin();

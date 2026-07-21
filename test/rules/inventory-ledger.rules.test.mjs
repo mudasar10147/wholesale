@@ -35,6 +35,7 @@ import {
 import {
   collection,
   doc,
+  getDoc,
   runTransaction,
   serverTimestamp,
   setDoc,
@@ -192,5 +193,58 @@ describe("inventory ledger rules — authorization", () => {
         ledgerLine("itx-x"),
       ),
     );
+  });
+});
+
+describe("inventory_repairs rules — append-only audit (M0.5)", () => {
+  function repairRecord() {
+    return {
+      validation_run_id: "run1",
+      product_id: "p1",
+      invariant_id: "P1",
+      before_book_stock: 100,
+      before_lot_total: 103,
+      approved_final_quantity: 100,
+      adjustment_delta: 0,
+      authority_category: "consumption_history",
+      reason_detail: "baseline",
+      related_document_ids: [],
+      acted_by_uid: "admin-user",
+      created_at: serverTimestamp(),
+      ledger_transaction_id: "RECON-run1-p1",
+    };
+  }
+
+  it("DENIES a clerk creating a repair record", async () => {
+    const db = clerkDb();
+    await assertFails(setDoc(doc(db, "inventory_repairs", nextId("rep")), repairRecord()));
+  });
+
+  it("DENIES updating an existing repair record (admin)", async () => {
+    const id = nextId("rep");
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "inventory_repairs", id), repairRecord());
+    });
+    const db = adminDb();
+    await assertFails(updateDoc(doc(db, "inventory_repairs", id), { reason_detail: "tampered" }));
+  });
+
+  it("DENIES deleting a repair record (admin)", async () => {
+    const id = nextId("rep");
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "inventory_repairs", id), repairRecord());
+    });
+    const db = adminDb();
+    const { deleteDoc } = await import("firebase/firestore");
+    await assertFails(deleteDoc(doc(db, "inventory_repairs", id)));
+  });
+
+  it("ALLOWS an admin to read repair history", async () => {
+    const id = nextId("rep");
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), "inventory_repairs", id), repairRecord());
+    });
+    const db = adminDb();
+    await assertSucceeds(getDoc(doc(db, "inventory_repairs", id)));
   });
 });
