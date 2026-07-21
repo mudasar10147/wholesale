@@ -38,6 +38,8 @@ export const COLLECTIONS = {
   inventoryTransactionLines: "inventory_transaction_lines",
   /** Immutable repair audit records (M0.5 baseline remediation + M6 workflow). */
   inventoryRepairs: "inventory_repairs",
+  /** Persisted validation run records + watermark (M1 validator). */
+  inventoryValidationRuns: "inventory_validation_runs",
   /** Schema migration manifest. */
   schemaMigrations: "schema_migrations",
   /** Shadow engine parity diffs (dev/ops). */

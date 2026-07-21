@@ -1027,6 +1027,13 @@ service cloud.firestore {
       allow create: if isAdmin();
       allow update, delete: if false;
     }
+    // Validation run records + watermark, written server-side by the validator
+    // (Admin SDK, bypasses rules). Admins may read history; never mutable from a client.
+    match /inventory_validation_runs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
     match /schema_migrations/{docId} {
       allow read: if isAdmin();
       allow create, update: if isAdmin();
