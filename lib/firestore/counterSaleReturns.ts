@@ -37,6 +37,8 @@ export type CounterSaleReturnInput = {
   quantity_returned: number;
   quantity_restock: number;
   quantity_discard: number;
+  /** Position in the invoice's combined line list, so the saved order is preserved. */
+  sort_order?: number;
 };
 
 function toInt(n: unknown): number {
@@ -94,6 +96,7 @@ export async function resolveReturnLines(
       quantity_discard: discard,
       unit_price: pl.unitPrice,
       line_total: lineTotal,
+      ...(typeof input.sort_order === "number" ? { sort_order: input.sort_order } : {}),
     });
   }
   return resolved;

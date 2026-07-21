@@ -998,6 +998,12 @@ service cloud.firestore {
         && request.resource.data.merged_by_uid == request.auth.uid;
       allow update, delete: if false;
     }
+    // Written only by the Admin SDK (lib/server/userAdmin.ts), which bypasses these
+    // rules. Admins may read the history; nothing may forge or alter it from a client.
+    match /user_admin_audit/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
     match /warehouses/{docId} {
       allow read: if isStaff();
       allow create, update: if isAdmin();

@@ -1,5 +1,7 @@
 {
   "projects": {
-    "default": "wholesale-b4ff9"
+    "default": "rastaa-421b8",
+    "test": "rastaa-421b8",
+    "prod": "wholesale-b4ff9"
   }
 }

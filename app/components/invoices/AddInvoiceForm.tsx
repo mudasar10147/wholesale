@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
@@ -11,7 +11,10 @@ import { createDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
 import { useInvoiceReturnLines } from "@/app/components/invoices/useInvoiceReturnLines";
-import { InvoiceReturnLinesSection } from "@/app/components/invoices/InvoiceReturnLinesSection";
+import {
+  InvoiceReturnLineRow,
+  buildPurchaseOptions,
+} from "@/app/components/invoices/InvoiceReturnLinesSection";
 import {
   buildPosReceiptInputFromCalc,
   printPosReceipt,
@@ -47,6 +50,8 @@ type ProductOption = {
 };
 type ItemInput = {
   id: string;
+  /** Position in the combined line list (shared counter with return/discard rows). */
+  seq: number;
   productId: string;
   quantity: string;
   unitPrice: string;
@@ -68,8 +73,15 @@ function createOrderId(): string {
   return `INV-${y}${m}${d}-${rand}`;
 }
 
-function nextItem(seed = ""): ItemInput {
-  return { id: crypto.randomUUID(), productId: seed, quantity: "1", unitPrice: "", lineDiscount: "0" };
+function nextItem(seq: number, seed = ""): ItemInput {
+  return {
+    id: crypto.randomUUID(),
+    seq,
+    productId: seed,
+    quantity: "1",
+    unitPrice: "",
+    lineDiscount: "0",
+  };
 }
 
 type AddInvoiceFormProps = {
@@ -91,7 +103,14 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
   const [invoiceDiscount, setInvoiceDiscount] = useState("0");
   const [deliveryCharge, setDeliveryCharge] = useState("0");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<ItemInput[]>([nextItem()]);
+  // Shared ordering counter: sale lines and return/discard rows draw from the same sequence
+  // so the combined list stays in the exact order the user added them.
+  const seqRef = useRef(0);
+  const nextSeq = useCallback(() => {
+    seqRef.current += 1;
+    return seqRef.current;
+  }, []);
+  const [items, setItems] = useState<ItemInput[]>(() => [nextItem(1)]);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,6 +123,24 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
     [products],
   );
   const returnLines = useInvoiceReturnLines(customerId);
+
+  const purchaseOptions = useMemo(
+    () => buildPurchaseOptions(returnLines.purchaseLines, productNameById),
+    [returnLines.purchaseLines, productNameById],
+  );
+  const purchaseOptionById = useMemo(
+    () => new Map(purchaseOptions.map((o) => [o.id, o])),
+    [purchaseOptions],
+  );
+
+  /** Sale lines and return/discard rows in one list, ordered by when they were added. */
+  const combinedLines = useMemo(() => {
+    const merged = [
+      ...items.map((line) => ({ kind: "sale" as const, seq: line.seq, line })),
+      ...returnLines.rows.map((row) => ({ kind: "return" as const, seq: row.seq, row })),
+    ];
+    return merged.sort((a, b) => a.seq - b.seq);
+  }, [items, returnLines.rows]);
 
   useEffect(() => {
     setStockGateMessage(null);
@@ -202,7 +239,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
   }
 
   function addLine() {
-    setItems((prev) => [...prev, nextItem()]);
+    setItems((prev) => [...prev, nextItem(nextSeq())]);
   }
 
   function removeLine(id: string) {
@@ -373,7 +410,8 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
       setInvoiceDiscount("0");
       setDeliveryCharge("0");
       setNotes("");
-      setItems([nextItem()]);
+      seqRef.current = 0;
+      setItems([nextItem(nextSeq())]);
       returnLines.reset();
     } catch (err) {
       setError(getFirestoreUserMessage(err));
@@ -431,22 +469,36 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
           <h3 className="text-sm font-semibold text-foreground">Invoice items</h3>
         </div>
 
-        <InvoiceReturnLinesSection
-          purchaseLines={returnLines.purchaseLines}
-          rows={returnLines.rows}
-          updateRow={returnLines.updateRow}
-          removeRow={returnLines.removeRow}
-          loading={returnLines.loading}
-          error={returnLines.error}
-          productNameById={productNameById}
-          disabled={submitting}
-        />
+        {returnLines.error ? (
+          <InlineAlert variant="error">{returnLines.error}</InlineAlert>
+        ) : null}
 
         <div className="space-y-3">
-          {items.map((line) => {
+          {combinedLines.map((entry, idx) => {
+            if (entry.kind === "return") {
+              return (
+                <InvoiceReturnLineRow
+                  key={entry.row.id}
+                  row={entry.row}
+                  position={idx + 1}
+                  options={purchaseOptions}
+                  optionById={purchaseOptionById}
+                  updateRow={returnLines.updateRow}
+                  removeRow={returnLines.removeRow}
+                  disabled={submitting}
+                />
+              );
+            }
+            const line = entry.line;
             const selected = products.find((p) => p.id === line.productId);
             return (
               <div key={line.id} className="rounded-lg border border-border bg-surface-muted p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground">{idx + 1}.</span>
+                  <span className="rounded-full bg-surface px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground">
+                    Sale
+                  </span>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-12">
                   <div className="space-y-1 sm:col-span-4">
                     <Label>Product</Label>
@@ -533,7 +585,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
           <Button
             type="button"
             variant="outline"
-            onClick={returnLines.addReturn}
+            onClick={() => returnLines.addReturn(nextSeq())}
             disabled={submitting || !customerId}
           >
             Return
@@ -541,7 +593,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
           <Button
             type="button"
             variant="outline"
-            onClick={returnLines.addDiscard}
+            onClick={() => returnLines.addDiscard(nextSeq())}
             disabled={submitting || !customerId}
           >
             Discard

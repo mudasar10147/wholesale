@@ -1,6 +1,6 @@
 import { Storage } from '@google-cloud/storage';
 import { getGCSClient, getGCSBucketName, isGCSConfigured } from './gcsClient';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import path from 'path';
 import { logger } from '../utils/logger';
 import type { SaveFileOptions, SavedFile } from './types';
@@ -62,7 +62,7 @@ export class GCSStorageService {
 
   generateFileName(originalName: string, prefixId: string): string {
     const ext = path.extname(originalName).toLowerCase() || '.bin';
-    const uuid = uuidv4();
+    const uuid = randomUUID();
     const timestamp = Date.now();
     return `${prefixId}_${timestamp}_${uuid}${ext}`;
   }

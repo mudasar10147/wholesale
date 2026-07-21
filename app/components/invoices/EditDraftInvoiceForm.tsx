@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
@@ -9,7 +9,10 @@ import { updateDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
 import { useInvoiceReturnLines, type ReturnLineDraft } from "@/app/components/invoices/useInvoiceReturnLines";
-import { InvoiceReturnLinesSection } from "@/app/components/invoices/InvoiceReturnLinesSection";
+import {
+  InvoiceReturnLineRow,
+  buildPurchaseOptions,
+} from "@/app/components/invoices/InvoiceReturnLinesSection";
 import {
   buildPosReceiptInputFromCalc,
   printPosReceipt,
@@ -50,6 +53,8 @@ type ProductOption = {
 };
 type ItemInput = {
   id: string;
+  /** Position in the combined line list (shared counter with return/discard rows). */
+  seq: number;
   productId: string;
   quantity: string;
   unitPrice: string;
@@ -60,8 +65,15 @@ function money(n: number): string {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
-function nextItem(seed = ""): ItemInput {
-  return { id: crypto.randomUUID(), productId: seed, quantity: "1", unitPrice: "", lineDiscount: "0" };
+function nextItem(seq: number, seed = ""): ItemInput {
+  return {
+    id: crypto.randomUUID(),
+    seq,
+    productId: seed,
+    quantity: "1",
+    unitPrice: "",
+    lineDiscount: "0",
+  };
 }
 
 type Props = {
@@ -105,16 +117,48 @@ export function EditDraftInvoiceForm({
   const [invoiceDiscount, setInvoiceDiscount] = useState(initialDiscount);
   const [deliveryCharge, setDeliveryCharge] = useState(initialDelivery);
   const [notes, setNotes] = useState(initialNotes);
+  /**
+   * Rebuilds the saved combined order: return/discard rows sit at their stored `sort_order`
+   * slots and the sale lines fill the remaining slots in their stored order.
+   */
+  const [initialSeed] = useState(() => {
+    const returnRows: ReturnLineDraft[] = (initialReturnLines ?? []).map((rl, i) => ({
+      id: crypto.randomUUID(),
+      seq: typeof rl.sort_order === "number" ? rl.sort_order : 10_000 + i,
+      purchaseLineId: rl.original_invoice_item_id,
+      quantity: String(rl.quantity_returned),
+      mode:
+        rl.quantity_discard >= rl.quantity_returned && rl.quantity_returned > 0
+          ? ("discard" as const)
+          : ("restock" as const),
+    }));
+    const usedSeqs = new Set(returnRows.map((r) => r.seq));
+    let cursor = 0;
+    const itemRows: ItemInput[] = initialLines.map((l) => {
+      do {
+        cursor += 1;
+      } while (usedSeqs.has(cursor));
+      return {
+        id: crypto.randomUUID(),
+        seq: cursor,
+        productId: l.product_id,
+        quantity: String(l.quantity),
+        unitPrice: String(l.unit_price),
+        lineDiscount: String(l.line_discount),
+      };
+    });
+    const maxSeq = Math.max(0, ...returnRows.map((r) => r.seq), ...itemRows.map((i) => i.seq));
+    return { returnRows, itemRows, maxSeq };
+  });
+
+  const seqRef = useRef(initialSeed.maxSeq);
+  const nextSeq = useCallback(() => {
+    seqRef.current += 1;
+    return seqRef.current;
+  }, []);
+
   const [items, setItems] = useState<ItemInput[]>(() =>
-    initialLines.length > 0
-      ? initialLines.map((l) => ({
-          id: crypto.randomUUID(),
-          productId: l.product_id,
-          quantity: String(l.quantity),
-          unitPrice: String(l.unit_price),
-          lineDiscount: String(l.line_discount),
-        }))
-      : [nextItem()],
+    initialSeed.itemRows.length > 0 ? initialSeed.itemRows : [nextItem(initialSeed.maxSeq + 1)],
   );
 
   const [submitting, setSubmitting] = useState(false);
@@ -125,15 +169,25 @@ export function EditDraftInvoiceForm({
     () => new Map(products.map((p) => [p.id, p.name] as const)),
     [products],
   );
-  const [initialReturnRows] = useState<ReturnLineDraft[]>(() =>
-    (initialReturnLines ?? []).map((rl) => ({
-      id: crypto.randomUUID(),
-      purchaseLineId: rl.original_invoice_item_id,
-      quantity: String(rl.quantity_returned),
-      mode: rl.quantity_discard >= rl.quantity_returned && rl.quantity_returned > 0 ? "discard" : "restock",
-    })),
+  const returnLines = useInvoiceReturnLines(customerId, initialSeed.returnRows);
+
+  const purchaseOptions = useMemo(
+    () => buildPurchaseOptions(returnLines.purchaseLines, productNameById),
+    [returnLines.purchaseLines, productNameById],
   );
-  const returnLines = useInvoiceReturnLines(customerId, initialReturnRows);
+  const purchaseOptionById = useMemo(
+    () => new Map(purchaseOptions.map((o) => [o.id, o])),
+    [purchaseOptions],
+  );
+
+  /** Sale lines and return/discard rows in one list, ordered by when they were added. */
+  const combinedLines = useMemo(() => {
+    const merged = [
+      ...items.map((line) => ({ kind: "sale" as const, seq: line.seq, line })),
+      ...returnLines.rows.map((row) => ({ kind: "return" as const, seq: row.seq, row })),
+    ];
+    return merged.sort((a, b) => a.seq - b.seq);
+  }, [items, returnLines.rows]);
 
   useEffect(() => {
     setStockGateMessage(null);
@@ -226,7 +280,7 @@ export function EditDraftInvoiceForm({
   }
 
   function addLine() {
-    setItems((prev) => [...prev, nextItem()]);
+    setItems((prev) => [...prev, nextItem(nextSeq())]);
   }
 
   function removeLine(id: string) {
@@ -429,22 +483,36 @@ export function EditDraftInvoiceForm({
           <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Items</h4>
         </div>
 
-        <InvoiceReturnLinesSection
-          purchaseLines={returnLines.purchaseLines}
-          rows={returnLines.rows}
-          updateRow={returnLines.updateRow}
-          removeRow={returnLines.removeRow}
-          loading={returnLines.loading}
-          error={returnLines.error}
-          productNameById={productNameById}
-          disabled={submitting}
-        />
+        {returnLines.error ? (
+          <InlineAlert variant="error">{returnLines.error}</InlineAlert>
+        ) : null}
 
         <div className="space-y-3">
-          {items.map((line) => {
+          {combinedLines.map((entry, idx) => {
+            if (entry.kind === "return") {
+              return (
+                <InvoiceReturnLineRow
+                  key={entry.row.id}
+                  row={entry.row}
+                  position={idx + 1}
+                  options={purchaseOptions}
+                  optionById={purchaseOptionById}
+                  updateRow={returnLines.updateRow}
+                  removeRow={returnLines.removeRow}
+                  disabled={submitting}
+                />
+              );
+            }
+            const line = entry.line;
             const selected = products.find((p) => p.id === line.productId);
             return (
               <div key={line.id} className="rounded-lg border border-border bg-surface p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground">{idx + 1}.</span>
+                  <span className="rounded-full bg-surface-muted px-2 py-0.5 text-[0.6875rem] font-medium text-muted-foreground">
+                    Sale
+                  </span>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-12">
                   <div className="space-y-1 sm:col-span-4">
                     <Label>Product</Label>
@@ -532,7 +600,7 @@ export function EditDraftInvoiceForm({
             type="button"
             variant="outline"
             className="text-xs"
-            onClick={returnLines.addReturn}
+            onClick={() => returnLines.addReturn(nextSeq())}
             disabled={submitting || !customerId}
           >
             Return
@@ -541,7 +609,7 @@ export function EditDraftInvoiceForm({
             type="button"
             variant="outline"
             className="text-xs"
-            onClick={returnLines.addDiscard}
+            onClick={() => returnLines.addDiscard(nextSeq())}
             disabled={submitting || !customerId}
           >
             Discard

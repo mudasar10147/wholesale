@@ -266,6 +266,11 @@ export type InvoiceReturnLineEmbedded = {
   unit_price: number;
   /** Proportional credit for this return line, at the original price. */
   line_total: number;
+  /**
+   * Position among the invoice's combined lines (sale + return/discard), so the order the
+   * user built them in survives a reload.
+   */
+  sort_order?: number;
 };
 
 /**
