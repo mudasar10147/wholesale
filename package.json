@@ -42,7 +42,8 @@
     "test": "npm run typecheck && npm run test:inventory-pure",
     "migrate:inventory": "node scripts/migrations/run.mjs",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
-    "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"
+    "deploy:firestore-indexes": "firebase deploy --only firestore:indexes",
+    "test:spike": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/integration/spikeTxnLotQuery.test.mjs\""
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",
