@@ -77,7 +77,13 @@ async function loadFromFirestore(db) {
     txSnap,
     txLinesSnap,
     returnsSnap,
+    returnItemsSnap,
+    restorationsSnap,
+    writeOffsSnap,
     discardsSnap,
+    discardItemsSnap,
+    discardLotsSnap,
+    salesSnap,
   ] = await Promise.all([
     db.collection("products").get(),
     db.collection("stock_lots").get(),
@@ -87,7 +93,13 @@ async function loadFromFirestore(db) {
     db.collection("inventory_transactions").get(),
     db.collection("inventory_transaction_lines").get(),
     db.collection("invoice_returns").get(),
+    db.collection("invoice_return_items").get(),
+    db.collection("return_lot_restorations").get(),
+    db.collection("return_lot_write_offs").get(),
     db.collection("inventory_discards").get(),
+    db.collection("inventory_discard_items").get(),
+    db.collection("inventory_discard_lots").get(),
+    db.collection("sales").get(),
   ]);
 
   const mapDocs = (snap) =>
@@ -102,7 +114,13 @@ async function loadFromFirestore(db) {
     inventoryTransactions: mapDocs(txSnap),
     inventoryTransactionLines: mapDocs(txLinesSnap),
     invoiceReturns: mapDocs(returnsSnap),
+    invoiceReturnItems: mapDocs(returnItemsSnap),
+    returnLotRestorations: mapDocs(restorationsSnap),
+    returnLotWriteOffs: mapDocs(writeOffsSnap),
     inventoryDiscards: mapDocs(discardsSnap),
+    inventoryDiscardItems: mapDocs(discardItemsSnap),
+    inventoryDiscardLots: mapDocs(discardLotsSnap),
+    sales: mapDocs(salesSnap),
   };
 }
 

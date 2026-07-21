@@ -91,14 +91,18 @@
         "payment_status": "unpaid",
         "paid_amount": 0,
         "stock_reversal_applied": false,
-        "item_ids": ["item1"],
+        "item_ids": [
+          "item1"
+        ],
         "subtotal_amount": 240,
         "discount_amount": 0,
         "delivery_charge": 0,
         "total_amount": 240,
         "posted_cogs_amount": 200,
         "created_at": "2026-03-01T00:00:00.000Z",
-        "updated_at": "2026-03-01T00:00:00.000Z"
+        "updated_at": "2026-03-01T00:00:00.000Z",
+        "posted_total_amount": 240,
+        "posted_at": "2026-03-01T00:00:00.000Z"
       }
     }
   ],
