@@ -159,3 +159,41 @@ detects("G7", (i) => {
 detects("G8", (i) => {
   i.inventoryTransactions = [{ id: "r1", data: { transaction_number: "R", type: "RECONCILIATION", status: "posted", warehouse_id: "default", item_ids: [], movement: true, posted_by_uid: "u1", created_at: TS, updated_at: TS } as never }];
 });
+
+// Returns / discards / sales — exercise the expanded ValidationInput.
+
+detects("L6", (i) => {
+  // A discard allocation on l1 breaks the full identity (10 − 2 − 1 ≠ 8).
+  i.inventoryDiscardLots = [{ id: "dl1", data: { discard_id: "d1", discard_item_id: "di1", lot_id: "l1", product_id: "p1", quantity: 1, unit_cost: 100, cogs_amount: 100, created_at: TS } as never }];
+});
+detects("I7", (i) => {
+  i.sales = [{ id: "s1", data: { invoice_id: "INV-1", sale_type: "sale", product_id: "p1", quantity: 5, sale_price: 120, total_amount: 600 } as never }];
+});
+detects("R1", (i) => {
+  i.invoiceReturnItems = [{ id: "ri1", data: { return_id: "R1", original_invoice_id: "INV-1", original_invoice_item_id: "item1", product_id: "p1", quantity_returned: 5, quantity_restock: 5, quantity_discard: 0, unit_price: 120, line_discount: 0, line_delivery_charge: 0, line_total: 600, cogs_amount: 500 } as never }];
+});
+detects("R2", (i) => {
+  i.returnLotRestorations = [{ id: "rr1", data: { return_id: "R1", consumption_id: "c1", lot_id: "l1", product_id: "p1", invoice_id: "INV-1", invoice_item_id: "item1", quantity: 5, unit_cost: 100, cogs_amount: 500, created_at: TS } as never }];
+});
+detects("R3", (i) => {
+  i.returnLotRestorations = [{ id: "rr1", data: { return_id: "R1", consumption_id: "c1", lot_id: "l1", product_id: "p1", invoice_id: "INV-1", invoice_item_id: "item1", quantity: 1, unit_cost: 100, cogs_amount: 100, created_at: TS } as never }];
+  i.returnLotWriteOffs = [{ id: "wo1", data: { return_id: "R1", consumption_id: "c1", lot_id: "l1", product_id: "p1", invoice_id: "INV-1", invoice_item_id: "item1", quantity: 2, unit_cost: 100, cogs_amount: 200, created_at: TS } as never }];
+});
+detects("R4", (i) => {
+  i.returnLotRestorations = [{ id: "rr1", data: { return_id: "R1", consumption_id: "c1", lot_id: "OTHER", product_id: "p1", invoice_id: "INV-1", invoice_item_id: "item1", quantity: 1, unit_cost: 100, cogs_amount: 100, created_at: TS } as never }];
+});
+detects("R7", (i) => {
+  i.invoiceReturns = [{ id: "ret1", data: { return_number: "RET-1", original_invoice_id: "INV-1", order_id: "INV-1", customer_id: "cust1", status: "posted", settlement_type: "refund", ledger_status: "pending", item_ids: [], subtotal_amount: 100, total_amount: 100, refund_amount: 100, created_at: TS, updated_at: TS } as never }];
+});
+detects("R9", (i) => {
+  i.invoices[0]!.data.status = "void";
+  i.invoices[0]!.data.stock_reversal_applied = true;
+  i.invoiceReturns = [{ id: "ret1", data: { return_number: "RET-1", original_invoice_id: "INV-1", order_id: "INV-1", customer_id: "cust1", status: "posted", settlement_type: "refund", inventory_transaction_id: "t9", item_ids: [], subtotal_amount: 100, total_amount: 100, refund_amount: 100, created_at: TS, updated_at: TS } as never }];
+});
+detects("D1", (i) => {
+  i.inventoryDiscardItems = [{ id: "di1", data: { discard_id: "d1", product_id: "p1", quantity: 5, cogs_amount: 300, created_at: TS } as never }];
+  i.inventoryDiscardLots = [{ id: "dl1", data: { discard_id: "d1", discard_item_id: "di1", lot_id: "l1", product_id: "p1", quantity: 3, unit_cost: 100, cogs_amount: 300, created_at: TS } as never }];
+});
+detects("D3", (i) => {
+  i.inventoryDiscardLots = [{ id: "dl1", data: { discard_id: "d1", discard_item_id: "di1", lot_id: "l1", product_id: "p1", quantity: 3, unit_cost: 100, cogs_amount: 999, created_at: TS } as never }];
+});

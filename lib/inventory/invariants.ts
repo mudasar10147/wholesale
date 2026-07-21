@@ -178,18 +178,18 @@ const checkL6: InvariantCheck = (ctx) => {
     const qi = isInt(lot.data.qty_in) ? lot.data.qty_in : 0;
     const qr = isInt(lot.data.qty_remaining) ? lot.data.qty_remaining : 0;
     const consumed = ctx.activeConsumptionByLot.get(lot.id) ?? 0;
-    // NOTE: consumption-only form (the current identity). The full L6 adds
-    // − discard allocations + restorations; that expansion + escalation to
-    // CRITICAL lands with the post-recount work. Guarded by `consumed > 0` so a
-    // fresh lot with no history is not flagged.
-    const expectedRemaining = qi - consumed;
-    if (expectedRemaining !== qr && consumed > 0) {
+    const discarded = ctx.discardAllocByLot.get(lot.id) ?? 0;
+    const restored = ctx.restorationByLot.get(lot.id) ?? 0;
+    // Full L6 identity (M.3): qty_in − consumptions − discards + restorations.
+    const expectedRemaining = qi - consumed - discarded + restored;
+    const hasHistory = consumed > 0 || discarded > 0 || restored > 0;
+    if (expectedRemaining !== qr && hasHistory) {
       out.push({
         code: "LOT_BALANCE_VS_CONSUMPTIONS",
-        message: `Lot qty_remaining (${qr}) != qty_in - consumptions (${expectedRemaining})`,
+        message: `Lot qty_remaining (${qr}) != qty_in − consumptions − discards + restorations (${expectedRemaining})`,
         lot_id: lot.id,
         product_id: lot.data.product_id,
-        context: { qty_in: qi, consumed, qty_remaining: qr },
+        context: { qty_in: qi, consumed, discarded, restored, qty_remaining: qr },
       });
     }
   }
@@ -354,19 +354,6 @@ const checkG2: InvariantCheck = (ctx) => {
         message: `Posted invoice missing inventory ledger (status: ${ledgerStatus})`,
         invoice_id: inv.id,
         context: { ledger_status: ledgerStatus, ledger_error: inv.data.ledger_error },
-      });
-    }
-  }
-  for (const ret of ctx.input.invoiceReturns ?? []) {
-    if (ret.data.status !== "posted") continue;
-    const ledgerStatus = ret.data.ledger_status;
-    const hasTxn = Boolean(ret.data.inventory_transaction_id?.trim());
-    if ((ledgerStatus === "pending" || ledgerStatus === "failed") && !hasTxn) {
-      out.push({
-        code: "MISSING_LEDGER_FOR_POSTED_DOC",
-        message: `Posted return missing inventory ledger (status: ${ledgerStatus ?? "unset"})`,
-        invoice_id: ret.data.original_invoice_id,
-        context: { return_id: ret.id, ledger_status: ledgerStatus },
       });
     }
   }
@@ -774,6 +761,178 @@ const checkK2: InvariantCheck = (ctx) => {
   return out;
 };
 
+// ── Invoices / sales projection ──────────────────────────────────────────────
+
+const checkI7: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  if (!ctx.input.sales || ctx.input.sales.length === 0) return out; // projection not loaded
+  const salesQtyByInvoice = new Map<string, number>();
+  for (const s of ctx.input.sales) {
+    if (s.data.sale_type === "return" || s.data.return_id) continue; // sale rows only
+    if (!s.data.invoice_id) continue;
+    salesQtyByInvoice.set(s.data.invoice_id, (salesQtyByInvoice.get(s.data.invoice_id) ?? 0) + s.data.quantity);
+  }
+  const itemQtyByInvoice = new Map<string, number>();
+  for (const ic of ctx.input.itemCogs) {
+    itemQtyByInvoice.set(ic.data.invoice_id, (itemQtyByInvoice.get(ic.data.invoice_id) ?? 0) + (ic.data.quantity ?? 0));
+  }
+  for (const inv of ctx.input.invoices) {
+    if (inv.data.status !== "posted") continue;
+    if (!salesQtyByInvoice.has(inv.id)) continue; // no sales projection for this invoice
+    const salesQ = salesQtyByInvoice.get(inv.id) ?? 0;
+    const itemQ = itemQtyByInvoice.get(inv.id) ?? 0;
+    if (salesQ !== itemQ) {
+      out.push({ message: `Σ sales qty (${salesQ}) != Σ invoice item qty (${itemQ})`, invoice_id: inv.id, delta: salesQ - itemQ });
+    }
+  }
+  return out;
+};
+
+// ── Returns / restorations ───────────────────────────────────────────────────
+
+const checkR1: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const returnedByItem = new Map<string, number>();
+  for (const ri of ctx.input.invoiceReturnItems ?? []) {
+    returnedByItem.set(
+      ri.data.original_invoice_item_id,
+      (returnedByItem.get(ri.data.original_invoice_item_id) ?? 0) + (ri.data.quantity_returned ?? 0),
+    );
+  }
+  for (const ic of ctx.input.itemCogs) {
+    const returned = returnedByItem.get(ic.id) ?? 0;
+    if (returned > (ic.data.quantity ?? 0)) {
+      out.push({
+        message: `returned qty (${returned}) exceeds sold qty (${ic.data.quantity})`,
+        invoice_item_id: ic.id,
+        invoice_id: ic.data.invoice_id,
+        delta: returned - (ic.data.quantity ?? 0),
+      });
+    }
+  }
+  return out;
+};
+
+const checkR2: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const [cid, restored] of ctx.restorationByConsumption) {
+    const cons = ctx.consumptionById.get(cid);
+    if (cons && restored > cons.data.quantity) {
+      out.push({
+        message: `restorations (${restored}) exceed consumption qty (${cons.data.quantity})`,
+        consumption_id: cid,
+        lot_id: cons.data.lot_id,
+        delta: restored - cons.data.quantity,
+      });
+    }
+  }
+  return out;
+};
+
+const checkR3: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const cids = new Set([...ctx.restorationByConsumption.keys(), ...ctx.writeOffByConsumption.keys()]);
+  for (const cid of cids) {
+    const cons = ctx.consumptionById.get(cid);
+    if (!cons) continue;
+    const total = (ctx.restorationByConsumption.get(cid) ?? 0) + (ctx.writeOffByConsumption.get(cid) ?? 0);
+    if (total > cons.data.quantity) {
+      out.push({
+        message: `restorations + write-offs (${total}) exceed consumed (${cons.data.quantity})`,
+        consumption_id: cid,
+        lot_id: cons.data.lot_id,
+        delta: total - cons.data.quantity,
+      });
+    }
+  }
+  return out;
+};
+
+const checkR4: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const r of ctx.input.returnLotRestorations ?? []) {
+    const cons = ctx.consumptionById.get(r.data.consumption_id);
+    if (!cons) continue; // orphan restoration — a separate structural concern
+    if (r.data.lot_id !== cons.data.lot_id) {
+      out.push({
+        message: `restoration lot (${r.data.lot_id}) != original consumption lot (${cons.data.lot_id})`,
+        consumption_id: r.data.consumption_id,
+        lot_id: r.data.lot_id,
+      });
+    } else if (typeof r.data.unit_cost === "number" && !approxMoneyEq(r.data.unit_cost, cons.data.unit_cost)) {
+      out.push({
+        message: `restoration cost (${r.data.unit_cost}) != original consumption cost (${cons.data.unit_cost})`,
+        consumption_id: r.data.consumption_id,
+        lot_id: r.data.lot_id,
+      });
+    }
+  }
+  return out;
+};
+
+const checkR7: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const ret of ctx.input.invoiceReturns ?? []) {
+    if (ret.data.status !== "posted") continue;
+    const ledgerStatus = ret.data.ledger_status;
+    const hasTxn = Boolean(ret.data.inventory_transaction_id?.trim());
+    if ((ledgerStatus === "pending" || ledgerStatus === "failed") && !hasTxn) {
+      out.push({
+        code: "MISSING_LEDGER_FOR_POSTED_DOC",
+        message: `Posted return missing inventory ledger (status: ${ledgerStatus ?? "unset"})`,
+        invoice_id: ret.data.original_invoice_id,
+        context: { return_id: ret.id, ledger_status: ledgerStatus },
+      });
+    }
+  }
+  return out;
+};
+
+const checkR9: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const voidInvoices = new Set(ctx.input.invoices.filter((i) => i.data.status === "void").map((i) => i.id));
+  if (voidInvoices.size === 0) return out;
+  for (const ret of ctx.input.invoiceReturns ?? []) {
+    if (ret.data.status === "posted" && voidInvoices.has(ret.data.original_invoice_id)) {
+      out.push({ message: "voided invoice has a posted return", invoice_id: ret.data.original_invoice_id, context: { return_id: ret.id } });
+    }
+  }
+  return out;
+};
+
+// ── Discards ─────────────────────────────────────────────────────────────────
+
+const checkD1: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const item of ctx.input.inventoryDiscardItems ?? []) {
+    const allocated = ctx.discardAllocByItem.get(item.id) ?? 0;
+    if (isInt(item.data.quantity) && allocated !== item.data.quantity) {
+      out.push({
+        message: `Σ discard lot allocations (${allocated}) != discard item qty (${item.data.quantity})`,
+        context: { discard_item_id: item.id },
+        delta: allocated - item.data.quantity,
+      });
+    }
+  }
+  return out;
+};
+
+const checkD3: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const alloc of ctx.input.inventoryDiscardLots ?? []) {
+    const expected = round2(alloc.data.unit_cost * alloc.data.quantity);
+    if (Number.isFinite(expected) && !approxMoneyEq(alloc.data.cogs_amount, expected)) {
+      out.push({
+        message: `discard allocation cogs (${alloc.data.cogs_amount}) != round2(lot cost × qty) (${expected})`,
+        lot_id: alloc.data.lot_id,
+        context: { discard_item_id: alloc.data.discard_item_id },
+        delta: alloc.data.cogs_amount - expected,
+      });
+    }
+  }
+  return out;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The register. Order is validation-pass order (cheap/structural first).
 // Entries without a `check` are declared-but-pending — the M1 coverage target.
@@ -872,7 +1031,9 @@ const ADDITIONAL_CHECKS: Record<string, InvariantCheck> = {
   P4: checkP4, P5: checkP5, P6: checkP6,
   L2: checkL2, L3: checkL3, L4: checkL4, L8: checkL8,
   C1: checkC1, C2: checkC2, C4: checkC4, C5: checkC5, C6: checkC6, C7: checkC7,
-  I1: checkI1, I2: checkI2, I3: checkI3, I4: checkI4, I5: checkI5, I9: checkI9, I10: checkI10,
+  I1: checkI1, I2: checkI2, I3: checkI3, I4: checkI4, I5: checkI5, I7: checkI7, I9: checkI9, I10: checkI10,
+  R1: checkR1, R2: checkR2, R3: checkR3, R4: checkR4, R7: checkR7, R9: checkR9,
+  D1: checkD1, D3: checkD3,
   G7: checkG7, G8: checkG8,
   A1: checkA1, A2: checkA2, A3: checkA3,
   K1: checkK1, K2: checkK2,

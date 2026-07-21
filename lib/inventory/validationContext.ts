@@ -7,11 +7,17 @@ import type {
   InvoiceDoc,
   InvoiceItemCogsDoc,
   InventoryDiscardDoc,
+  InventoryDiscardItemDoc,
+  InventoryDiscardLotDoc,
   InventoryTransactionDoc,
   InventoryTransactionLineDoc,
   InvoiceReturnDoc,
+  InvoiceReturnItemDoc,
   LotConsumptionDoc,
   ProductDoc,
+  ReturnLotRestorationDoc,
+  ReturnLotWriteOffDoc,
+  SaleDoc,
   StockLotDoc,
 } from "@/lib/types/firestore";
 import type { ValidationIssueCode } from "@/lib/inventory/validationTypes";
@@ -27,7 +33,13 @@ export type ValidationInput = {
   inventoryTransactions?: Array<WithId<InventoryTransactionDoc>>;
   inventoryTransactionLines?: Array<WithId<InventoryTransactionLineDoc>>;
   invoiceReturns?: Array<WithId<InvoiceReturnDoc>>;
+  invoiceReturnItems?: Array<WithId<InvoiceReturnItemDoc>>;
+  returnLotRestorations?: Array<WithId<ReturnLotRestorationDoc>>;
+  returnLotWriteOffs?: Array<WithId<ReturnLotWriteOffDoc>>;
   inventoryDiscards?: Array<WithId<InventoryDiscardDoc>>;
+  inventoryDiscardItems?: Array<WithId<InventoryDiscardItemDoc>>;
+  inventoryDiscardLots?: Array<WithId<InventoryDiscardLotDoc>>;
+  sales?: Array<WithId<SaleDoc>>;
 };
 
 /**
@@ -59,15 +71,33 @@ export type ValidationContext = {
   productById: Map<string, WithId<ProductDoc>>;
   lotById: Map<string, WithId<StockLotDoc>>;
   invoiceById: Map<string, WithId<InvoiceDoc>>;
+  consumptionById: Map<string, WithId<LotConsumptionDoc>>;
   lotsByProduct: Map<string, Array<WithId<StockLotDoc>>>;
   /** Σ quantity of active (not reversed) consumptions per lot. */
   activeConsumptionByLot: Map<string, number>;
+  /** Σ inventory_discard_lots allocation quantity per lot. */
+  discardAllocByLot: Map<string, number>;
+  /** Σ inventory_discard_lots allocation quantity per discard_item_id. */
+  discardAllocByItem: Map<string, number>;
+  /** Σ return_lot_restorations quantity per lot. */
+  restorationByLot: Map<string, number>;
+  /** Σ return_lot_restorations quantity per consumption. */
+  restorationByConsumption: Map<string, number>;
+  /** Σ return_lot_write_offs quantity per consumption. */
+  writeOffByConsumption: Map<string, number>;
 };
+
+function addTo(map: Map<string, number>, key: string | undefined, qty: unknown): void {
+  if (!key) return;
+  const q = typeof qty === "number" ? qty : 0;
+  map.set(key, (map.get(key) ?? 0) + q);
+}
 
 export function buildValidationContext(input: ValidationInput): ValidationContext {
   const productById = new Map(input.products.map((p) => [p.id, p]));
   const lotById = new Map(input.lots.map((l) => [l.id, l]));
   const invoiceById = new Map(input.invoices.map((i) => [i.id, i]));
+  const consumptionById = new Map(input.consumptions.map((c) => [c.id, c]));
 
   const lotsByProduct = new Map<string, Array<WithId<StockLotDoc>>>();
   for (const lot of input.lots) {
@@ -81,11 +111,40 @@ export function buildValidationContext(input: ValidationInput): ValidationContex
   const activeConsumptionByLot = new Map<string, number>();
   for (const row of input.consumptions) {
     if (row.data.reversed_at) continue;
-    activeConsumptionByLot.set(
-      row.data.lot_id,
-      (activeConsumptionByLot.get(row.data.lot_id) ?? 0) + row.data.quantity,
-    );
+    addTo(activeConsumptionByLot, row.data.lot_id, row.data.quantity);
   }
 
-  return { input, productById, lotById, invoiceById, lotsByProduct, activeConsumptionByLot };
+  const discardAllocByLot = new Map<string, number>();
+  const discardAllocByItem = new Map<string, number>();
+  for (const alloc of input.inventoryDiscardLots ?? []) {
+    addTo(discardAllocByLot, alloc.data.lot_id, alloc.data.quantity);
+    addTo(discardAllocByItem, alloc.data.discard_item_id, alloc.data.quantity);
+  }
+
+  const restorationByLot = new Map<string, number>();
+  const restorationByConsumption = new Map<string, number>();
+  for (const r of input.returnLotRestorations ?? []) {
+    addTo(restorationByLot, r.data.lot_id, r.data.quantity);
+    addTo(restorationByConsumption, r.data.consumption_id, r.data.quantity);
+  }
+
+  const writeOffByConsumption = new Map<string, number>();
+  for (const w of input.returnLotWriteOffs ?? []) {
+    addTo(writeOffByConsumption, w.data.consumption_id, w.data.quantity);
+  }
+
+  return {
+    input,
+    productById,
+    lotById,
+    invoiceById,
+    consumptionById,
+    lotsByProduct,
+    activeConsumptionByLot,
+    discardAllocByLot,
+    discardAllocByItem,
+    restorationByLot,
+    restorationByConsumption,
+    writeOffByConsumption,
+  };
 }
