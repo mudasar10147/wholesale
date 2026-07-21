@@ -27,6 +27,7 @@
     "inventory:export-baseline": "node scripts/inventory/export-baseline.mjs",
     "test:inventory-invariants": "node --experimental-strip-types --test lib/inventory/invariants.test.ts",
     "test:inventory-validation": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/inventory/validateInventory.test.ts",
+    "test:inventory-detection": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/inventory/validateInventory.detection.test.ts",
     "test:inventory-parity": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/inventory/inventoryParity.test.ts",
     "test:inventory-stress": "node --experimental-strip-types lib/inventory/inventoryConcurrency.test.ts",
     "migrate:inventory": "node scripts/migrations/run.mjs",

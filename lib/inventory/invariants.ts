@@ -389,6 +389,391 @@ const checkD4: InvariantCheck = (ctx) => {
   return out;
 };
 
+function round2(n: number): number {
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+}
+
+function toMillis(v: unknown): number {
+  const t = v as { toMillis?: () => number } | undefined;
+  return typeof t?.toMillis === "function" ? t.toMillis() : 0;
+}
+
+// ── Product (extended) ───────────────────────────────────────────────────────
+
+const checkP4: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const p of ctx.input.products) {
+    const c = p.data.cost_price;
+    if (typeof c !== "number" || !Number.isFinite(c) || c < 0) {
+      out.push({ message: `cost_price invalid (${c})`, product_id: p.id, product_name: p.data.name, actual: c });
+    }
+  }
+  return out;
+};
+
+const checkP5: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const p of ctx.input.products) {
+    const lots = ctx.lotsByProduct.get(p.id) ?? [];
+    let newest: { received: number; cost: number } | null = null;
+    for (const lot of lots) {
+      if (!isInt(lot.data.qty_remaining) || lot.data.qty_remaining <= 0) continue;
+      const received = toMillis(lot.data.received_at);
+      const cost = typeof lot.data.unit_cost === "number" ? lot.data.unit_cost : 0;
+      if (!newest || received >= newest.received) newest = { received, cost };
+    }
+    if (newest && typeof p.data.cost_price === "number" && !approxMoneyEq(p.data.cost_price, newest.cost)) {
+      out.push({
+        message: `cost_price (${p.data.cost_price}) != newest live lot cost (${newest.cost})`,
+        product_id: p.id,
+        product_name: p.data.name,
+        expected: newest.cost,
+        actual: p.data.cost_price,
+      });
+    }
+  }
+  return out;
+};
+
+const checkP6: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const seen = new Set<string>();
+  const flag = (pid: string | undefined, where: string, refId: string) => {
+    if (!pid || ctx.productById.has(pid) || seen.has(`${where}:${refId}`)) return;
+    seen.add(`${where}:${refId}`);
+    out.push({ message: `${where} references missing product ${pid}`, product_id: pid, context: { ref: refId } });
+  };
+  for (const c of ctx.input.consumptions) flag(c.data.product_id, "consumption", c.id);
+  for (const ic of ctx.input.itemCogs) flag(ic.data.product_id, "invoice_item_cogs", ic.id);
+  return out;
+};
+
+// ── Lots (extended) ──────────────────────────────────────────────────────────
+
+const checkL2: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const lot of ctx.input.lots) {
+    if (!isInt(lot.data.qty_in) || lot.data.qty_in <= 0) {
+      out.push({ message: `qty_in must be a positive integer (${lot.data.qty_in})`, lot_id: lot.id, product_id: lot.data.product_id });
+    }
+  }
+  return out;
+};
+
+const checkL3: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const lot of ctx.input.lots) {
+    const u = lot.data.unit_cost;
+    if (typeof u !== "number" || !Number.isFinite(u) || u < 0) {
+      out.push({ message: `lot unit_cost invalid (${u})`, lot_id: lot.id, product_id: lot.data.product_id });
+    }
+  }
+  return out;
+};
+
+const checkL4: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const lot of ctx.input.lots) {
+    if (lot.data.received_at == null) {
+      out.push({ message: "lot missing received_at (FIFO order at risk)", lot_id: lot.id, product_id: lot.data.product_id });
+    }
+  }
+  return out;
+};
+
+const checkL8: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const lot of ctx.input.lots) {
+    if (lot.data.source === "stock_in" && !lot.data.trader_id?.trim()) {
+      out.push({ message: "receipt-origin lot missing trader_id", lot_id: lot.id, product_id: lot.data.product_id });
+    }
+  }
+  return out;
+};
+
+// ── Consumptions (extended) ──────────────────────────────────────────────────
+
+const checkC1: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const activeQtyByItem = new Map<string, number>();
+  for (const row of ctx.input.consumptions) {
+    if (row.data.reversed_at) continue;
+    activeQtyByItem.set(row.data.invoice_item_id, (activeQtyByItem.get(row.data.invoice_item_id) ?? 0) + row.data.quantity);
+  }
+  for (const ic of ctx.input.itemCogs) {
+    const active = activeQtyByItem.get(ic.id) ?? 0;
+    if (isInt(ic.data.quantity) && active !== ic.data.quantity) {
+      out.push({
+        message: `Σ active consumption qty (${active}) != invoice item qty (${ic.data.quantity})`,
+        invoice_item_id: ic.id,
+        invoice_id: ic.data.invoice_id,
+        expected: ic.data.quantity,
+        actual: active,
+        delta: active - ic.data.quantity,
+      });
+    }
+  }
+  return out;
+};
+
+const checkC2: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const row of ctx.input.consumptions) {
+    if (!(typeof row.data.quantity === "number" && row.data.quantity > 0)) {
+      out.push({ message: `consumption quantity must be > 0 (${row.data.quantity})`, consumption_id: row.id, invoice_id: row.data.invoice_id });
+    }
+  }
+  return out;
+};
+
+const checkC4: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const row of ctx.input.consumptions) {
+    const expected = round2(row.data.unit_cost * row.data.quantity);
+    if (Number.isFinite(expected) && !approxMoneyEq(row.data.cogs_amount, expected)) {
+      out.push({
+        message: `consumption cogs_amount (${row.data.cogs_amount}) != round2(unit_cost × qty) (${expected})`,
+        consumption_id: row.id,
+        invoice_id: row.data.invoice_id,
+        delta: row.data.cogs_amount - expected,
+      });
+    }
+  }
+  return out;
+};
+
+const checkC5: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const row of ctx.input.consumptions) {
+    const lot = ctx.lotById.get(row.data.lot_id);
+    if (lot && typeof lot.data.unit_cost === "number" && !approxMoneyEq(row.data.unit_cost, lot.data.unit_cost)) {
+      out.push({
+        message: `consumption unit_cost (${row.data.unit_cost}) != lot unit_cost (${lot.data.unit_cost})`,
+        consumption_id: row.id,
+        lot_id: row.data.lot_id,
+        invoice_id: row.data.invoice_id,
+      });
+    }
+  }
+  return out;
+};
+
+const checkC6: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const row of ctx.input.consumptions) {
+    const inv = ctx.invoiceById.get(row.data.invoice_id);
+    if (inv?.data.status === "void" && !row.data.reversed_at) {
+      out.push({ message: "consumption of a voided invoice is not reversed", consumption_id: row.id, invoice_id: row.data.invoice_id });
+    }
+  }
+  return out;
+};
+
+const checkC7: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const row of ctx.input.consumptions) {
+    const inv = ctx.invoiceById.get(row.data.invoice_id);
+    if (inv && inv.data.status !== "posted" && inv.data.status !== "void") {
+      out.push({ message: `consumption belongs to a ${inv.data.status} invoice (torn post)`, consumption_id: row.id, invoice_id: row.data.invoice_id });
+    }
+  }
+  return out;
+};
+
+// ── Invoices (extended) ──────────────────────────────────────────────────────
+
+const checkI1: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const inv of ctx.input.invoices) {
+    if (inv.data.status !== "posted") continue;
+    const missing = [];
+    if (inv.data.posted_total_amount == null) missing.push("posted_total_amount");
+    if (inv.data.posted_cogs_amount == null) missing.push("posted_cogs_amount");
+    if (inv.data.posted_at == null) missing.push("posted_at");
+    if (missing.length) {
+      out.push({ message: `posted invoice missing ${missing.join(", ")}`, invoice_id: inv.id, context: { missing } });
+    }
+  }
+  return out;
+};
+
+const checkI2: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const itemsWithActive = new Set<string>();
+  for (const row of ctx.input.consumptions) {
+    if (!row.data.reversed_at) itemsWithActive.add(row.data.invoice_item_id);
+  }
+  for (const inv of ctx.input.invoices) {
+    if (inv.data.status !== "posted") continue;
+    for (const itemId of inv.data.item_ids ?? []) {
+      if (!itemsWithActive.has(itemId)) {
+        out.push({ message: `posted invoice item ${itemId} has no active consumption`, invoice_id: inv.id, invoice_item_id: itemId });
+      }
+    }
+  }
+  return out;
+};
+
+const checkI3: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const draftIds = new Set(ctx.input.invoices.filter((i) => i.data.status === "draft").map((i) => i.id));
+  if (draftIds.size === 0) return out;
+  for (const row of ctx.input.consumptions) {
+    if (draftIds.has(row.data.invoice_id)) {
+      out.push({ message: "draft invoice owns a consumption (draft firewall breach)", consumption_id: row.id, invoice_id: row.data.invoice_id });
+    }
+  }
+  for (const ic of ctx.input.itemCogs) {
+    if (draftIds.has(ic.data.invoice_id)) {
+      out.push({ message: "draft invoice owns an invoice_item_cogs row", invoice_item_id: ic.id, invoice_id: ic.data.invoice_id });
+    }
+  }
+  return out;
+};
+
+const checkI4: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const itemCogsIds = new Set(ctx.input.itemCogs.map((i) => i.id));
+  for (const inv of ctx.input.invoices) {
+    if (inv.data.status !== "posted") continue;
+    for (const itemId of inv.data.item_ids ?? []) {
+      if (!itemCogsIds.has(itemId)) {
+        out.push({ message: `posted invoice item_id ${itemId} does not resolve`, invoice_id: inv.id, invoice_item_id: itemId });
+      }
+    }
+  }
+  return out;
+};
+
+const checkI5: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const cogsByInvoice = new Map<string, number>();
+  for (const ic of ctx.input.itemCogs) {
+    cogsByInvoice.set(ic.data.invoice_id, (cogsByInvoice.get(ic.data.invoice_id) ?? 0) + ic.data.cogs_amount);
+  }
+  for (const inv of ctx.input.invoices) {
+    const posted = inv.data.posted_cogs_amount;
+    if (typeof posted !== "number") continue;
+    const sum = cogsByInvoice.get(inv.id) ?? 0;
+    if (!approxMoneyEq(posted, sum)) {
+      out.push({ message: `posted_cogs_amount (${posted}) != Σ invoice_item_cogs (${sum})`, invoice_id: inv.id, delta: sum - posted });
+    }
+  }
+  return out;
+};
+
+const checkI9: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const inv of ctx.input.invoices) {
+    if (inv.data.status === "void" && inv.data.stock_reversal_applied !== true) {
+      out.push({ message: "voided invoice does not have stock_reversal_applied == true", invoice_id: inv.id });
+    }
+  }
+  return out;
+};
+
+const checkI10: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  const byOrder = new Map<string, number>();
+  for (const inv of ctx.input.invoices) {
+    const oid = inv.data.order_id;
+    if (oid) byOrder.set(oid, (byOrder.get(oid) ?? 0) + 1);
+  }
+  for (const [oid, count] of byOrder) {
+    if (count > 1) out.push({ message: `order_id ${oid} used by ${count} invoices`, context: { order_id: oid, count } });
+  }
+  return out;
+};
+
+// ── Ledger (extended) ────────────────────────────────────────────────────────
+
+const checkG7: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const txn of ctx.input.inventoryTransactions ?? []) {
+    if (txn.data.status !== "posted") continue;
+    if (!txn.data.posted_by_uid?.trim()) {
+      out.push({ message: `ledger transaction has no posted_by_uid (${txn.data.type})`, transaction_id: txn.id });
+    }
+  }
+  return out;
+};
+
+const checkG8: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const txn of ctx.input.inventoryTransactions ?? []) {
+    if (txn.data.type === "RECONCILIATION" && (txn.data as { movement?: boolean }).movement !== false) {
+      out.push({ message: "RECONCILIATION row must carry movement:false", transaction_id: txn.id });
+    }
+  }
+  return out;
+};
+
+// ── Adjustments (extended) ───────────────────────────────────────────────────
+
+const checkA1: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const txn of ctx.input.inventoryTransactions ?? []) {
+    if (txn.data.type === "ADJUSTMENT" && !txn.data.reason?.trim()) {
+      out.push({ message: "ADJUSTMENT ledger row missing reason", transaction_id: txn.id });
+    }
+  }
+  return out;
+};
+
+const checkA2: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const txn of ctx.input.inventoryTransactions ?? []) {
+    if (txn.data.type === "ADJUSTMENT" && !txn.data.posted_by_uid?.trim()) {
+      out.push({ message: "ADJUSTMENT ledger row missing posted_by_uid", transaction_id: txn.id });
+    }
+  }
+  return out;
+};
+
+const checkA3: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  if (!ctx.input.inventoryTransactionLines) return out;
+  const adjTxnIds = new Set((ctx.input.inventoryTransactions ?? []).filter((t) => t.data.type === "ADJUSTMENT").map((t) => t.id));
+  for (const line of ctx.input.inventoryTransactionLines) {
+    if (!adjTxnIds.has(line.data.transaction_id)) continue;
+    if (line.data.before_on_hand == null || line.data.after_on_hand == null) {
+      out.push({ message: "ADJUSTMENT line missing before/after on_hand", transaction_id: line.data.transaction_id, product_id: line.data.product_id });
+    }
+  }
+  return out;
+};
+
+// ── Cash (extended) ──────────────────────────────────────────────────────────
+
+const checkK1: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const inv of ctx.input.invoices) {
+    if (typeof inv.data.paid_amount === "number" && inv.data.paid_amount < 0) {
+      out.push({ message: `paid_amount is negative (${inv.data.paid_amount})`, invoice_id: inv.id });
+    }
+  }
+  return out;
+};
+
+const checkK2: InvariantCheck = (ctx) => {
+  const out: InvariantFinding[] = [];
+  for (const inv of ctx.input.invoices) {
+    if (inv.data.status !== "posted") continue;
+    const total = typeof inv.data.posted_total_amount === "number" ? inv.data.posted_total_amount : inv.data.total_amount;
+    const returned = typeof inv.data.returned_amount === "number" ? inv.data.returned_amount : 0;
+    const effective = total - returned;
+    if (typeof inv.data.paid_amount === "number" && inv.data.paid_amount > effective + 0.05) {
+      out.push({
+        message: `paid_amount (${inv.data.paid_amount}) > effective total (${effective})`,
+        invoice_id: inv.id,
+        expected: effective,
+        actual: inv.data.paid_amount,
+      });
+    }
+  }
+  return out;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // The register. Order is validation-pass order (cheap/structural first).
 // Entries without a `check` are declared-but-pending — the M1 coverage target.
@@ -480,6 +865,22 @@ export const INVARIANTS: Invariant[] = [
 ];
 
 const BY_ID = new Map(INVARIANTS.map((i) => [i.id, i]));
+
+// Checks implemented in this M1 PR beyond the initial ported set, attached by id
+// so adding an implementation is a one-line change here plus the function above.
+const ADDITIONAL_CHECKS: Record<string, InvariantCheck> = {
+  P4: checkP4, P5: checkP5, P6: checkP6,
+  L2: checkL2, L3: checkL3, L4: checkL4, L8: checkL8,
+  C1: checkC1, C2: checkC2, C4: checkC4, C5: checkC5, C6: checkC6, C7: checkC7,
+  I1: checkI1, I2: checkI2, I3: checkI3, I4: checkI4, I5: checkI5, I9: checkI9, I10: checkI10,
+  G7: checkG7, G8: checkG8,
+  A1: checkA1, A2: checkA2, A3: checkA3,
+  K1: checkK1, K2: checkK2,
+};
+for (const [id, check] of Object.entries(ADDITIONAL_CHECKS)) {
+  const inv = BY_ID.get(id);
+  if (inv) inv.check = check;
+}
 
 export function getInvariant(id: string): Invariant | undefined {
   return BY_ID.get(id);
