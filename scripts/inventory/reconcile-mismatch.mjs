@@ -1,6 +1,13 @@
 /**
- * M0.5 baseline reconciliation runner — TEMPORARY, deleted in M6.
+ * M0.5 reconciliation runner — TEMPORARY, deleted in M6.
  * (PHASE1_INTEGRITY_ARCHITECTURE_V2.md §19.0.5-M.8, docs/inventory/BASELINE_REMEDIATION.md.)
+ *
+ * ROLLOUT STATUS: production-safe but INACTIVE. Current production history is NOT
+ * authoritative (a pre-architecture script force-synced lot quantities without
+ * audit), so this must NOT be run against production to reconstruct historical
+ * drift. The future recovery uses a frozen physical warehouse count as truth —
+ * see docs/inventory/PHYSICAL_RECOUNT_REBASELINE.md. A production --apply is
+ * therefore gated to `physical_count` authority only (below).
  *
  * Runs under the Admin SDK (`inventory-repair` identity). NEVER exposed in the UI.
  *
@@ -8,6 +15,8 @@
  *   - Dry-run is the default. --apply is required to write, and only with an allowlist.
  *   - An explicit product allowlist FILE is mandatory (max 10 products per run).
  *   - --project is mandatory for live runs and must match the credential's project.
+ *   - A production --apply requires EVERY entry to use `physical_count` authority
+ *     (the frozen recount is the only authoritative source for production).
  *   - --apply requires a named, verified backup, recorded in the run log.
  *   - `administrative` authority requires an approver.
  *   - After apply, every touched product is re-derived and must be clean (scoped
@@ -141,9 +150,27 @@ async function main() {
   }
 
   const allowlist = loadAllowlist(flag("--allowlist"));
+  const isProduction = targetProjectId === projects.prod;
 
   if (apply) {
     if (!backup) fail("--apply requires --backup <name> (a verified export, recorded in this run log).");
+    // Production history is not authoritative (see the file header): the only
+    // valid production input is a frozen physical count. Enforce it here.
+    if (isProduction) {
+      const nonPhysical = allowlist.filter((e) => e.authorityCategory !== "physical_count");
+      if (nonPhysical.length) {
+        fail(
+          `production --apply requires physical_count authority for every product; ` +
+            `these use other authorities: ${nonPhysical.map((e) => e.productId).join(", ")}. ` +
+            `Current production history is NOT authoritative — reconcile only against a frozen ` +
+            `physical warehouse count (docs/inventory/PHYSICAL_RECOUNT_REBASELINE.md).`,
+        );
+      }
+      const missingCount = allowlist.filter((e) => e.physicalCount == null);
+      if (missingCount.length) {
+        fail(`production --apply requires a physicalCount for every product; missing for: ${missingCount.map((e) => e.productId).join(", ")}.`);
+      }
+    }
     const needsApprover = allowlist.filter(
       (e) => e.authorityCategory === "administrative" && !e.approvedByUid && !approvedByGlobal,
     );

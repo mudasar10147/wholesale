@@ -1,44 +1,66 @@
-# M0.5 — Baseline remediation runbook
+# M0.5 — Reconciliation tool (validation milestone)
 
-**Status:** Tool built and emulator-proven. **No production repair may run until the
-M0 baseline has been run, reviewed, and frozen as the authoritative input.**
-**Supersedes nothing; implements** [`PHASE1_INTEGRITY_ARCHITECTURE_V2.md`](./PHASE1_INTEGRITY_ARCHITECTURE_V2.md) §19.0.5-M.
+> **STATUS — read first.** M0.5 is now a **tool-validation** milestone, **not** a
+> production-remediation milestone. The reconciliation tool is **built, fully
+> emulator-proven, production-safe, and INACTIVE.** No production reconciliation
+> is performed in this milestone, and no attempt is made to reconstruct historical
+> production drift. The future recovery uses a **frozen physical warehouse count**
+> as the source of truth — see [`PHYSICAL_RECOUNT_REBASELINE.md`](./PHYSICAL_RECOUNT_REBASELINE.md).
 
-**Temporary by construction.** `lib/inventory/reconcileMismatch.ts`,
+**Implements** [`PHASE1_INTEGRITY_ARCHITECTURE_V2.md`](./PHASE1_INTEGRITY_ARCHITECTURE_V2.md) §19.0.5-M.
+**Temporary by construction** — `lib/inventory/reconcileMismatch.ts`,
 `lib/inventory/reconciliationPlan.ts` and `scripts/inventory/reconcile-mismatch.mjs`
-are **deleted in M6**, when the audited workflow replaces them. Their
-`inventory_repairs` records use M6's schema, so the history is continuous.
+are **deleted in M6**. Their `inventory_repairs` records use M6's schema, so the
+audit history is continuous across the transition.
 
-## Why this milestone exists
+## Why current production is not historical truth
 
-M0 measures drift. M1 ships a two-sided transactional assertion that treats drift
-as a hard error at posting time. Between them sits a live trading floor: any product
-still drifted when the assertion lands **cannot be sold**. M0.5 brings drift to zero —
-or to a known, expiring allowlist — first.
+Before this architecture existed, a one-off script **force-synced production lot
+quantities to product stock without validation or audit** (the same class of tool
+`reconcile-book-stock.mjs` represents). As a consequence:
 
-A normal adjustment **cannot** do this: it moves book and lots by the same amount, so
-`book − lotTotal` is invariant under it, and the two-sided assertion would abort on the
-first drifted product (§19.0.5-M.1). A purpose-built reconciliation is required.
+- The append-only lot/consumption history **no longer reconciles** with the stored
+  lot quantities, so the history-implied derivation (`h_i`, below) **cannot be
+  trusted to reconstruct real production drift.**
+- Neither book stock, nor lot quantities, nor derived history can be treated as
+  authoritative for production. **Only a fresh physical count can.**
 
-## What the tool does
+Therefore this milestone deliberately does **not** run the tool against production.
+The revised objectives are:
 
-For each drifted product it derives, from append-only history, every lot's
-history-implied remaining quantity and corrects to it — lots are **never** chosen by
-FIFO or judgement:
+1. Finalize the reconciliation implementation. *(done — unchanged since it was proven)*
+2. Prove it completely in the emulator. *(done — see Tests)*
+3. Finalize all documentation, runbooks, schemas and guardrails. *(this doc + the recount doc)*
+4. Keep the tool production-safe but inactive. *(dry-run default; production `--apply` gated to `physical_count`)*
+5. Prepare the future physical-recount re-baseline workflow. *(see [`PHYSICAL_RECOUNT_REBASELINE.md`](./PHYSICAL_RECOUNT_REBASELINE.md))*
+
+## What the tool does (unchanged, emulator-proven)
+
+For a product it derives, from append-only history, every lot's history-implied
+remaining quantity — lots are **never** chosen by FIFO or judgement:
 
 ```
 h_i = qty_in_i − Σ active consumptions − Σ discard allocations + Σ restorations
 ```
 
-Then, in one transaction per product (product read first as the concurrency anchor):
+Then, in one transaction per product (product read first as the concurrency anchor,
+plan recomputed from fresh reads inside the transaction):
 
 1. **Lot reconciliation** — set each drifted lot to `h_i`. Lots move, book does not. **L6 green.** `RECONCILIATION`, `movement:false`.
 2. **Book reconciliation** — set `stock_quantity` to `Σ h_i`. Book moves, lots do not. **P1 green.** `RECONCILIATION`, `movement:false`.
-3. **Physical adjustment** — *only* when a verified count `P ≠ Σ h_i`: apply `P − Σ h_i` through a real `ADJUSTMENT` (`movement:true`). This is genuine shrinkage/surplus and is recorded as a separate, honest event.
+3. **Physical adjustment** — *only* when a verified count `P ≠ Σ h_i`: apply `P − Σ h_i` as a real `ADJUSTMENT` (`movement:true`). Genuine shrinkage/surplus, recorded as a separate, honest event.
 
-The transaction **asserts the post-state**: it refuses to commit unless P1 **and** L6
-both hold afterwards. Writes are absolute and keyed by deterministic ids, so re-running
-a repaired product is a no-op — no duplicate ledger or repair rows.
+It **asserts the post-state**: refuses to commit unless P1 **and** L6 both hold
+afterwards. Writes are absolute and keyed by deterministic ids, so re-running a
+repaired product is a no-op — no duplicate ledger or repair rows.
+
+> **How this maps to the future recount.** When history is untrusted, the truth is
+> the physical count `P`. Feeding `P` as `physicalCount` still drives the product to
+> `P` as its final state; the `RECONCILIATION` row (often with no lot corrections and
+> `book_before == book_after`) honestly records that the internal book/lot figures
+> were left as-found, and the `ADJUSTMENT` row carries the entire real difference to
+> the counted truth. See the recount workflow for how per-lot semantics and history
+> gates are handled in that epoch.
 
 ### The three concepts, kept separate (M.2)
 
@@ -52,8 +74,8 @@ a repaired product is a no-op — no duplicate ledger or repair rows.
 
 It refuses and escalates rather than repair when the history itself is broken:
 a lot's `h_i < 0` (consumption exceeds intake), `h_i > qty_in`, a negative lot total,
-a lot missing `received_at`, or a consumption/discard/restoration referencing a missing
-lot. A tool that papers over a broken history is worse than no tool.
+a lot missing `received_at`, or a consumption/discard/restoration referencing a
+missing lot. A tool that papers over a broken history is worse than no tool.
 
 ## Guardrails (M.8)
 
@@ -62,6 +84,7 @@ lot. A tool that papers over a broken history is worse than no tool.
 | Never in the UI | Script only (`scripts/inventory/reconcile-mismatch.mjs`) |
 | Dry-run default | Writes only with `--apply` |
 | Explicit allowlist | `--allowlist <file>` mandatory; **max 10 products/run** |
+| **Production is physical-count-only** | A production `--apply` refuses any entry that is not `physical_count` with a `physicalCount` |
 | Verified backup | `--apply` requires `--backup <name>`, recorded in the run log |
 | Second approver | `administrative` authority requires an approver |
 | Repair identity | Admin SDK under `inventory-repair` (§13); never the validator |
@@ -69,52 +92,28 @@ lot. A tool that papers over a broken history is worse than no tool.
 | Post-validation | Every applied product re-derived clean, then run the full validator |
 | Audit | One immutable `inventory_repairs` record per product, linking every ledger row |
 
-## Operator procedure
+## Operating posture in M0.5: INACTIVE
 
-**Prerequisite:** the M0 baseline exists, is reviewed, and each drifted product has an
-evidence sheet establishing truth (physical count preferred; else reconstruct from
-`lot_consumptions`). Triage H1–H5 per product first.
+- No production allowlist exists and none should be created in this milestone.
+- The tool is exercised **only** against the Firestore emulator (see Tests).
+- Any real use is deferred to the physical-recount re-baseline
+  ([`PHYSICAL_RECOUNT_REBASELINE.md`](./PHYSICAL_RECOUNT_REBASELINE.md)), after
+  Phase 1 is complete and the system is proven stable.
 
-1. **Verified backup.** Export production; note its name.
-2. **Build the allowlist** (≤10 products) — a JSON array:
-   ```json
-   [ { "productId": "abc123",
-       "authorityCategory": "physical_count",
-       "reasonDetail": "Counted 2026-07-21 by AK; matches shelf",
-       "physicalCount": 98,
-       "approvedByUid": "uid-of-second-approver" } ]
-   ```
-   `authorityCategory` ∈ physical_count · purchase_receipt · invoice_history ·
-   consumption_history · return_history · discard_history · administrative.
-   Omit `physicalCount` for pure book/lot reconciliation. `approvedByUid` is required
-   for `administrative`.
-3. **Dry-run** and read every plan line:
-   ```
-   node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/reconcile-mismatch.mjs \
-     --project prod --run-id <baselineRunId> --acted-by <uid> --allowlist repairs.json
-   ```
-   (or `npm run reconcile:mismatch -- --project prod --run-id … --acted-by … --allowlist repairs.json`)
-4. **Apply** once the plan is confirmed:
-   ```
-   … --apply --backup gs://backups/2026-07-21-preremediation
-   ```
-5. **Post-validate.** The tool re-derives each product clean and halts the batch on any
-   that is not. Then run the full validator:
-   `npm run validate:inventory -- --project prod`.
-6. **Repeat** in batches of ≤10, re-validating after each. A batch that does not reduce
-   drift as predicted **stops the milestone**.
-7. **Residual register.** Anything deliberately left unrepaired goes on the residual
-   register with a reason, a named owner, and an expiry (max 7 days). If the residual set
-   is material, the M1 assertion ships behind the expiring allowlist, not on schedule.
+The emulator remains the place to demonstrate the mechanics on demand:
 
-## Re-accrual
-
-M0.5 repairs while M2 has not shipped, so some drift may re-accrue before M1. Expected,
-not a flaw: detection must precede correction. Re-validate immediately before the
-two-sided assertion ships and accept a short second remediation pass.
+```
+# dry-run against the emulator only — NEVER --project prod in this milestone
+npm run test:inventory-reconcile      # the full proof suite
+npm run test:reconcile-plan           # the pure derivation + gates
+```
 
 ## Tests
 
 - Pure derivation + gates: `npm run test:reconcile-plan` (in-memory, fast).
-- Emulator proof (100/103, ledger honesty, idempotency, concurrency, RECONCILIATION vs
-  ADJUSTMENT separation, refusal, dry-run): `npm run test:inventory-reconcile`.
+- Emulator proof: `npm run test:inventory-reconcile` — the 100/103 proof, ledger
+  honesty, idempotency, concurrency, RECONCILIATION vs ADJUSTMENT separation,
+  refusal, dry-run, and the **physical-count-authoritative re-baseline** scenario
+  (a product with no book/lot drift whose counted quantity differs → a single
+  honest `ADJUSTMENT`).
+- Rules (append-only `inventory_repairs`, §2.7 ledger): `npm run test:rules:inventory`.

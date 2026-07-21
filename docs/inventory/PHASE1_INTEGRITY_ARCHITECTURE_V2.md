@@ -949,7 +949,21 @@ Order: M0 → **M0.5** → M1 → M1.5 → M2 → M3 → M4 → M5 → M6 → M7
 
 ### Milestone 0.5 — Controlled baseline remediation
 
-**Goal:** Bring pre-existing drift to zero — or to a known, explicitly accepted set — **before** any transactional assertion can refuse a sale because of it.
+> **STATUS UPDATE (supersedes the immediate-remediation plan below).** A
+> pre-architecture script force-synced production lot quantities to product stock
+> without audit, so **current production history is not authoritative and must not
+> be used to reconstruct drift.** M0.5 is therefore re-scoped as a **tool-validation
+> milestone**: the reconciliation operation is built, fully emulator-proven, kept
+> production-safe, and **left INACTIVE** — no production reconciliation runs here.
+> Recovery moves to a **future physical-recount re-baseline** that uses a frozen
+> manual warehouse count as the source of truth. The implementation and mathematics
+> below are unchanged and remain correct; only the production rollout changes. See
+> [`BASELINE_REMEDIATION.md`](./BASELINE_REMEDIATION.md) and
+> [`PHYSICAL_RECOUNT_REBASELINE.md`](./PHYSICAL_RECOUNT_REBASELINE.md).
+
+**Goal (original):** Bring pre-existing drift to zero — or to a known, explicitly accepted set — **before** any transactional assertion can refuse a sale because of it.
+
+**Goal (revised):** Finalize and completely emulator-prove the reconciliation tool, its schemas, guardrails and runbooks; keep it production-safe but inactive; and prepare the physical-recount workflow that will later re-baseline the system against a frozen warehouse count.
 
 **Why this milestone exists.** M0 measures drift. M1 ships an assertion that treats drift as a hard error at posting time. Between those two facts sits a live trading floor. If 43 products still carry drift when the assertion lands, those 43 products **cannot be sold** until someone repairs them — during business hours, under pressure, through whatever path is available. That is a worse outcome than the drift itself. **[I]**
 
@@ -1561,19 +1575,17 @@ Never combine:
 - A3, A4, A7 measured; K3 confirmed
 - **No production data changed by M0**
 
-**M0 → M0.5**
-- Baseline complete; every drifted product listed with its movement history
-- H1–H5 triage complete per product
-- Physical-count capability confirmed for the products where it will be used
-- **The reconciliation operation is designed, built and emulator-proven BEFORE any production repair.** Specifically, a fixture with `B=100, L=103` must end at `B=L=100` with L6 green and honest ledger rows. **No production repair begins until this test passes** — the whole point of revision 4
-- Verified backup exists and is named in the run log
+**M0 → M0.5** *(revised — see the M0.5 STATUS UPDATE; production remediation no longer gates this transition)*
+- **The reconciliation operation is designed, built and emulator-proven.** A fixture with `B=100, L=103` ends at `B=L=100` with L6 green and honest ledger rows. ✅ *(done — `test:inventory-reconcile`)*
+- Physical-count-authoritative re-baseline path proven in the emulator ✅
+- *(Superseded: production baseline drift reconstruction and H1–H5 per-product triage — production history is not authoritative, so these move to the future physical-recount, not this transition.)*
 
-**M0.5 → M1**
-- Drift at zero, **or** a residual register exists with a reason, an owner and an **expiry date (max 7 days)** per entry
-- Every repair has an evidence sheet and a corresponding `ADJUSTMENT` ledger row
-- Post-remediation full validation shows no CRITICAL P1/L6, or a documented residual
-- **H1's explanatory coverage quantified** — the fraction of drifted products with concurrent posting in their history. A low fraction reopens the investigation before M2 is designed around H1
-- If the residual set is material, the allowlist branch is agreed **in writing** before M1's assertion is scheduled
+**M0.5 → M1** *(revised)*
+- Reconciliation implementation finalized and **completely emulator-proven** (100/103, ledger honesty, idempotency, concurrency, RECONCILIATION vs ADJUSTMENT separation, refusal, dry-run, physical-count re-baseline)
+- Tool is **production-safe and INACTIVE**: dry-run default, production `--apply` gated to `physical_count`, no production allowlist created
+- Documentation, runbooks, schemas and guardrails finalized ([`BASELINE_REMEDIATION.md`](./BASELINE_REMEDIATION.md))
+- The **future physical-recount re-baseline workflow is prepared and documented** ([`PHYSICAL_RECOUNT_REBASELINE.md`](./PHYSICAL_RECOUNT_REBASELINE.md))
+- *(Superseded: "drift at zero / residual register" and "H1 explanatory coverage" — these belong to the future recount epoch, not to shipping M1's validator. Note M1 still ships the two-sided **transactional assertion** as its own later PR, which must not activate against un-re-baselined production until the recount has run.)*
 
 **M1 → M1.5**
 - Every register invariant is **implemented and demonstrably detects** a hand-crafted violation

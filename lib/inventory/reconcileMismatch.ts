@@ -1,6 +1,14 @@
 /**
- * M0.5 baseline reconciliation — TEMPORARY TOOL, deleted in M6.
+ * M0.5 reconciliation — TEMPORARY TOOL, deleted in M6.
  * (PHASE1_INTEGRITY_ARCHITECTURE_V2.md §19.0.5-M, §15.3.)
+ *
+ * ROLLOUT STATUS: production-safe but INACTIVE. A pre-architecture script once
+ * force-synced production lot quantities to product stock without audit, so the
+ * append-only history there is NOT authoritative and this tool must NOT be run
+ * against production to reconstruct historical drift. The future recovery uses a
+ * frozen physical warehouse count as the source of truth (pass it as
+ * `physicalCount`); see docs/inventory/PHYSICAL_RECOUNT_REBASELINE.md. The
+ * implementation below is unchanged — it is validated in the emulator only.
  *
  * The ONLY code permitted to move one layer (book or lots) without the other.
  * That power is contained by three rules (M.7):

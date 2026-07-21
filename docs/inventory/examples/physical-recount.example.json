@@ -1,0 +1,15 @@
+[
+  {
+    "productId": "REPLACE_WITH_PRODUCT_DOC_ID",
+    "authorityCategory": "physical_count",
+    "physicalCount": 98,
+    "reasonDetail": "Warehouse recount 2026-XX-XX, count sheet #12, counted by <name>",
+    "approvedByUid": "OPTIONAL_SECOND_APPROVER_UID"
+  },
+  {
+    "productId": "ANOTHER_PRODUCT_DOC_ID",
+    "authorityCategory": "physical_count",
+    "physicalCount": 140,
+    "reasonDetail": "Warehouse recount 2026-XX-XX, count sheet #12, counted by <name>"
+  }
+]

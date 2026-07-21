@@ -294,6 +294,64 @@ describe("reconcileProduct — separation of RECONCILIATION and physical ADJUSTM
   });
 });
 
+describe("reconcileProduct — physical-count-authoritative re-baseline (future strategy)", () => {
+  it("consistent product, count below: honest no-op RECONCILIATION + real ADJUSTMENT down", async () => {
+    const id = uid("p");
+    const runId = uid("run");
+    // Internally consistent (book == lots == 100, history agrees). The frozen count
+    // is the truth and says 95 — a genuine 5-unit shortfall.
+    await seedProduct(id, {
+      book: 100,
+      lots: [{ id: `${id}-L1`, qty_in: 100, qty_remaining: 100 }],
+    });
+
+    const res = await reconcileProduct(
+      db,
+      baseParams({ productId: id, validationRunId: runId, physicalCount: 95, authorityCategory: "physical_count" }),
+    );
+    assert.equal(res.status, "applied");
+    assert.equal(await productStock(id), 95);
+    assert.equal(await lotSum(id), 95);
+
+    const recon = (await ledgerRows(id)).find((r) => r.type === "RECONCILIATION");
+    assert.ok(recon);
+    assert.equal(recon.movement, false);
+    assert.equal(recon.lot_corrections.length, 0); // nothing was mis-recorded
+    assert.equal(recon.book_before, 100);
+    assert.equal(recon.book_after, 100); // reconciliation moved nothing
+
+    const adj = (await adjustmentRowsFor(id)).filter((r) => r.type === "ADJUSTMENT");
+    assert.equal(adj.length, 1);
+    assert.equal(adj[0].movement, true); // the entire real difference
+
+    const repair = (await repairRecords(id))[0];
+    assert.equal(repair.physical_count, 95);
+    assert.equal(repair.approved_final_quantity, 95);
+    assert.ok(repair.physical_adjustment_transaction_id);
+  });
+
+  it("consistent product, count above: real ADJUSTMENT up (found stock)", async () => {
+    const id = uid("p");
+    const runId = uid("run");
+    await seedProduct(id, {
+      book: 100,
+      lots: [{ id: `${id}-L1`, qty_in: 100, qty_remaining: 100, unit_cost: 12 }],
+    });
+
+    const res = await reconcileProduct(
+      db,
+      baseParams({ productId: id, validationRunId: runId, physicalCount: 110, authorityCategory: "physical_count" }),
+    );
+    assert.equal(res.status, "applied");
+    assert.equal(await productStock(id), 110);
+    assert.equal(await lotSum(id), 110);
+
+    const adj = (await adjustmentRowsFor(id)).filter((r) => r.type === "ADJUSTMENT");
+    assert.equal(adj.length, 1);
+    assert.equal(adj[0].movement, true);
+  });
+});
+
 describe("reconcileProduct — refusal and dry-run write nothing", () => {
   it("refuses broken history (consumption exceeds intake) and writes nothing", async () => {
     const id = uid("p");
