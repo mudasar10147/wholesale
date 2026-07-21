@@ -34,7 +34,12 @@
     "test:inventory-detection": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/inventory/validateInventory.detection.test.ts",
     "test:inventory-discovery": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/inventory/validationRun.discovery.test.ts",
     "test:inventory-parity": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/inventory/inventoryParity.test.ts",
-    "test:inventory-stress": "node --experimental-strip-types lib/inventory/inventoryConcurrency.test.ts",
+    "test:ledger-ids": "node --experimental-strip-types lib/inventory/ledgerIds.test.ts",
+    "check:coverage": "node --experimental-strip-types scripts/check-invariant-coverage.mjs",
+    "test:inventory-pure": "npm run check:coverage && npm run test:reconcile-plan && npm run test:inventory-invariants && npm run test:inventory-validation && npm run test:inventory-detection && npm run test:inventory-discovery && npm run test:inventory-parity && npm run test:ledger-ids",
+    "test:inventory-emulator": "npm run test:rules:all && npm run test:inventory-reconcile && npm run test:inventory-run && npm run test:inventory-api && npm run test:integration",
+    "test:integration": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/inventoryOperations.test.mjs\"",
+    "test": "npm run typecheck && npm run test:inventory-pure",
     "migrate:inventory": "node scripts/migrations/run.mjs",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes"

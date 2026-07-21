@@ -27,6 +27,9 @@ jobs:
       - name: Typecheck (app)
         run: npm run typecheck
 
+      - name: Invariant coverage gate (no silent gaps)
+        run: npm run check:coverage
+
       - name: Unit tests (pure)
         run: |
           npm run test:reconcile-plan
@@ -35,6 +38,7 @@ jobs:
           npm run test:inventory-detection
           npm run test:inventory-discovery
           npm run test:inventory-parity
+          npm run test:ledger-ids
 
       - name: Rules tests (emulator)
         run: npm run test:rules:all
@@ -43,3 +47,5 @@ jobs:
         run: |
           npm run test:inventory-reconcile
           npm run test:inventory-run
+          npm run test:inventory-api
+          npm run test:integration

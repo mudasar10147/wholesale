@@ -118,6 +118,26 @@ test("clean snapshot has zero findings", () => {
   assert.equal(report.verdict, "PASS");
 });
 
+// Originally-ported checks (mapped from the legacy validator to register ids).
+detects("P1", (i) => { i.products[0]!.data.stock_quantity = 12; });
+detects("P2", (i) => { i.products[0]!.data.stock_quantity = -1; });
+detects("P3", (i) => { i.products[0]!.data.stock_quantity = 8.5; });
+detects("L1", (i) => { i.lots[0]!.data.qty_remaining = 999; }); // > qty_in
+detects("L5", (i) => { i.lots.push({ id: "orphan", data: { product_id: "ghost", unit_cost: 1, qty_in: 1, qty_remaining: 1, source: "adjustment", received_at: TS, created_at: TS, updated_at: TS } as never }); });
+detects("L6", (i) => { i.lots[0]!.data.qty_remaining = 9; }); // 10 - 2 consumed = 8, not 9
+detects("C3", (i) => { i.consumptions.push({ id: "c2", data: { invoice_id: "INV-1", order_id: "INV-1", invoice_item_id: "item1", product_id: "p1", lot_id: "ghostlot", quantity: 1, unit_cost: 100, cogs_amount: 100, created_at: TS } as never }); });
+detects("C8", (i) => { i.consumptions.push({ id: "c-dup", data: { ...i.consumptions[0]!.data } as never }); });
+detects("I6", (i) => { i.itemCogs[0]!.data.cogs_amount = 999; });
+detects("G1", (i) => {
+  const h = { transaction_number: "T", status: "posted", warehouse_id: "default", item_ids: ["ln"], source_document_type: "invoice", source_document_id: "INV-1", type: "SALE", posted_by_uid: "u", created_at: TS, updated_at: TS };
+  i.inventoryTransactions = [{ id: "t1", data: { ...h } as never }, { id: "t2", data: { ...h } as never }];
+  i.inventoryTransactionLines = [{ id: "ln", data: { transaction_id: "t1", product_id: "p1", warehouse_id: "default", direction: "out", quantity: 1, unit_cost: 100, total_cost: 100, created_at: TS } as never }];
+});
+detects("G2", (i) => { i.invoices[0]!.data.ledger_status = "pending"; });
+detects("G5", (i) => { i.inventoryTransactions = []; i.inventoryTransactionLines = [{ id: "ln", data: { transaction_id: "ghosttxn", product_id: "p1", warehouse_id: "default", direction: "out", quantity: 1, unit_cost: 100, total_cost: 100, created_at: TS } as never }]; });
+detects("G1b", (i) => { i.inventoryTransactionLines = [{ id: "ln", data: { transaction_id: "t1", product_id: "p1", warehouse_id: "default", direction: "out", quantity: 2, unit_cost: 100, total_cost: 999, created_at: TS } as never }]; });
+detects("D4", (i) => { i.inventoryDiscards = [{ id: "d1", data: { discard_number: "D-1", total_quantity: 1, total_cogs_amount: 1, item_ids: [], ledger_status: "pending", created_at: TS } as never }]; });
+
 detects("P4", (i) => { i.products[0]!.data.cost_price = -1; });
 detects("P5", (i) => { i.products[0]!.data.cost_price = 55; });
 detects("P6", (i) => { i.consumptions[0]!.data.product_id = "ghost"; });

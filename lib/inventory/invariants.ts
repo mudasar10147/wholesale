@@ -40,6 +40,15 @@ export type InvariantCategory =
 
 export type InvariantCheck = (ctx: ValidationContext) => InvariantFinding[];
 
+/**
+ * Why an invariant is NOT validator-implemented. Every register entry must have
+ * either a `check` OR a `coverage` skip — the coverage gate forbids silent gaps.
+ */
+export type InvariantCoverage = {
+  status: "rule_enforced" | "needs_data" | "deferred" | "business_blocked";
+  reason: string;
+};
+
 export type Invariant = {
   /** Register id, e.g. "P1", "L6". Joins to every reported issue. */
   id: string;
@@ -55,8 +64,10 @@ export type Invariant = {
   legacyCode?: ValidationIssueCode;
   /** Records a deliberate transitional grade and the trigger to raise it. */
   escalatesTo?: { severity: InvariantSeverity; when: string };
-  /** Present ⇒ implemented. Absent ⇒ declared but not yet checked. */
+  /** Present ⇒ implemented. Absent ⇒ must carry a `coverage` skip instead. */
   check?: InvariantCheck;
+  /** Documented reason this invariant has no validator check (no silent gaps). */
+  coverage?: InvariantCoverage;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,7 +315,9 @@ const checkG1: InvariantCheck = (ctx) => {
       const key = `${txn.data.type}::${srcType}::${srcId}`;
       sourceKeyCount.set(key, (sourceKeyCount.get(key) ?? 0) + 1);
     }
-    if ((linesByTxn.get(txn.id) ?? 0) === 0) {
+    // RECONCILIATION rows carry their corrections in the header (lot_corrections),
+    // not in lines — a missing-lines check does not apply to them.
+    if (txn.data.type !== "RECONCILIATION" && (linesByTxn.get(txn.id) ?? 0) === 0) {
       out.push({
         code: "INVENTORY_TXN_INTEGRITY",
         message: "Posted inventory transaction has no lines",
@@ -1041,6 +1054,30 @@ const ADDITIONAL_CHECKS: Record<string, InvariantCheck> = {
 for (const [id, check] of Object.entries(ADDITIONAL_CHECKS)) {
   const inv = BY_ID.get(id);
   if (inv) inv.check = check;
+}
+
+// Every not-yet-implemented invariant carries a documented reason, so the
+// coverage gate can prove there are no SILENT gaps (§12.5).
+const COVERAGE_SKIPS: Record<string, InvariantCoverage> = {
+  L7: { status: "rule_enforced", reason: "Lot deletion is forbidden by a Firestore rule; a deletion is not observable from a data snapshot." },
+  G3: { status: "rule_enforced", reason: "Ledger append-only is a Firestore rule; a post-hoc mutation attempt is not observable in a snapshot." },
+  R5: { status: "rule_enforced", reason: "Restoration overflow is enforced in-transaction and by rule; the observable end-state is covered by L1 (qty_remaining <= qty_in)." },
+  I8: { status: "needs_data", reason: "sales rows carry no invoice_item_id, so one-sales-row-per-item is not derivable from the snapshot." },
+  R6: { status: "deferred", reason: "Write-offs never restock — a process property, detected indirectly via R3; no direct snapshot signal." },
+  R8: { status: "deferred", reason: "Counter-sale attached-credit field mapping is ambiguous; needs a decision before a check." },
+  R10: { status: "deferred", reason: "Time-based (returns_post_status pending > 1h) — needs an asOf clock plumbed into the validator." },
+  D2: { status: "deferred", reason: "Discard FIFO ordering needs the allocation sequence, which is not in the snapshot." },
+  A4: { status: "deferred", reason: "Negative-adjustment FIFO cost requires recomputing FIFO at adjustment time." },
+  A5: { status: "deferred", reason: "Which ledger rows should be ADJUSTMENT is not identifiable from the row alone." },
+  G4: { status: "deferred", reason: "Ledger-vs-stock reconciliation depends on ledger completeness, which is untrustworthy pre-recount." },
+  G6: { status: "deferred", reason: "'unit_cost > 0 where a cost basis exists' is fuzzy; lands with the M5 ledger unit_cost work." },
+  K3: { status: "business_blocked", reason: "The void-cash rule (K3-a/b/c) is an open business decision." },
+  K4: { status: "deferred", reason: "Counter-sale finalize overwrite is a process property, not observable from a snapshot." },
+  K5: { status: "deferred", reason: "Cash attribution is a write-time property, not a snapshot invariant." },
+};
+for (const [id, cov] of Object.entries(COVERAGE_SKIPS)) {
+  const inv = BY_ID.get(id);
+  if (inv) inv.coverage = cov;
 }
 
 export function getInvariant(id: string): Invariant | undefined {

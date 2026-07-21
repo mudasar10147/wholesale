@@ -84,7 +84,8 @@ function millisOf(ts: unknown): number {
 
 const mapDocs = (snap: FirebaseFirestore.QuerySnapshot) => snap.docs.map((d) => ({ id: d.id, data: d.data() }));
 
-async function loadAll(db: Firestore): Promise<ValidationInput> {
+/** Load every inventory collection the validator reads (admin SDK). */
+export async function loadAllInventory(db: Firestore): Promise<ValidationInput> {
   const [
     products, lots, consumptions, invoices, itemCogs,
     inventoryTransactions, inventoryTransactionLines,
@@ -267,7 +268,7 @@ export async function runValidation(db: Firestore, opts: RunOptions): Promise<Ru
     }
   }
 
-  const input = await loadAll(db);
+  const input = await loadAllInventory(db);
 
   let discoveredFrom: RunManifestSource[] = [];
   let productScope: Set<string> | null = null;

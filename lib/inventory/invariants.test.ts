@@ -69,6 +69,15 @@ test("implemented checks are functions; coverage arithmetic is consistent", () =
   }
 });
 
+test("every invariant is implemented OR documented-skip — no silent gaps", () => {
+  for (const inv of INVARIANTS) {
+    const implemented = typeof inv.check === "function";
+    const skipped = Boolean(inv.coverage);
+    assert.ok(implemented !== skipped, `${inv.id} must have exactly one of check/coverage`);
+    if (skipped) assert.ok(inv.coverage.reason.trim(), `${inv.id} coverage-skip needs a reason`);
+  }
+});
+
 test("the constitutions P1 and L6 are present and implemented", () => {
   assert.equal(typeof getInvariant("P1")?.check, "function");
   assert.equal(typeof getInvariant("L6")?.check, "function");
