@@ -22,6 +22,7 @@
     "test:reconcile-plan": "node --experimental-strip-types --test lib/inventory/reconciliationPlan.test.ts",
     "test:inventory-reconcile": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/reconcileMismatch.emulator.test.mjs\"",
     "test:inventory-run": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/validationRun.emulator.test.mjs\"",
+    "test:inventory-api": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/validationApi.emulator.test.mjs\"",
     "validate:inventory": "node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/validate.mjs",
     "validate:run": "node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/validate-run.mjs",
     "reconcile:book-stock": "node scripts/inventory/reconcile-book-stock.mjs",

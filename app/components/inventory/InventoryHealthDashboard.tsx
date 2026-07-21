@@ -12,6 +12,7 @@ import {
 } from "@/lib/inventory/repairLedger";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
+import { InventoryValidationCard } from "@/app/components/inventory/InventoryValidationCard";
 import {
   Card,
   CardContent,
@@ -65,7 +66,9 @@ export function InventoryHealthDashboard() {
   }
 
   return (
-    <Card>
+    <div className="flex flex-col gap-6">
+      <InventoryValidationCard />
+      <Card>
       <CardHeader>
         <CardTitle>Inventory health</CardTitle>
         <CardDescription>
@@ -136,6 +139,7 @@ export function InventoryHealthDashboard() {
           </div>
         )}
       </CardContent>
-    </Card>
+      </Card>
+    </div>
   );
 }

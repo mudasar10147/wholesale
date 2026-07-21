@@ -1034,6 +1034,11 @@ service cloud.firestore {
       allow create: if isAdmin();
       allow update, delete: if false;
     }
+    // Concurrency lock for on-demand runs, managed entirely server-side.
+    match /inventory_validation_locks/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
     match /schema_migrations/{docId} {
       allow read: if isAdmin();
       allow create, update: if isAdmin();
