@@ -1,0 +1,48 @@
+name: Nightly inventory validation
+
+# Full, persisted inventory validation once a night (§9.4 — nightly full is
+# mandatory). Read-only over inventory; writes only its own run record to
+# inventory_validation_runs under the read-only validator identity (§13).
+#
+# Requires repository secret INVENTORY_VALIDATOR_SA_KEY: the JSON key of a GCP
+# service account for the PRODUCTION project (wholesale-b4ff9) with read on the
+# database and write on inventory_validation_runs only. The run refuses unless the
+# key's project_id matches --project (cross-project guard in validate-run.mjs).
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full or incremental"
+        default: "full"
+        required: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Write service account key
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/sa.json"
+          printf '%s' "$INVENTORY_VALIDATOR_SA_KEY" > "$RUNNER_TEMP/sa.json"
+        env:
+          INVENTORY_VALIDATOR_SA_KEY: ${{ secrets.INVENTORY_VALIDATOR_SA_KEY }}
+
+      - name: Full validation (persisted to inventory_validation_runs)
+        run: npm run validate:run -- --project prod --mode "${MODE}"
+        env:
+          MODE: ${{ github.event.inputs.mode || 'full' }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        # validate:run exits non-zero when there is any CRITICAL/ERROR, so a
+        # failed job is a real signal — not a broken pipeline.
