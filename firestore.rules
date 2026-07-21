@@ -929,12 +929,12 @@ service cloud.firestore {
     match /phase1_smoke/{docId} {
       allow read, write: if isAdmin();
     }
-    // MVP collections — clerks: read products for invoice lines; writes admin-only.
-    // Read was `if true` (public); closed to staff so product stock/cost is not
-    // world-readable. Social managers get sanitized suggestions server-side, not
-    // direct reads (see isSocial). Admin SDK bypasses these rules for share pages.
+    // MVP collections — clerks read products for invoice lines; the social planner
+    // reads them to pick what to share; writes admin-only. Read was `if true`
+    // (public); closed to authenticated app roles so product stock/cost is not
+    // world-readable, while keeping clerk + social read. Admin SDK bypasses rules.
     match /products/{docId} {
-      allow read: if isStaff();
+      allow read: if isStaff() || isSocial();
       allow write: if isAdmin();
     }
     match /sales/{docId} {
