@@ -106,6 +106,28 @@ describe("runValidation — incremental discovery", () => {
   });
 });
 
+describe("runValidation — a discovered product runs the COMPLETE invariant set", () => {
+  it("reports every invariant a discovered product violates, not just the trigger", async () => {
+    // A drifted product (P1) whose lot ALSO lacks trader_id (L8) and received_at (L4).
+    await db.collection("products").doc("A").set({ name: "A", cost_price: 100, sale_price: 120, stock_quantity: 10, created_at: Timestamp.fromDate(D("2026-01-01T00:00:00Z")) });
+    await db.collection("stock_lots").doc("A-L1").set({
+      product_id: "A", unit_cost: 100, qty_in: 100, qty_remaining: 7, source: "stock_in",
+      warehouse_id: "default", received_at: null, created_at: Timestamp.fromDate(D("2026-01-01T00:00:00Z")), updated_at: Timestamp.fromDate(D("2026-01-01T00:00:00Z")),
+    });
+    await runValidation(db, { mode: "full", projectId: "p", asOf: D("2026-06-01T00:00:00Z") });
+
+    // Touch the lot so A is discovered incrementally.
+    await db.collection("stock_lots").doc("A-L1").update({ updated_at: Timestamp.fromDate(D("2026-06-01T00:10:00Z")) });
+    const inc = await runValidation(db, { mode: "incremental", projectId: "p", asOf: D("2026-06-01T00:15:00Z") });
+
+    assert.equal(inc.record.mode, "incremental");
+    const invariants = new Set(inc.record.issues.map((i) => i.invariant_id));
+    assert.ok(invariants.has("P1"), "P1 (the trigger) reported");
+    assert.ok(invariants.has("L4"), "L4 also reported — full check set ran for the discovered product");
+    assert.ok(invariants.has("L8"), "L8 also reported — checks are not narrowed, only products are");
+  });
+});
+
 describe("runValidation — fallback and watermark", () => {
   it("an incremental run with no prior complete run falls back to full", async () => {
     await seedDrift("A", { stock: 10, lotQty: 7, lotUpdatedAt: "2026-01-01T00:00:00Z" });

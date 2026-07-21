@@ -56,7 +56,12 @@ export type ValidationRunRecord = {
   issues_total: number;
 };
 
-function entityOf(issue: ValidationIssue): { type: string; id: string } {
+/**
+ * The stable identity of an issue: invariant id + entity type + entity id.
+ * This is what first_seen_at keys on, so two different issues never merge and
+ * the same issue is tracked across runs (§8.3).
+ */
+export function entityOf(issue: Pick<ValidationIssue, "lot_id" | "consumption_id" | "invoice_item_id" | "invoice_id" | "transaction_id" | "product_id">): { type: string; id: string } {
   if (issue.lot_id) return { type: "lot", id: issue.lot_id };
   if (issue.consumption_id) return { type: "consumption", id: issue.consumption_id };
   if (issue.invoice_item_id) return { type: "invoice_item", id: issue.invoice_item_id };
@@ -66,8 +71,15 @@ function entityOf(issue: ValidationIssue): { type: string; id: string } {
   return { type: "global", id: "-" };
 }
 
-function issueKey(issue: PersistedIssue): string {
-  return `${issue.invariant_id}::${issue.entity_type}::${issue.entity_id}`;
+export function issueKey(i: { invariant_id: string; entity_type: string; entity_id: string }): string {
+  return `${i.invariant_id}::${i.entity_type}::${i.entity_id}`;
+}
+
+function millisOf(ts: unknown): number {
+  const t = ts as { toMillis?: () => number } | undefined;
+  if (typeof t?.toMillis === "function") return t.toMillis();
+  if (typeof ts === "string") { const p = Date.parse(ts); return Number.isNaN(p) ? 0 : p; }
+  return 0;
 }
 
 const mapDocs = (snap: FirebaseFirestore.QuerySnapshot) => snap.docs.map((d) => ({ id: d.id, data: d.data() }));
@@ -114,47 +126,93 @@ async function loadAll(db: Firestore): Promise<ValidationInput> {
   };
 }
 
+const STUCK = new Set(["pending", "failed"]);
+
 /**
- * Movement-derived incremental discovery (§9.2). `stock_lots.updated_at` alone
- * catches every lot mutation (source 1, "close to sufficient"); lot_consumptions
- * and stuck work provide defence in depth. Returns the candidate product set.
+ * Movement-derived incremental discovery (§9.2), in-memory over the loaded input.
+ *
+ * DEFENCE IN DEPTH — every stock-affecting workflow is covered by at least one
+ * source that it provably writes, so discovery never depends on a single field:
+ *
+ *   stock-in / lot creation → stock_lots.updated_at (new lot)
+ *   invoice posting         → lot_consumptions.created_at
+ *   invoice voiding         → stock_lots.updated_at + SALE_VOID ledger line
+ *   returns / restorations  → return_lot_restorations.created_at + stock_lots.updated_at
+ *   return write-offs        → return_lot_write_offs.created_at        (no lot change!)
+ *   discards                → inventory_discard_lots.created_at + stock_lots.updated_at
+ *   adjustments             → stock_lots.updated_at + ADJUSTMENT ledger line
+ *   reconciliations         → RECONCILIATION ledger header.product_id  (book-only ⇒ no lot change!)
+ *   stuck / failed ledger    → ledger_status/returns_post_status pending|failed (regardless of time)
+ *
+ * Returns the candidate product set; each product is then validated in FULL
+ * (incremental narrows which products, never which checks).
  */
-async function discoverChangedProducts(
-  db: Firestore,
-  since: Timestamp,
-): Promise<{ productIds: Set<string>; sources: RunManifestSource[] }> {
+export function discoverChangedProducts(
+  input: ValidationInput,
+  sinceMillis: number,
+): { productIds: Set<string>; sources: RunManifestSource[] } {
   const productIds = new Set<string>();
   const sources: RunManifestSource[] = [];
+  const add = (pid: unknown) => { if (typeof pid === "string" && pid) productIds.add(pid); };
 
-  const scan = async (source: string, run: () => Promise<number>) => {
-    try {
-      const n = await run();
-      sources.push({ source, docs_scanned: n, status: "complete" });
-    } catch {
-      sources.push({ source, docs_scanned: 0, status: "failed" });
+  const timeSource = (name: string, rows: Array<{ data: Record<string, unknown> }> | undefined, tsField: string, pidField = "product_id") => {
+    let n = 0;
+    for (const r of rows ?? []) {
+      if (millisOf(r.data[tsField]) > sinceMillis) { add(r.data[pidField]); n += 1; }
     }
+    sources.push({ source: `${name}.${tsField}`, docs_scanned: n, status: "complete" });
   };
 
-  await scan("stock_lots.updated_at", async () => {
-    const snap = await db.collection(COLLECTIONS.stockLots).where("updated_at", ">", since).get();
-    snap.docs.forEach((d) => { const pid = d.data().product_id; if (pid) productIds.add(pid); });
-    return snap.size;
-  });
-  await scan("lot_consumptions.created_at", async () => {
-    const snap = await db.collection(COLLECTIONS.lotConsumptions).where("created_at", ">", since).get();
-    snap.docs.forEach((d) => { const pid = d.data().product_id; if (pid) productIds.add(pid); });
-    return snap.size;
-  });
-  await scan("stuck_invoices", async () => {
-    // Stuck work regardless of time (§9.2 source 7): a posted invoice whose ledger
-    // never settled. Resolve to product_ids via its item cogs.
-    const snap = await db.collection(COLLECTIONS.invoices).where("ledger_status", "in", ["pending", "failed"]).get();
-    if (snap.empty) return 0;
-    const invIds = new Set(snap.docs.map((d) => d.id));
-    const cogs = await db.collection(COLLECTIONS.invoiceItemCogs).get();
-    cogs.docs.forEach((d) => { const c = d.data(); if (invIds.has(c.invoice_id) && c.product_id) productIds.add(c.product_id); });
-    return snap.size;
-  });
+  timeSource("stock_lots", input.lots, "updated_at");
+  timeSource("lot_consumptions", input.consumptions, "created_at");
+  timeSource("return_lot_restorations", input.returnLotRestorations, "created_at");
+  timeSource("return_lot_write_offs", input.returnLotWriteOffs, "created_at");
+  timeSource("inventory_discard_lots", input.inventoryDiscardLots, "created_at");
+  timeSource("inventory_transaction_lines", input.inventoryTransactionLines, "created_at");
+  // Ledger headers carry product_id only for RECONCILIATION (book-only corrections
+  // that touch no lot and would otherwise be invisible).
+  timeSource("inventory_transactions", input.inventoryTransactions, "created_at");
+
+  // ── Stuck work (no time filter) — resolve to product via child collections. ──
+  const cogsByInvoice = new Map<string, Set<string>>();
+  for (const ic of input.itemCogs) {
+    const s = cogsByInvoice.get(ic.data.invoice_id) ?? new Set<string>();
+    if (ic.data.product_id) s.add(ic.data.product_id);
+    cogsByInvoice.set(ic.data.invoice_id, s);
+  }
+  const returnItemsByReturn = new Map<string, Set<string>>();
+  for (const ri of input.invoiceReturnItems ?? []) {
+    const s = returnItemsByReturn.get(ri.data.return_id) ?? new Set<string>();
+    if (ri.data.product_id) s.add(ri.data.product_id);
+    returnItemsByReturn.set(ri.data.return_id, s);
+  }
+  const discardItemsByDiscard = new Map<string, Set<string>>();
+  for (const di of input.inventoryDiscardItems ?? []) {
+    const s = discardItemsByDiscard.get(di.data.discard_id) ?? new Set<string>();
+    if (di.data.product_id) s.add(di.data.product_id);
+    discardItemsByDiscard.set(di.data.discard_id, s);
+  }
+
+  let stuck = 0;
+  for (const inv of input.invoices) {
+    if (STUCK.has(inv.data.ledger_status ?? "") || inv.data.returns_post_status === "pending") {
+      (cogsByInvoice.get(inv.id) ?? new Set()).forEach(add);
+      stuck += 1;
+    }
+  }
+  for (const ret of input.invoiceReturns ?? []) {
+    if (STUCK.has(ret.data.ledger_status ?? "")) {
+      (returnItemsByReturn.get(ret.id) ?? new Set()).forEach(add);
+      stuck += 1;
+    }
+  }
+  for (const disc of input.inventoryDiscards ?? []) {
+    if (STUCK.has(disc.data.ledger_status ?? "")) {
+      (discardItemsByDiscard.get(disc.id) ?? new Set()).forEach(add);
+      stuck += 1;
+    }
+  }
+  sources.push({ source: "stuck_ledger_work", docs_scanned: stuck, status: "complete" });
 
   return { productIds, sources };
 }
@@ -204,6 +262,7 @@ export async function runValidation(db: Firestore, opts: RunOptions): Promise<Ru
       mode = "full";
       fellBackToFull = true;
     } else {
+      // §9.5.1 — never query from the exact watermark; overlap by 15 min.
       sinceTs = Timestamp.fromMillis(prev!.as_of.toMillis() - OVERLAP_MS);
     }
   }
@@ -213,7 +272,7 @@ export async function runValidation(db: Firestore, opts: RunOptions): Promise<Ru
   let discoveredFrom: RunManifestSource[] = [];
   let productScope: Set<string> | null = null;
   if (mode === "incremental" && sinceTs) {
-    const discovered = await discoverChangedProducts(db, sinceTs);
+    const discovered = discoverChangedProducts(input, sinceTs.toMillis());
     productScope = discovered.productIds;
     discoveredFrom = discovered.sources;
     scope = { product_ids: [...productScope], discovered_from: discoveredFrom, since: sinceTs };
