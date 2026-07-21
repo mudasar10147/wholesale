@@ -643,6 +643,21 @@ export async function updateDraftInvoice(
   });
 }
 
+/**
+ * Test-only seam for the C1 concurrency test (§12.4). The suite injects this hook
+ * to force a deterministic transaction-retry interleaving. It is `null` in
+ * production — postInvoice's behaviour is unchanged when it is unset.
+ */
+export type PostInvoiceConcurrencyHook = (info: {
+  invoiceId: string;
+  attempt: number;
+  phase: "afterReads";
+}) => Promise<void>;
+let postInvoiceConcurrencyHook: PostInvoiceConcurrencyHook | null = null;
+export function __setPostInvoiceConcurrencyHook(hook: PostInvoiceConcurrencyHook | null): void {
+  postInvoiceConcurrencyHook = hook;
+}
+
 export async function postInvoice(db: Firestore, invoiceId: string): Promise<void> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
@@ -783,8 +798,10 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     );
   }
 
+  let txnAttempt = 0;
   try {
     await runTransaction(db, async (tx) => {
+    txnAttempt += 1;
     const invoiceSnap = await tx.get(invoiceRef);
     if (!invoiceSnap.exists()) {
       throw new Error("Invoice not found.");
@@ -879,6 +896,13 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       assertBookStockMatchesLots(productId, product, currentStock, lotTotal);
       sortLotsByReceivedAt(lots);
       lotsByProductId.set(productId, lots);
+    }
+
+    // Test-only seam (no-op in production): all reads and the assertion are done;
+    // the product precondition is established but nothing is written yet. The C1
+    // suite pauses here so a concurrent post can commit and force a retry.
+    if (postInvoiceConcurrencyHook) {
+      await postInvoiceConcurrencyHook({ invoiceId: trimmedId, attempt: txnAttempt, phase: "afterReads" });
     }
 
     for (const productId of productIds) {

@@ -43,7 +43,8 @@
     "migrate:inventory": "node scripts/migrations/run.mjs",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes",
-    "test:spike": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/integration/spikeTxnLotQuery.test.mjs\""
+    "test:spike": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/integration/spikeTxnLotQuery.test.mjs\"",
+    "test:c1": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/concurrentPostC1.test.mjs\""
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",
