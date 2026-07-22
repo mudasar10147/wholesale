@@ -45,6 +45,34 @@ post-recount, [#4]) and any production reconciliation.
 The fixture run proves validator *logic* only, never production connectivity. Until
 §0 is green, the deployment's before/after full validations cannot be trusted.
 
+### §0 tooling + the read-only-vs-persist decision
+
+- **Prove read-only:** with the validator SA creds,
+  `npm run prove:validator-readonly -- --project prod`
+  ([`scripts/inventory/prove-validator-readonly.mjs`]). It confirms read works and
+  that create/update/delete on every protected collection (products, stock_lots,
+  lot_consumptions, inventory_transactions[_lines], inventory_discards[_lots],
+  invoice_returns, return_lot_restorations) are DENIED.
+- **Decision — the validator persists run records, but IAM is database-scoped**
+  (§13): a single admin-SDK identity cannot both (a) have ALL stock/ledger writes
+  denied by IAM and (b) create its own `inventory_validation_runs` record. Choose:
+  - **Option A — strict read-only** (`datastore.entities.get` + `list` only): every
+    write is denied (cleanest proof), but `validate:run` cannot persist. Use
+    `validate:inventory --project prod` (read-only report) for the before/after
+    validations and capture the run summary into `M2_DEPLOYMENT_RECORD.md` by hand.
+    Nightly persistence is deferred to a scoped append-only writer.
+  - **Option B — read + append** (`get` + `list` + `create`, NO `update`/`delete`):
+    `validate:run` persists run records; UPDATE/DELETE on stock/ledger are denied
+    (the real damage vectors), but CREATE is not IAM-denied — collection scoping is
+    then code-level + audit-log verified (§13). The proof script reports this.
+  - **Recommended:** Option B for the deployment (you need persisted run history for
+    the 7-day observation), documenting the code+audit mitigation, with an
+    audit-log alert on any create by the validator SA outside
+    `inventory_validation_runs`.
+- **Record everything** in [`M2_DEPLOYMENT_RECORD.md`]: SA email, IAM role, the
+  proof result, the pre-deployment run_id, deployment timestamp, deployed SHA,
+  baseline issue identities, project id (`wholesale-b4ff9`), schema_version (`1`).
+
 ---
 
 ## §1 — Deployment sequence
