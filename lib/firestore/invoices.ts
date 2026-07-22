@@ -794,12 +794,18 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     }
   }
 
+  // CONSERVATIVE upper bound on the COUNTED (transactional) ops. Worst case:
+  //   reads  = 1 invoice + I items + P products + A active lots (tx.get each)
+  //   writes = P product updates + C consumption docs + I sales + I cogs + D lot updates + 1 invoice,
+  //   with consumption chunks C ≤ I + A (FIFO merge bound) and distinct lots written D ≤ A.
+  // ⇒ bound = 2 + 4·I + 2·P + 3·A. getDocs is non-transactional (spike S4 — not counted).
+  // dirtyEstimate.size is added as extra headroom (and keeps the preflight drift check alive).
   const postTxnOpEstimate =
     2 + // invoice read + write
-    itemIdsForEstimate.length * 3 + // item read + sale + cogs write, per item
-    productIdsForEstimate.length * 2 + // product read + write, per product
-    activeLotsCountForEstimate * 2 + // active lot tx.get + lot write (worst case), per active lot
-    dirtyEstimate.size; // consumption docs ≈ FIFO-spanned lots
+    itemIdsForEstimate.length * 4 + // item read + consumption(base) + sale + cogs
+    productIdsForEstimate.length * 2 + // product read + write
+    activeLotsCountForEstimate * 3 + // active lot tx.get + lot write + spill-consumption
+    dirtyEstimate.size; // headroom (distinct FIFO-spanned lots)
   if (postTxnOpEstimate > FIRESTORE_TXN_DOC_CAP) {
     throw new Error(
       `This invoice is too large to post in one step (estimated ${postTxnOpEstimate} Firestore operations; limit ${FIRESTORE_TXN_DOC_CAP}). Split into multiple drafts with fewer lines or fewer stock lots per product.`,
