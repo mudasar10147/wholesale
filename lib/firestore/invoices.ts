@@ -14,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
+import { emitPostingMetrics, nowMs } from "@/lib/inventory/postingMetrics";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
 import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
@@ -779,27 +780,41 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     productByIdEarly,
     stockSnapshotEarly,
   );
-  // The dirty estimate is now used ONLY to size the op-cap preflight below — never
-  // to seed the in-transaction lot set (that is loaded fresh on every attempt).
+  // The dirty estimate (FIFO-spanned lots ≈ consumption-doc count) now sizes ONLY
+  // the op-cap preflight — it never seeds the in-transaction lot set (loaded fresh
+  // every attempt). The M2 fix loads ALL ACTIVE lots per product inside the
+  // transaction, so the guard is sized on active lots, not the spanned estimate
+  // (§17 S3). getDocs is non-transactional (S4 — not counted toward the 500 cap);
+  // the counted ops are the per-lot tx.get + the writes.
   const dirtyEstimate = simulateFifoForDirtyEstimate(invoiceItemsEarly, lotsByProductForEstimate);
-  const dirtyLotIdsToRead = Array.from(dirtyEstimate);
+  let activeLotsCountForEstimate = 0;
+  for (const rows of lotsDataByProduct.values()) {
+    for (const r of rows) {
+      if ((typeof r.data.qty_remaining === "number" ? r.data.qty_remaining : 0) > 0) activeLotsCountForEstimate += 1;
+    }
+  }
 
+  // CONSERVATIVE upper bound on the COUNTED (transactional) ops. Worst case:
+  //   reads  = 1 invoice + I items + P products + A active lots (tx.get each)
+  //   writes = P product updates + C consumption docs + I sales + I cogs + D lot updates + 1 invoice,
+  //   with consumption chunks C ≤ I + A (FIFO merge bound) and distinct lots written D ≤ A.
+  // ⇒ bound = 2 + 4·I + 2·P + 3·A. getDocs is non-transactional (spike S4 — not counted).
+  // dirtyEstimate.size is added as extra headroom (and keeps the preflight drift check alive).
   const postTxnOpEstimate =
-    1 +
-    itemIdsForEstimate.length +
-    productIdsForEstimate.length +
-    dirtyLotIdsToRead.length +
-    itemIdsForEstimate.length * 3 +
-    dirtyEstimate.size +
-    productIdsForEstimate.length +
-    1;
+    2 + // invoice read + write
+    itemIdsForEstimate.length * 4 + // item read + consumption(base) + sale + cogs
+    productIdsForEstimate.length * 2 + // product read + write
+    activeLotsCountForEstimate * 3 + // active lot tx.get + lot write + spill-consumption
+    dirtyEstimate.size; // headroom (distinct FIFO-spanned lots)
   if (postTxnOpEstimate > FIRESTORE_TXN_DOC_CAP) {
     throw new Error(
       `This invoice is too large to post in one step (estimated ${postTxnOpEstimate} Firestore operations; limit ${FIRESTORE_TXN_DOC_CAP}). Split into multiple drafts with fewer lines or fewer stock lots per product.`,
     );
   }
 
+  const postStartMs = nowMs();
   let txnAttempt = 0;
+  let activeLotsRead = 0;
   try {
     await runTransaction(db, async (tx) => {
     txnAttempt += 1;
@@ -890,6 +905,8 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       }
       lotsByProductId.set(productId, rows);
     }
+    activeLotsRead = 0;
+    for (const rows of lotsByProductId.values()) activeLotsRead += rows.length;
 
     // Sort each product's working lots FIFO (oldest received_at first) for consumption.
     //
@@ -1051,7 +1068,17 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     if (hasInlineReturns) {
       await finalizeCounterSaleReturns(db, trimmedId);
     }
+    emitPostingMetrics({
+      invoice_id: trimmedId, uid: auth.currentUser?.uid, outcome: "posted",
+      total_ms: nowMs() - postStartMs, txn_attempts: txnAttempt, retry_count: Math.max(0, txnAttempt - 1),
+      product_count: productIdsForEstimate.length, active_lots_read: activeLotsRead, op_estimate: postTxnOpEstimate,
+    });
   } catch (e) {
+    emitPostingMetrics({
+      invoice_id: trimmedId, uid: auth.currentUser?.uid, outcome: "failed",
+      total_ms: nowMs() - postStartMs, txn_attempts: txnAttempt, retry_count: Math.max(0, txnAttempt - 1),
+      product_count: productIdsForEstimate.length, active_lots_read: activeLotsRead, op_estimate: postTxnOpEstimate,
+    });
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
     if (
       e instanceof FirebaseError &&
