@@ -1,22 +1,26 @@
 /**
- * Issue #3 — prove the production validator identity is READ-ONLY on the
- * stock/ledger collections. Run this with the validator service account's
- * credentials, against production:
+ * Issue #3 — prove the production validator identity is STRICTLY READ-ONLY.
+ * Run with the validator service account's credentials, against production:
  *
  *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/inventory-validator-sa.json \
  *     npm run prove:validator-readonly -- --project prod
  *
- * It confirms READ works (get + list) and that CREATE / UPDATE / DELETE on every
- * protected collection are DENIED (PERMISSION_DENIED). Exit 0 only if all denials
- * hold. It writes to a single, clearly-named probe id and, in the UNEXPECTED case
- * that a write is allowed, immediately best-effort deletes it and FAILS loudly.
+ * Confirms:
+ *   - production READS succeed (get + list),
+ *   - CREATE, UPDATE and DELETE on every protected collection are DENIED
+ *     (PERMISSION_DENIED).
  *
- * Protected collections (must be read-only for the validator):
- *   products · stock_lots · lot_consumptions · inventory_transactions ·
- *   inventory_transaction_lines · inventory_discards · inventory_discard_lots ·
- *   invoice_returns · return_lot_restorations
- * The validator MAY write inventory_validation_runs (its own run record); this
- * script reports that collection's create result separately, it does not gate.
+ * SAFETY: for a correctly-denied identity NOTHING is written, so NO cleanup is
+ * required. Update/delete probes target a NON-EXISTENT doc id, so even a
+ * misconfigured (over-permissive) role modifies/deletes no real data. A create
+ * that is NOT denied is a hard failure — the script does NOT issue any cleanup
+ * write (that would itself require write access); it reports the stray probe id
+ * for manual removal. Only PERMISSION_DENIED passes.
+ *
+ * The validator is strictly read-only: it does NOT persist run records to
+ * Firestore. Run history for the M2 gate is retained as a protected CI artifact
+ * (see M2_DEPLOYMENT_RUNBOOK.md §0); Firestore persistence is a separate,
+ * schema-validated ingestion endpoint (runbook §0.4), not this identity.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -28,7 +32,7 @@ const PROBE_ID = "__validator_readonly_probe__";
 const PROTECTED = [
   "products", "stock_lots", "lot_consumptions", "inventory_transactions",
   "inventory_transaction_lines", "inventory_discards", "inventory_discard_lots",
-  "invoice_returns", "return_lot_restorations",
+  "invoice_returns", "return_lot_restorations", "inventory_validation_runs",
 ];
 
 function flag(name) { const i = process.argv.indexOf(name); return i >= 0 ? process.argv[i + 1] : undefined; }
@@ -47,7 +51,24 @@ function credentialProjectId() {
 function isPermissionDenied(err) {
   const code = err?.code;
   return code === 7 || code === "permission-denied" || code === "PERMISSION_DENIED" ||
-    /permission_denied|Missing or insufficient permissions|PERMISSION_DENIED/i.test(err?.message ?? "");
+    /permission[_-]denied|Missing or insufficient permissions/i.test(err?.message ?? "");
+}
+function isNotFound(err) {
+  const code = err?.code;
+  return code === 5 || code === "not-found" || /NOT_FOUND|No document to update/i.test(err?.message ?? "");
+}
+
+/** Returns { denied: boolean, wrote: boolean, why?: string }. Only denied passes. */
+async function probe(op, fn) {
+  try {
+    await fn();
+    // Resolved without error ⇒ the operation was PERMITTED (not read-only).
+    return { denied: false, wrote: op === "create", why: "succeeded — permission granted" };
+  } catch (e) {
+    if (isPermissionDenied(e)) return { denied: true, wrote: false };
+    if (isNotFound(e)) return { denied: false, wrote: false, why: "NOT_FOUND — permission granted (target absent)" };
+    return { denied: false, wrote: false, why: `unexpected error: ${e.message}` };
+  }
 }
 
 async function main() {
@@ -60,53 +81,39 @@ async function main() {
 
   initializeApp({ credential: applicationDefault(), projectId: targetProjectId });
   const db = getFirestore();
-  console.log(`Proving validator identity is read-only on ${targetProjectId}\n`);
+  console.log(`Proving validator identity is STRICTLY READ-ONLY on ${targetProjectId}\n`);
 
   const failures = [];
+  const strays = [];
 
-  // 1. READ must work (get + list) on a protected collection.
-  try {
-    await db.collection("products").limit(1).get();
-    console.log("  ✓ READ (list) works");
-  } catch (e) {
-    failures.push(`READ denied on products (validator must be able to read): ${e.message}`);
-    console.log("  ✗ READ (list) FAILED — validator cannot read");
-  }
+  // 1. READ must work (get + list).
+  try { await db.collection("products").limit(1).get(); console.log("  ✓ READ (list) works"); }
+  catch (e) { failures.push(`READ denied on products — validator must be able to read: ${e.message}`); console.log("  ✗ READ (list) FAILED"); }
 
-  // 2. WRITE (create/update/delete) must be DENIED on every protected collection.
+  // 2. CREATE / UPDATE / DELETE must be DENIED on every protected collection.
   for (const coll of PROTECTED) {
-    const ref = db.collection(coll).doc(PROBE_ID);
-    let allowed = false;
-    try {
-      await ref.set({ __probe: true, at: new Date().toISOString() });
-      allowed = true; // UNEXPECTED — the role permits writes
-    } catch (e) {
-      if (isPermissionDenied(e)) { console.log(`  ✓ ${coll}: write DENIED`); continue; }
-      failures.push(`${coll}: write failed with a non-permission error: ${e.message}`);
-      console.log(`  ? ${coll}: write failed (non-permission): ${e.message}`);
-      continue;
-    }
-    if (allowed) {
-      failures.push(`${coll}: WRITE ALLOWED — the validator identity is NOT read-only on this collection`);
-      console.log(`  ✗ ${coll}: WRITE ALLOWED (cleaning up probe doc)`);
-      await ref.delete().catch(() => console.log(`    (could not delete probe in ${coll} — remove ${PROBE_ID} manually)`));
-    }
-  }
+    const ref = db.collection(coll).doc(PROBE_ID); // PROBE_ID does not exist
+    const create = await probe("create", () => ref.create({ __probe: true }));
+    const update = await probe("update", () => ref.update({ __probe: true })); // update non-existent
+    const del = await probe("delete", () => ref.delete()); // delete non-existent
 
-  // 3. Report (do not gate) whether the validator can create its own run record.
-  const runRef = db.collection("inventory_validation_runs").doc(`__probe_${Date.now()}__`);
-  try {
-    await runRef.set({ __probe: true });
-    await runRef.delete().catch(() => {});
-    console.log("\n  ℹ inventory_validation_runs: create ALLOWED (validator can persist run records — append role).");
-  } catch (e) {
-    if (isPermissionDenied(e)) console.log("\n  ℹ inventory_validation_runs: create DENIED (strict read-only — run records will NOT persist; use validate:inventory read-only report, or grant append on this collection).");
-    else console.log(`\n  ℹ inventory_validation_runs: create failed: ${e.message}`);
+    const denials = [create, update, del];
+    if (denials.every((r) => r.denied)) { console.log(`  ✓ ${coll}: create/update/delete DENIED`); continue; }
+
+    for (const [op, r] of [["create", create], ["update", update], ["delete", del]]) {
+      if (!r.denied) failures.push(`${coll}.${op} NOT denied (${r.why}) — identity is not read-only on ${coll}`);
+    }
+    if (create.wrote) strays.push(`${coll}/${PROBE_ID}`);
+    console.log(`  ✗ ${coll}: NOT read-only (${denials.filter((r) => !r.denied).length}/3 permitted)`);
   }
 
   console.log("");
-  if (failures.length) { console.error("READ-ONLY PROOF FAILED:"); failures.forEach((f) => console.error(`  - ${f}`)); process.exit(1); }
-  console.log("READ-ONLY PROOF PASSED: validator can read; all protected-collection writes are denied.");
+  if (strays.length) {
+    console.error("PROBE DOCS WRITTEN (role permits create) — remove these manually; this script does NOT auto-write:");
+    strays.forEach((s) => console.error(`  - ${s}`));
+  }
+  if (failures.length) { console.error("\nSTRICT READ-ONLY PROOF FAILED:"); failures.forEach((f) => console.error(`  - ${f}`)); process.exit(1); }
+  console.log("STRICT READ-ONLY PROOF PASSED: reads work; create/update/delete on all protected collections are denied; nothing was written.");
 }
 
 main().catch((err) => { console.error(err); process.exit(1); });

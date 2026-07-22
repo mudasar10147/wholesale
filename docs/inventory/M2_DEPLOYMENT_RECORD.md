@@ -17,11 +17,11 @@ attempt). Referenced by `M2_DEPLOYMENT_RUNBOOK.md`.
 | Field | Value |
 |---|---|
 | Validator SA email | `__________________________________` |
-| IAM role granted | `__________________________________` (strict read-only get/list, or read+append — see runbook §0) |
-| `prove:validator-readonly` result | ☐ PASS (all protected writes denied; read works) |
-| Manual full validation run id | `__________________________________` |
-| Manual run persisted? | ☐ yes (`inventory_validation_runs/<run_id>`) |
-| Nightly workflow_dispatch run | ☐ green — URL: `__________________________` |
+| IAM role granted | `datastore.entities.get` + `list` only (**strict read-only**, no create/update/delete) |
+| `prove:validator-readonly` result | ☐ PASS (reads work; create/update/delete on all protected collections DENIED; nothing written) |
+| Manual read-only validation | ☐ ran (`validate:inventory --project prod`), no Firestore write |
+| Report artifact retained? | ☐ yes — CI run/artifact: `__________________________` |
+| Nightly workflow_dispatch run | ☐ green — URL: `__________________________`; artifact retained ☐ |
 
 ## Pre-deployment baseline (T−0, §1.1)
 
