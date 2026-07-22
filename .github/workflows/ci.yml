@@ -49,4 +49,5 @@ jobs:
           npm run test:inventory-run
           npm run test:inventory-api
           npm run test:integration
+          npm run test:concurrency
           npm run test:spike

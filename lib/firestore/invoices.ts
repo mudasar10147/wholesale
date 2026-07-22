@@ -643,6 +643,21 @@ export async function updateDraftInvoice(
   });
 }
 
+/**
+ * Test-only seam for the C1 concurrency test (§12.4). The suite injects this hook
+ * to force a deterministic transaction-retry interleaving. It is `null` in
+ * production — postInvoice's behaviour is unchanged when it is unset.
+ */
+export type PostInvoiceConcurrencyHook = (info: {
+  invoiceId: string;
+  attempt: number;
+  phase: "afterReads";
+}) => Promise<void>;
+let postInvoiceConcurrencyHook: PostInvoiceConcurrencyHook | null = null;
+export function __setPostInvoiceConcurrencyHook(hook: PostInvoiceConcurrencyHook | null): void {
+  postInvoiceConcurrencyHook = hook;
+}
+
 export async function postInvoice(db: Firestore, invoiceId: string): Promise<void> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
@@ -764,9 +779,10 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     productByIdEarly,
     stockSnapshotEarly,
   );
+  // The dirty estimate is now used ONLY to size the op-cap preflight below — never
+  // to seed the in-transaction lot set (that is loaded fresh on every attempt).
   const dirtyEstimate = simulateFifoForDirtyEstimate(invoiceItemsEarly, lotsByProductForEstimate);
   const dirtyLotIdsToRead = Array.from(dirtyEstimate);
-  const preflightLotsByProduct = cloneLotsByProductForSimulation(lotsByProductForEstimate);
 
   const postTxnOpEstimate =
     1 +
@@ -783,8 +799,10 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     );
   }
 
+  let txnAttempt = 0;
   try {
     await runTransaction(db, async (tx) => {
+    txnAttempt += 1;
     const invoiceSnap = await tx.get(invoiceRef);
     if (!invoiceSnap.exists()) {
       throw new Error("Invoice not found.");
@@ -852,33 +870,50 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       stockSnapshot.set(productId, currentStock);
     }
 
-    const lotsByProductId = cloneLotsByProductForSimulation(preflightLotsByProduct);
-
-    const freshDirtyLots = new Map<string, StockLotDoc>();
-    for (const lotId of dirtyLotIdsToRead) {
-      const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, lotId));
-      if (!lotSnap.exists()) {
-        continue;
-      }
-      freshDirtyLots.set(lotId, lotSnap.data() as StockLotDoc);
-    }
-    for (const [lotId, lotData] of freshDirtyLots) {
-      for (const rows of lotsByProductId.values()) {
-        const idx = rows.findIndex((row) => row.id === lotId);
-        if (idx >= 0) {
-          rows[idx] = { id: lotId, data: { ...lotData } };
-        }
-      }
-    }
-
+    // M2 — Option A (§11.2, proven by the M1.5-S spike). Recompute the FIFO working
+    // set from FRESH lot data on EVERY attempt; never reuse the pre-transaction
+    // estimate or snapshot. The product anchor was read first (tx.get above), so a
+    // concurrently-created lot co-writes the product and aborts us — the retry
+    // re-queries and sees it. The client SDK has no transactional query (§2.2b):
+    // getDocs is non-transactional (fresh each attempt) and every active lot we may
+    // write is re-read with tx.get to place a precondition on the write set.
+    const lotsByProductId = new Map<string, StockLotRow[]>();
     for (const productId of productIds) {
-      const product = productById.get(productId);
-      const currentStock = stockSnapshot.get(productId) ?? 0;
+      const currentLots = await fetchStockLotsForProduct(db, productId);
+      const rows: StockLotRow[] = [];
+      for (const lot of currentLots) {
+        const remaining = typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0;
+        if (remaining <= 0) continue; // active working set only
+        const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, lot.id));
+        if (!lotSnap.exists()) continue;
+        rows.push({ id: lot.id, data: lotSnap.data() as StockLotDoc });
+      }
+      lotsByProductId.set(productId, rows);
+    }
+
+    // Sort each product's working lots FIFO (oldest received_at first) for consumption.
+    //
+    // The former in-transaction `assertBookStockMatchesLots(book, lotTotal)` was removed
+    // here. Under Option A the product (a `tx.get`) and the freshly-queried lots are not a
+    // single consistent snapshot, so a concurrent post committing mid-transaction makes
+    // book and lotTotal transiently disagree — which the one-sided check would hard-fail
+    // (a non-retryable throw) instead of letting the commit precondition force a retry.
+    // Correctness now rests on: the product anchor + per-lot write-set preconditions (any
+    // concurrent change aborts us and we retry with fresh reads), the FIFO insufficient-
+    // lots guard below, and the read-only validator (P1/L6). Blocking a post on drift is
+    // the job of the two-sided POST-STATE transactional assertion — M1's separate, gated
+    // PR — which asserts after the writes and is retry-compatible.
+    for (const productId of productIds) {
       const lots = lotsByProductId.get(productId) ?? [];
-      const lotTotal = lots.reduce((acc, row) => acc + (row.data.qty_remaining ?? 0), 0);
-      assertBookStockMatchesLots(productId, product, currentStock, lotTotal);
       sortLotsByReceivedAt(lots);
       lotsByProductId.set(productId, lots);
+    }
+
+    // Test-only seam (no-op in production): all reads and the assertion are done;
+    // the product precondition is established but nothing is written yet. The C1
+    // suite pauses here so a concurrent post can commit and force a retry.
+    if (postInvoiceConcurrencyHook) {
+      await postInvoiceConcurrencyHook({ invoiceId: trimmedId, attempt: txnAttempt, phase: "afterReads" });
     }
 
     for (const productId of productIds) {
