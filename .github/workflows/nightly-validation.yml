@@ -1,13 +1,15 @@
 name: Nightly inventory validation
 
-# Full, persisted inventory validation once a night (§9.4 — nightly full is
-# mandatory). Read-only over inventory; writes only its own run record to
-# inventory_validation_runs under the read-only validator identity (§13).
+# Full inventory validation once a night (§9.4 — nightly full is mandatory).
+# STRICTLY READ-ONLY over Firestore: emits a report file and writes NOTHING to
+# the database. Run history is retained as the uploaded artifact below (runbook
+# §0), not persisted to Firestore by this identity (§13).
 #
 # Requires repository secret INVENTORY_VALIDATOR_SA_KEY: the JSON key of a GCP
-# service account for the PRODUCTION project (wholesale-b4ff9) with read on the
-# database and write on inventory_validation_runs only. The run refuses unless the
-# key's project_id matches --project (cross-project guard in validate-run.mjs).
+# service account for the PRODUCTION project (wholesale-b4ff9) that is READ-ONLY
+# (roles/datastore.viewer — get + list only; no create/update/delete anywhere).
+# The run refuses unless the key's project_id matches --project (cross-project
+# guard in validate.mjs).
 
 on:
   schedule:

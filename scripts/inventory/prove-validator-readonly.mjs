@@ -28,7 +28,10 @@ import { initializeApp, applicationDefault } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
 const PROJECT_ROOT = path.resolve(process.cwd());
-const PROBE_ID = "__validator_readonly_probe__";
+// NOTE: must NOT match Firestore's reserved id pattern `__.*__` — a reserved id
+// is rejected with INVALID_ARGUMENT at argument validation, BEFORE the IAM
+// permission check, which would make the read-only probe inconclusive.
+const PROBE_ID = "validator-readonly-probe-DO-NOT-USE";
 const PROTECTED = [
   "products", "stock_lots", "lot_consumptions", "inventory_transactions",
   "inventory_transaction_lines", "inventory_discards", "inventory_discard_lots",
@@ -57,6 +60,13 @@ function isNotFound(err) {
   const code = err?.code;
   return code === 5 || code === "not-found" || /NOT_FOUND|No document to update/i.test(err?.message ?? "");
 }
+// INVALID_ARGUMENT (gRPC 3) is raised at argument validation, BEFORE the IAM
+// permission check runs. It is neither a denial nor a grant — the probe never
+// reached the permission layer, so the result is INCONCLUSIVE, not a failure.
+function isInvalidArgument(err) {
+  const code = err?.code;
+  return code === 3 || code === "invalid-argument" || /INVALID_ARGUMENT/i.test(err?.message ?? "");
+}
 
 /** Returns { denied: boolean, wrote: boolean, why?: string }. Only denied passes. */
 async function probe(op, fn) {
@@ -66,6 +76,7 @@ async function probe(op, fn) {
     return { denied: false, wrote: op === "create", why: "succeeded — permission granted" };
   } catch (e) {
     if (isPermissionDenied(e)) return { denied: true, wrote: false };
+    if (isInvalidArgument(e)) return { denied: false, wrote: false, inconclusive: true, why: `INVALID_ARGUMENT before permission check — probe inconclusive: ${e.message}` };
     if (isNotFound(e)) return { denied: false, wrote: false, why: "NOT_FOUND — permission granted (target absent)" };
     return { denied: false, wrote: false, why: `unexpected error: ${e.message}` };
   }
@@ -84,6 +95,7 @@ async function main() {
   console.log(`Proving validator identity is STRICTLY READ-ONLY on ${targetProjectId}\n`);
 
   const failures = [];
+  const inconclusive = [];
   const strays = [];
 
   // 1. READ must work (get + list).
@@ -101,10 +113,14 @@ async function main() {
     if (denials.every((r) => r.denied)) { console.log(`  ✓ ${coll}: create/update/delete DENIED`); continue; }
 
     for (const [op, r] of [["create", create], ["update", update], ["delete", del]]) {
-      if (!r.denied) failures.push(`${coll}.${op} NOT denied (${r.why}) — identity is not read-only on ${coll}`);
+      if (r.denied) continue;
+      if (r.inconclusive) inconclusive.push(`${coll}.${op} INCONCLUSIVE (${r.why})`);
+      else failures.push(`${coll}.${op} NOT denied (${r.why}) — identity is not read-only on ${coll}`);
     }
     if (create.wrote) strays.push(`${coll}/${PROBE_ID}`);
-    console.log(`  ✗ ${coll}: NOT read-only (${denials.filter((r) => !r.denied).length}/3 permitted)`);
+    const bad = denials.filter((r) => !r.denied);
+    const marker = bad.every((r) => r.inconclusive) ? "? " : "✗ ";
+    console.log(`  ${marker}${coll}: ${marker === "? " ? "INCONCLUSIVE" : "NOT read-only"} (${bad.length}/3 not denied)`);
   }
 
   console.log("");
@@ -113,6 +129,12 @@ async function main() {
     strays.forEach((s) => console.error(`  - ${s}`));
   }
   if (failures.length) { console.error("\nSTRICT READ-ONLY PROOF FAILED:"); failures.forEach((f) => console.error(`  - ${f}`)); process.exit(1); }
+  if (inconclusive.length) {
+    console.error("\nSTRICT READ-ONLY PROOF INCONCLUSIVE (probe rejected before the permission check — not a denial and not a grant):");
+    inconclusive.forEach((f) => console.error(`  - ${f}`));
+    console.error("Fix the probe so the request reaches the IAM layer, then re-run. This is a script issue, not proof of write access.");
+    process.exit(2);
+  }
   console.log("STRICT READ-ONLY PROOF PASSED: reads work; create/update/delete on all protected collections are denied; nothing was written.");
 }
 

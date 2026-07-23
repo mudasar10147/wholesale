@@ -29,24 +29,31 @@ post-recount, [#4]) and any production reconciliation.
 **Deployment MUST NOT begin until all of the following are proven in production
 (`wholesale-b4ff9`):**
 
-- [ ] The `inventory-validator` service account exists and is **read-only** on the
-      validated collections + write **only** on `inventory_validation_runs`.
-      Prove it: attempt a write to `stock_lots`/`products`/`inventory_transactions`
-      with that identity and confirm it is DENIED (permission-verified, not just
-      code-verified).
-- [ ] Repo secret `INVENTORY_VALIDATOR_SA_KEY` is set (prod SA JSON).
-- [ ] **Strict read-only proof passes:** `npm run prove:validator-readonly -- --project prod`
-      → reads work; create/update/delete on every protected collection are DENIED;
-      nothing written.
-- [ ] **Manual read-only validation works against prod:**
+- [x] The `inventory-validator` service account exists and is **strictly read-only**
+      (`roles/datastore.viewer` — get + list only; no create/update/delete anywhere).
+      Permission-verified (not just code-verified): create/update/delete on every
+      protected collection returns `PERMISSION_DENIED`.
+      *(2026-07-23 — `inventory-validator@wholesale-b4ff9.iam.gserviceaccount.com`.)*
+- [x] **Strict read-only proof passes:** `npm run prove:validator-readonly -- --project prod`
+      → reads work; create/update/delete on all 10 protected collections DENIED;
+      nothing written. *(2026-07-23 — PASS.)*
+- [x] **Manual read-only validation works against prod:**
       `GOOGLE_APPLICATION_CREDENTIALS=… npm run validate:inventory -- --project prod`
-      → connects, reads, produces a report (NO Firestore write); cross-project guard passes.
-- [ ] **CI validation path works:** trigger `.github/workflows/nightly-validation.yml`
-      via `workflow_dispatch` → green run that **uploads the report as a protected,
-      retained artifact**.
+      → connected, read 215 products / 481 lots, produced a report (NO Firestore
+      write); cross-project guard passed. *(2026-07-23 — legacy baseline captured.)*
+- [ ] Repo secret `INVENTORY_VALIDATOR_SA_KEY` is set (prod SA JSON) — set before deploy.
+- [ ] **CI validation path — executes AT deploy (deferred by decision).**
+      `nightly-validation.yml` is not on the default branch (main) yet, so
+      `workflow_dispatch` is unavailable until the develop→main merge. At the M2
+      merge the workflow reaches main; dispatch it immediately (this IS the §1 T−0
+      validation) → green run that **uploads the report as a protected, retained
+      artifact**. The read-only credential + validation logic + report generation are
+      already proven locally against prod (rows above); CI adds only the runner
+      environment and artifact retention.
 
-The fixture run proves validator *logic* only, never production connectivity. Until
-§0 is green, the deployment's before/after validations cannot be trusted.
+The fixture run proves validator *logic* only; the rows above prove production
+connectivity with the real read-only credential. Firestore run-persistence is NOT
+required (§0 — strictly read-only; history retained as the CI artifact).
 
 ### §0 — the validator identity is STRICTLY READ-ONLY
 
