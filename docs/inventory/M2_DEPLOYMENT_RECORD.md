@@ -12,16 +12,16 @@ attempt). Referenced by `M2_DEPLOYMENT_RUNBOOK.md`.
 | Validator schema_version | `1` (`lib/inventory/validationRun.ts` `SCHEMA_VERSION`) |
 | Candidate deploy SHA (develop HEAD) | `bf36344c036b001c891a4cef89a4cc6589082a7b` — **re-capture at deploy time** |
 
-## Issue #3 prerequisite proof (fill during §0)
+## Issue #3 prerequisite proof (§0)
 
 | Field | Value |
 |---|---|
-| Validator SA email | `__________________________________` |
-| IAM role granted | `datastore.entities.get` + `list` only (**strict read-only**, no create/update/delete) |
-| `prove:validator-readonly` result | ☐ PASS (reads work; create/update/delete on all protected collections DENIED; nothing written) |
-| Manual read-only validation | ☐ ran (`validate:inventory --project prod`), no Firestore write |
-| Report artifact retained? | ☐ yes — CI run/artifact: `__________________________` |
-| Nightly workflow_dispatch run | ☐ green — URL: `__________________________`; artifact retained ☐ |
+| Validator SA email | `inventory-validator@wholesale-b4ff9.iam.gserviceaccount.com` |
+| IAM role granted | `roles/datastore.viewer` (`datastore.entities.get` + `list` only — **strict read-only**, no create/update/delete) |
+| `prove:validator-readonly` result | ☑ PASS (2026-07-23 — reads work; create/update/delete on all 10 protected collections DENIED; nothing written). Probe uses a non-reserved id so writes reach the IAM layer. |
+| Manual read-only validation | ☑ ran 2026-07-23T15:37:10.987Z — `validate:inventory --project prod`, no Firestore write. Legacy baseline: 215 products / 481 lots; Verdict FAIL (pre-existing untrusted-history drift — the legacy set); report `reports/inventory-validation-2026-07-23T15-37-10-987Z.json`. |
+| Report artifact retained? | Local report retained (above). CI-retained artifact: **deferred to deploy** — `nightly-validation.yml` is not on the default branch (main) yet, so `workflow_dispatch` is unavailable until the develop→main merge (decision 2026-07-23, "keep main as-is"). |
+| Nightly workflow_dispatch run | **Ready, executes at deploy.** The workflow reaches main at the M2 merge; dispatch it immediately as the runbook §1 T−0/T+15 validation → green + retained artifact. Repo secret `INVENTORY_VALIDATOR_SA_KEY` set: ☐. |
 
 ## Pre-deployment baseline (T−0, §1.1)
 
