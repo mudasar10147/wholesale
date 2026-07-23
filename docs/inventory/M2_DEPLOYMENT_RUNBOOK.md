@@ -35,15 +35,64 @@ post-recount, [#4]) and any production reconciliation.
       with that identity and confirm it is DENIED (permission-verified, not just
       code-verified).
 - [ ] Repo secret `INVENTORY_VALIDATOR_SA_KEY` is set (prod SA JSON).
-- [ ] **Manual read-only run works against prod:**
-      `GOOGLE_APPLICATION_CREDENTIALS=… npm run validate:run -- --project prod --mode full`
-      → connects, reads, and persists an `inventory_validation_runs` record; the
-      cross-project guard passes.
-- [ ] **Nightly path works:** trigger `.github/workflows/nightly-validation.yml`
-      via `workflow_dispatch` → green run + a persisted run doc.
+- [ ] **Strict read-only proof passes:** `npm run prove:validator-readonly -- --project prod`
+      → reads work; create/update/delete on every protected collection are DENIED;
+      nothing written.
+- [ ] **Manual read-only validation works against prod:**
+      `GOOGLE_APPLICATION_CREDENTIALS=… npm run validate:inventory -- --project prod`
+      → connects, reads, produces a report (NO Firestore write); cross-project guard passes.
+- [ ] **CI validation path works:** trigger `.github/workflows/nightly-validation.yml`
+      via `workflow_dispatch` → green run that **uploads the report as a protected,
+      retained artifact**.
 
 The fixture run proves validator *logic* only, never production connectivity. Until
-§0 is green, the deployment's before/after full validations cannot be trusted.
+§0 is green, the deployment's before/after validations cannot be trusted.
+
+### §0 — the validator identity is STRICTLY READ-ONLY
+
+**Decision (fixed): the production validator is strictly read-only.** It must NOT
+be granted general Firestore write access. Admin-SDK access is governed by IAM,
+which is **database-scoped** and receives no collection-level protection from
+Firestore rules (§13) — so a "read + append" role would give the validator broader
+production write capability than intended. We do not do that.
+
+- **IAM role:** `datastore.entities.get` + `datastore.entities.list` ONLY. No
+  `create`, `update`, or `delete` — anywhere.
+- **Prove it:** with the validator SA creds,
+  `npm run prove:validator-readonly -- --project prod`
+  ([`scripts/inventory/prove-validator-readonly.mjs`]) — reads work; create/update/
+  delete on every protected collection are DENIED; **nothing is written** (no
+  cleanup needed; update/delete probe a non-existent id).
+- **Run persistence for the M2 gate = a protected CI artifact, NOT Firestore.**
+  The read-only validator cannot (and must not) write `inventory_validation_runs`.
+  For the deployment gate, run `validate:inventory --project prod` (read-only,
+  emits a report file) inside the workflow and **upload the report JSON as a
+  retained GitHub Actions artifact**. Record its run id, timestamp, commit SHA,
+  project id (`wholesale-b4ff9`), schema_version (`1`) and **issue identities**
+  (invariant_id + entity) in `M2_DEPLOYMENT_RECORD.md`. Legacy-vs-new is then a
+  comparison of issue identities across the retained artifacts (§2).
+- **Do NOT block M2 on Firestore persistence.** Firestore run-history is
+  temporarily unavailable by design; the read-only prod run + artifact retention
+  are sufficient for the M2 safety gate.
+
+### §0.4 — Future validation-run persistence (separate trusted writer; NOT this deployment)
+
+Persisted, queryable run history returns via a **separate, minimal ingestion
+endpoint** — never by widening the validator's IAM. Design constraints:
+
+- Its own identity may write ONLY `inventory_validation_runs`; it has NO stock/
+  ledger access. Its **public interface** accepts only a validation-run submission —
+  it cannot be used to mutate inventory.
+- Accepts ONLY the **redacted validation-run schema** (invariant_id, severity,
+  entity_type/id, first_seen_at, counts — no cost/price/customer/monetary, §14).
+- Performs **strict schema + size validation** (reject unknown fields; cap issues
+  at the §14 limit; reject payloads over the size cap) before writing.
+- **Append-only:** it may create a new run document (deterministic/served id) and
+  never update or delete an existing one.
+- The read-only validator POSTs its redacted report to this endpoint; the endpoint
+  validates and appends. `first_seen_at` carry-forward resumes once this exists.
+
+This is tracked separately and is **not** a prerequisite for the M2 deployment.
 
 ---
 
@@ -53,29 +102,45 @@ The fixture run proves validator *logic* only, never production connectivity. Un
 (`fetchStockLotsForProduct`) is a single-field equality query — **no composite
 index to deploy**. No index step required.
 
-1. **T−0: full read-only validation (baseline).** `validate:run --project prod --mode full`.
-   Record the `run_id`. This is the **legacy baseline**: every issue here is
-   pre-existing, dated by `first_seen_at`. If it does not complete cleanly (the
-   validator can't connect / manifest incomplete), **do not deploy**.
+All validations run **read-only** (`validate:inventory --project prod`) and their
+report JSON is retained as a protected CI artifact (§0). "run id" below = the CI
+run / artifact id recorded in `M2_DEPLOYMENT_RECORD.md`.
+
+1. **T−0: full read-only validation (baseline).** Run `validate:inventory --project prod`
+   in the workflow; retain the report artifact. This is the **legacy baseline** —
+   record its full **issue identities** (invariant_id + entity). Every issue here is
+   pre-existing. If it does not complete cleanly (validator can't connect / partial),
+   **do not deploy**.
 2. **Deploy during a quiet trading period.** Promote `develop → main`, deploy the
    build. No feature flag (a flag would maintain both buggy and fixed paths). Ship
    M2 **alone** — no other inventory changes in the same release.
-3. **T+15 min: incremental validation.** `validate:run --project prod --mode incremental`.
-   Confirm it discovers the products touched since T−0 and reports **no new**
-   P1/L6 (see §2). Watch the first posting-metrics events land.
-4. **T+24 h: full validation.** `validate:run --project prod --mode full`. Compare
-   against the T−0 baseline by `first_seen_at`: **zero new P1/L6**.
-5. **7-day observation window.** Nightly full validation each night must be green
-   (or explained). Watch the metrics dashboard daily: `retry_count`, p95
-   `total_ms`, post failure rate. No new P1/L6 for 7 consecutive days is the M2→M3
-   gate.
+3. **T+15 min: read-only validation.** Re-run + retain the artifact. Diff its issue
+   identities against the T−0 baseline (§2): **no new P1/L6**. Watch the first
+   `[postingMetrics]` events.
+4. **T+24 h: read-only validation.** Re-run + retain. Diff against baseline: **zero
+   new P1/L6**.
+5. **7-day observation window.** Nightly read-only validation each night must be
+   green (or explained) with no new P1/L6 identity vs baseline. Watch the metrics
+   daily: `retry_count`, p95 `total_ms`, post failure rate. No new P1/L6 for 7
+   consecutive days is the M2→M3 gate.
 
 ---
 
-## §2 — Legacy vs. new corruption (`first_seen_at`)
+## §2 — Legacy vs. new corruption (artifact identity diff)
 
-The validator carries `first_seen_at` forward across runs (M1). Use it as the sole
-discriminator:
+Firestore `first_seen_at` carry-forward is unavailable during M2 (the validator is
+strictly read-only and does not persist). The equivalent, using retained artifacts:
+
+- **Legacy** = an issue identity (`invariant_id` + entity) present in the **T−0
+  baseline artifact**. Pre-existing (untrusted-history drift), addressed by the
+  future physical recount — **not** a rollback trigger.
+- **New** = an issue identity in a post-deploy artifact that is **absent from the
+  T−0 baseline**. A new P1 or L6 identity is post-deployment corruption and **is** a
+  rollback trigger (§3).
+
+Compare **identities**, never raw counts. Once the §0.4 ingestion endpoint exists,
+`first_seen_at` resumes and supersedes the manual artifact diff. (Original
+`first_seen_at` note retained below for when persistence returns.)
 
 - **Legacy** = an issue whose `first_seen_at` ≤ the T−0 baseline run time. These are
   pre-existing (untrusted-history drift) and are addressed by the future physical

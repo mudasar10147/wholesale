@@ -39,10 +39,21 @@ jobs:
         env:
           INVENTORY_VALIDATOR_SA_KEY: ${{ secrets.INVENTORY_VALIDATOR_SA_KEY }}
 
-      - name: Full validation (persisted to inventory_validation_runs)
-        run: npm run validate:run -- --project prod --mode "${MODE}"
+      # Strict read-only: emits a report file to reports/, writes NOTHING to
+      # Firestore. Exits non-zero on any CRITICAL/ERROR, so a failed job is a real
+      # signal. Run history is retained as the artifact below (§0 of the runbook),
+      # not persisted by this identity.
+      - name: Full read-only validation
+        id: validate
+        run: npm run validate:inventory -- --project prod
         env:
-          MODE: ${{ github.event.inputs.mode || 'full' }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
-        # validate:run exits non-zero when there is any CRITICAL/ERROR, so a
-        # failed job is a real signal — not a broken pipeline.
+
+      - name: Retain validation report (protected artifact)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventory-validation-${{ github.run_id }}
+          path: reports/*.json
+          retention-days: 90
+          if-no-files-found: warn
