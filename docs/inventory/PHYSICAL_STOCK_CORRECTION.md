@@ -95,9 +95,15 @@ an idempotency key:
    `cost_source: "product_cost_price"`.
 3. else **operator-entered** `manual_unit_cost`. `cost_source: "manual"`.
 
+**The admin can always override the resolved cost.** The UI shows the auto-resolved
+cost with an **Override** action; when overridden, the entered value is authoritative
+(`cost_source: "manual"`) — needed when the latest small stock-in isn't representative
+(e.g. the last 10 pieces cost 130 but the bulk 1000+ cost 52). A supplied
+`manual_unit_cost` always wins over the auto-resolved cost in the service.
+
 A **positive** count with a missing/zero/negative/NaN cost is **rejected**
-(`COST_REQUIRED`). The resolved cost + source are shown before confirmation. When
-`C = 0`, no cost is needed (no lot created).
+(`COST_REQUIRED`). The resolved (or overridden) cost + source are shown before
+confirmation. When `C = 0`, no cost is needed (no lot created).
 
 ---
 

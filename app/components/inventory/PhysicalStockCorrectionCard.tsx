@@ -36,6 +36,9 @@ export function PhysicalStockCorrectionCard() {
 
   const [countInput, setCountInput] = useState("");
   const [manualCostInput, setManualCostInput] = useState("");
+  // "auto" uses the resolved cost; "manual" lets the admin override it (e.g. a bulk
+  // lot bought far cheaper than the latest small stock-in).
+  const [costMode, setCostMode] = useState<"auto" | "manual">("auto");
   const [reason, setReason] = useState("");
 
   const [confirming, setConfirming] = useState(false);
@@ -91,6 +94,14 @@ export function PhysicalStockCorrectionCard() {
       } else {
         setPreview(p);
         setHits([]);
+        // Default to the auto-resolved cost, pre-filled so an override starts from it.
+        if (p.resolved_unit_cost != null) {
+          setCostMode("auto");
+          setManualCostInput(String(p.resolved_unit_cost));
+        } else {
+          setCostMode("manual");
+          setManualCostInput("");
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load product.");
@@ -106,16 +117,16 @@ export function PhysicalStockCorrectionCard() {
     return n;
   }, [countInput]);
 
-  const needsManualCost = preview != null && parsedCount != null && !Number.isNaN(parsedCount)
-    && parsedCount > 0 && preview.resolved_unit_cost == null;
-
   const manualCost = manualCostInput.trim() === "" ? null : Number(manualCostInput);
   const manualCostValid = manualCost != null && Number.isFinite(manualCost) && manualCost > 0;
 
-  const effectiveCost = needsManualCost
+  // Admin may always override the auto-resolved cost. In "manual" mode the entered
+  // value is authoritative; in "auto" mode the resolved cost is used.
+  const usingManual = costMode === "manual";
+  const effectiveCost = usingManual
     ? (manualCostValid ? manualCost : null)
     : preview?.resolved_unit_cost ?? null;
-  const effectiveCostSource = needsManualCost ? "manual" : preview?.cost_source ?? null;
+  const effectiveCostSource = usingManual ? "manual" : preview?.cost_source ?? null;
 
   const delta = preview != null && parsedCount != null && !Number.isNaN(parsedCount)
     ? parsedCount - preview.product.stock_quantity
@@ -143,7 +154,7 @@ export function PhysicalStockCorrectionCard() {
       const res = await applyCorrection({
         productId: preview.product.id,
         physicalCount: parsedCount,
-        manualUnitCost: needsManualCost ? manualCost : null,
+        manualUnitCost: usingManual ? manualCost : null,
         reason,
         recountSessionId: sessionRef.current,
         idempotencyKey: idempotencyRef.current ?? newIdempotencyKey(),
@@ -345,32 +356,59 @@ export function PhysicalStockCorrectionCard() {
                     <span className="text-xs text-destructive">Enter a whole number of 0 or more.</span>
                   ) : null}
                 </div>
-                {needsManualCost ? (
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="psc-cost">Unit cost (required — no cost on file)</Label>
-                    <Input
-                      id="psc-cost"
-                      inputMode="decimal"
-                      value={manualCostInput}
-                      onChange={(e) => setManualCostInput(e.target.value)}
-                      placeholder="e.g. 12.50"
-                    />
-                    {manualCostInput.trim() !== "" && !manualCostValid ? (
-                      <span className="text-xs text-destructive">Cost must be a positive number.</span>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    <Label>Unit cost for the new lot</Label>
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="psc-cost">Unit cost for the new lot</Label>
+                  {parsedCount === 0 ? (
                     <p className="rounded-md border border-border bg-surface-muted px-3 py-2 text-sm">
-                      {parsedCount === 0
-                        ? "— (no lot created for a zero count)"
-                        : effectiveCost != null
-                          ? `${effectiveCost} (${COST_SOURCE_LABEL[effectiveCostSource ?? "manual"]})`
-                          : "—"}
+                      — (no lot created for a zero count)
                     </p>
-                  </div>
-                )}
+                  ) : costMode === "auto" && preview.resolved_unit_cost != null ? (
+                    <div className="flex items-center gap-2">
+                      <p className="flex-1 rounded-md border border-border bg-surface-muted px-3 py-2 text-sm">
+                        {preview.resolved_unit_cost} ({COST_SOURCE_LABEL[preview.cost_source ?? "manual"]})
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setManualCostInput(String(preview.resolved_unit_cost ?? ""));
+                          setCostMode("manual");
+                        }}
+                      >
+                        Override
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <Input
+                        id="psc-cost"
+                        inputMode="decimal"
+                        value={manualCostInput}
+                        onChange={(e) => setManualCostInput(e.target.value)}
+                        placeholder="e.g. 52"
+                      />
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className={manualCostInput.trim() !== "" && !manualCostValid ? "text-destructive" : "text-muted-foreground"}>
+                          {manualCostInput.trim() !== "" && !manualCostValid
+                            ? "Cost must be a positive number."
+                            : preview.resolved_unit_cost == null
+                              ? "No cost on file — enter the unit cost."
+                              : "Manual override."}
+                        </span>
+                        {preview.resolved_unit_cost != null ? (
+                          <button
+                            type="button"
+                            className="underline hover:no-underline"
+                            onClick={() => setCostMode("auto")}
+                          >
+                            Use auto ({preview.resolved_unit_cost})
+                          </button>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-col gap-1">
