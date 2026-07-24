@@ -3,6 +3,7 @@ import { verifyRequestRoles } from "@/lib/server/auth";
 import { getFirebaseAdminAuth, getFirebaseAdminFirestore } from "@/lib/firebase/admin";
 import {
   applyPhysicalCorrection,
+  loadWorksheet,
   previewPhysicalCorrection,
   searchProductsForCorrection,
 } from "@/lib/inventory/physicalStockCorrection";
@@ -12,6 +13,7 @@ export const runtime = "nodejs";
 
 type Body =
   | { action: "search"; query?: string }
+  | { action: "worksheet" }
   | { action: "preview"; productId?: string }
   | {
       action: "apply";
@@ -34,6 +36,11 @@ export async function POST(request: Request) {
     if (body.action === "search") {
       const hits = await searchProductsForCorrection(db, String(body.query ?? ""));
       return NextResponse.json({ status: "ok", hits });
+    }
+
+    if (body.action === "worksheet") {
+      const rows = await loadWorksheet(db);
+      return NextResponse.json({ status: "ok", rows });
     }
 
     if (body.action === "preview") {
