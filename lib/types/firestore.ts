@@ -461,6 +461,18 @@ export type StockLotDoc = {
   received_at: Timestamp;
   created_at: Timestamp;
   updated_at: Timestamp;
+  /**
+   * Physical recount markers (admin re-baseline tool). A lot closed by a physical
+   * recount is frozen pre-recount history: qty_remaining is forced to 0 and the lot
+   * is excluded from the L6 consumption-chain check (its history is no longer
+   * asserted). Never deleted — retained for audit.
+   */
+  closed_by_recount?: boolean;
+  /** Set on the single new baseline lot a recount creates (source: "adjustment"). */
+  recount_baseline?: boolean;
+  /** Links a closed/baseline lot to the `physical_stock_corrections` record that touched it. */
+  recount_correction_id?: string;
+  closed_at?: Timestamp;
 };
 
 /**
@@ -683,6 +695,59 @@ export type InventoryRepairDoc = {
   ledger_transaction_id: string;
   /** The physical-movement ledger row, when a verified count differed from history. */
   physical_adjustment_transaction_id?: string;
+};
+
+/** Source of the unit cost applied to a physical-recount baseline lot. */
+export type PhysicalCorrectionCostSource = "latest_stock_in" | "product_cost_price" | "manual";
+
+/** One closed pre-recount lot captured on a correction record. */
+export type PhysicalCorrectionClosedLot = {
+  lot_id: string;
+  qty_remaining_before: number;
+};
+
+/** Post-update self-verification result stored on every correction. */
+export type PhysicalCorrectionValidation = {
+  ok: boolean;
+  stock_equals_count: boolean;
+  lot_total_equals_count: boolean;
+  open_lot_count_ok: boolean;
+};
+
+/**
+ * Immutable audit record for one physical stock correction, in
+ * `physical_stock_corrections/{correctionId}`. The physically-counted quantity is
+ * authoritative; nothing here is reconstructed from history. Append-only: an undo is
+ * a new correction, never a deletion. `correction_id` == the doc id == the caller's
+ * idempotency key, so a replayed submission collides on `.create()`.
+ */
+export type PhysicalStockCorrectionDoc = {
+  correction_id: string;
+  /** Batch/session grouping many single-product corrections. */
+  recount_session_id: string;
+  product_id: string;
+  product_name: string;
+  /** The product document id doubles as the SKU key. */
+  sku: string;
+  /** No barcode field exists on products yet; always null for now. */
+  barcode: string | null;
+  before_book_stock: number;
+  before_lot_total: number;
+  physical_count: number;
+  stock_delta: number;
+  /** Every open lot this correction zeroed/closed, with its pre-close remaining. */
+  closed_lots: PhysicalCorrectionClosedLot[];
+  /** The one new baseline lot; null when physical_count is 0. */
+  new_lot_id: string | null;
+  unit_cost: number;
+  cost_source: PhysicalCorrectionCostSource;
+  /** The ADJUSTMENT ledger row recording the physical surplus/shrinkage. */
+  ledger_transaction_id: string;
+  operator_uid: string;
+  operator_email: string;
+  reason: string;
+  created_at: Timestamp;
+  post_update_validation: PhysicalCorrectionValidation;
 };
 
 export type SchemaMigrationDoc = {
