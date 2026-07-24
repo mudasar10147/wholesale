@@ -155,7 +155,21 @@ ambiguous/unknown product · product changed after preview (STALE_PREVIEW, nothi
 written) · next correction reads fresh state · **post-update validator success** (P1
 green; recount-closed lots excluded from L6; exactly one open baseline lot).
 
-## UI flow (`/inventory/stock-correction`, admins only)
+## Fast worksheet mode (default) — for many products
+
+The page opens in **Quick worksheet** mode: one table of all products (batch-loaded via
+a `worksheet` endpoint action = two reads, grouped in memory), each row with the current
+stock/lot total, a **counted-quantity input**, a live **New / Δ**, an inline editable
+cost, and a **Save**. Type a number, press **Enter** — that product is corrected in a
+single validated transaction, and the row shows the applied result. Integrity is
+unchanged: every save runs the same atomic engine (validation, stale-preview guard,
+audit record, self-verify, idempotency). Speed comes from removing per-product search,
+selection, and the modal; a **confirm click** is still required only for risky saves
+(zeroing, or a swing larger than `max(50, current)`). A top filter narrows the list. The
+**Single product (detailed)** tab keeps the richer per-product view (open-lot table,
+warnings). Both share one recount session per page load.
+
+## UI flow (`/inventory/stock-correction`, admins only) — Single product (detailed)
 
 1. **Search** by exact product id/SKU or by name → pick a candidate (never name-only).
 2. **Product panel** shows image, name, SKU, current stock, open-lot total, and the
