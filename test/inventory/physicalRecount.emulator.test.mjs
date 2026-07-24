@@ -229,6 +229,25 @@ describe("physical stock correction", () => {
     assert.equal(res.correction.unit_cost, 15);
   });
 
+  it("cost override: a manual unit cost wins over the auto-resolved stock-in cost", async () => {
+    const id = uid("p");
+    // latest stock-in cost is 130 (only 10 pieces), but the bulk really cost 52.
+    await seedProduct(id, {
+      book: 10,
+      lots: [{ id: `${id}-l`, qty_in: 10, qty_remaining: 10, unit_cost: 130, source: "stock_in", received_at: 9000 }],
+    });
+    const res = await applyPhysicalCorrection(db, args({
+      productId: id, physicalCount: 1000, manualUnitCost: 52,
+      expectedCurrentStock: 10, expectedOpenLotTotal: 10,
+    }));
+    assert.equal(res.status, "applied");
+    assert.equal(res.correction.cost_source, "manual");
+    assert.equal(res.correction.unit_cost, 52);
+    const open = openLots(await getLots(id));
+    assert.equal(open[0].unit_cost, 52, "new baseline lot uses the overridden cost");
+    assert.equal((await getProduct(id)).cost_price, 52, "product cost_price follows the override");
+  });
+
   it("cost source: falls back to product cost_price when no stock-in lot", async () => {
     const id = uid("p");
     await seedProduct(id, {
