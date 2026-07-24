@@ -18,6 +18,7 @@ import { initializeApp, deleteApp } from "firebase-admin/app";
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import {
   applyPhysicalCorrection,
+  loadWorksheet,
   previewPhysicalCorrection,
   searchProductsForCorrection,
 } from "@/lib/inventory/physicalStockCorrection";
@@ -397,6 +398,32 @@ describe("physical stock correction", () => {
     assert.equal(await found("cable"), true, "last word");
     assert.equal(await found("bjt"), true, "prefix lower-case");
     assert.equal(await found("nomatch"), false, "non-matching query returns nothing");
+  });
+
+  it("worksheet loads every product with stock, open-lot total and resolved cost", async () => {
+    const a = uid("wp");
+    const b = uid("wp");
+    await seedProduct(a, {
+      name: "Alpha", book: 12,
+      lots: [
+        { id: `${a}-1`, qty_in: 10, qty_remaining: 8, unit_cost: 7, source: "stock_in", received_at: 2000 },
+        { id: `${a}-2`, qty_in: 5, qty_remaining: 4, unit_cost: 9, source: "stock_in", received_at: 6000 },
+      ],
+    });
+    await seedProduct(b, { name: "Zeta", book: 3, costPrice: 5, lots: [] });
+
+    const rows = await loadWorksheet(db);
+    const ra = rows.find((r) => r.id === a);
+    const rb = rows.find((r) => r.id === b);
+    assert.ok(ra && rb);
+    assert.equal(ra.stock_quantity, 12);
+    assert.equal(ra.open_lot_total, 12, "sum of open lot qty_remaining (8+4)");
+    assert.equal(ra.resolved_unit_cost, 9, "latest stock-in cost");
+    assert.equal(ra.cost_source, "latest_stock_in");
+    assert.equal(rb.open_lot_total, 0, "no lots");
+    assert.equal(rb.resolved_unit_cost, 5, "falls back to product cost_price");
+    // sorted by name: Alpha before Zeta
+    assert.ok(rows.findIndex((r) => r.id === a) < rows.findIndex((r) => r.id === b));
   });
 
   it("recount-closed lots with prior consumptions are excluded from L6 and never deleted", async () => {

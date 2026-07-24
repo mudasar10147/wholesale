@@ -101,6 +101,22 @@ async function post<T>(body: unknown): Promise<{ ok: boolean; status: number; da
   return { ok: res.ok, status: res.status, data: data as T };
 }
 
+export type WorksheetRow = {
+  id: string;
+  name: string;
+  sku: string;
+  image_url: string | null;
+  stock_quantity: number;
+  open_lot_total: number;
+  resolved_unit_cost: number | null;
+  cost_source: PhysicalCorrectionCostSource | null;
+};
+
+export async function loadWorksheet(): Promise<WorksheetRow[]> {
+  const { data } = await post<{ rows?: WorksheetRow[]; error?: string }>({ action: "worksheet" });
+  return data.rows ?? [];
+}
+
 export async function searchProducts(q: string): Promise<ProductSearchHit[]> {
   const { data } = await post<{ hits?: ProductSearchHit[]; error?: string }>({
     action: "search",

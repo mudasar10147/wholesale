@@ -196,6 +196,58 @@ function toHit(id: string, p: ProductDoc): ProductSearchHit {
   };
 }
 
+export type WorksheetRow = {
+  id: string;
+  name: string;
+  sku: string;
+  image_url: string | null;
+  stock_quantity: number;
+  open_lot_total: number;
+  resolved_unit_cost: number | null;
+  cost_source: PhysicalCorrectionCostSource | null;
+};
+
+/**
+ * One batch load for the fast worksheet: every product with its current book stock,
+ * open-lot total, and resolved cost — two collection reads, grouped in memory. Each
+ * row carries the values the per-product apply needs for its stale-preview guard.
+ */
+export async function loadWorksheet(db: Firestore): Promise<WorksheetRow[]> {
+  const [prodSnap, lotSnap] = await Promise.all([
+    db.collection(COLLECTIONS.products).get(),
+    db.collection(COLLECTIONS.stockLots).get(),
+  ]);
+  const lotsByProduct = new Map<string, Array<{ data: StockLotDoc }>>();
+  for (const d of lotSnap.docs) {
+    const data = d.data() as StockLotDoc;
+    const arr = lotsByProduct.get(data.product_id) ?? [];
+    arr.push({ data });
+    lotsByProduct.set(data.product_id, arr);
+  }
+  const rows: WorksheetRow[] = [];
+  for (const d of prodSnap.docs) {
+    const p = d.data() as ProductDoc;
+    const lots = lotsByProduct.get(d.id) ?? [];
+    const openTotal = lots.reduce((s, l) => {
+      const qr = intOr0(l.data.qty_remaining);
+      return s + (qr > 0 ? qr : 0);
+    }, 0);
+    const cost = resolveRecountCost(lots, p);
+    rows.push({
+      id: d.id,
+      name: typeof p.name === "string" ? p.name : "",
+      sku: d.id,
+      image_url: typeof p.image_url === "string" ? p.image_url : null,
+      stock_quantity: intOr0(p.stock_quantity),
+      open_lot_total: openTotal,
+      resolved_unit_cost: cost?.unit_cost ?? null,
+      cost_source: cost?.source ?? null,
+    });
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows;
+}
+
 export type ApplyCorrectionArgs = {
   productId: string;
   /** Integer >= 0. Non-integers and negatives are rejected. */

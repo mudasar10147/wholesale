@@ -1,6 +1,6 @@
 import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
-import { PhysicalStockCorrectionCard } from "@/app/components/inventory/PhysicalStockCorrectionCard";
+import { StockCorrectionWorkspace } from "@/app/components/inventory/StockCorrectionWorkspace";
 
 export default function StockCorrectionPage() {
   return (
@@ -8,9 +8,9 @@ export default function StockCorrectionPage() {
       <div className="space-y-8">
         <PageHeader
           title="Physical stock correction"
-          description="Re-baseline a product to its physically counted warehouse quantity. Admins only."
+          description="Re-baseline products to their physically counted warehouse quantities. Admins only."
         />
-        <PhysicalStockCorrectionCard />
+        <StockCorrectionWorkspace />
       </div>
     </AdminOnly>
   );
