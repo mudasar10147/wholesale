@@ -32,6 +32,14 @@
         { "fieldPath": "ledger_status", "order": "ASCENDING" },
         { "fieldPath": "posted_at", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "inventory_validation_runs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "complete", "order": "ASCENDING" },
+        { "fieldPath": "as_of", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

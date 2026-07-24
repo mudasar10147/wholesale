@@ -2,6 +2,7 @@ import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import { CustomerEngagementSettingsForm } from "@/app/components/settings/CustomerEngagementSettingsForm";
 import { NewArrivalSettingsForm } from "@/app/components/settings/NewArrivalSettingsForm";
+import { UserManagementSection } from "@/app/components/settings/UserManagementSection";
 import {
   Card,
   CardContent,
@@ -43,6 +44,20 @@ export default function SettingsPage() {
           </CardHeader>
           <CardContent>
             <CustomerEngagementSettingsForm />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Users &amp; roles</CardTitle>
+            <CardDescription>
+              Create sign-in accounts and set what each person can do. Admins get full access
+              including payments and settings; clerks handle day-to-day sales; the social
+              manager sees only the social planner.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <UserManagementSection />
           </CardContent>
         </Card>
       </div>

@@ -1,8 +1,19 @@
 /**
  * Read-only inventory validation against live Firestore.
  *
+ * A live run REQUIRES an explicit --project so it can never validate the wrong
+ * Firestore by accident. Pass a .firebaserc alias (default, test, prod) or a raw
+ * project id. If GOOGLE_APPLICATION_CREDENTIALS is set, the service account's
+ * own project must match the target, or the run is refused.
+ *
  * Usage:
- *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json npm run validate:inventory
+ *   # test project
+ *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/test-sa.json \
+ *     npm run validate:inventory -- --project test
+ *   # production baseline
+ *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/prod-sa.json \
+ *     npm run validate:inventory -- --project prod
+ *   # offline fixture (no --project needed)
  *   npm run validate:inventory -- --fixture test/fixtures/inventory-baseline/baseline.json
  */
 import fs from "node:fs";
@@ -15,16 +26,45 @@ const admin = require("firebase-admin");
 const PROJECT_ROOT = path.resolve(process.cwd());
 const FIREBASERC_PATH = path.join(PROJECT_ROOT, ".firebaserc");
 
-function readDefaultProjectId() {
+function readFirebaseProjects() {
   const raw = fs.readFileSync(FIREBASERC_PATH, "utf8");
-  return JSON.parse(raw)?.projects?.default;
+  return JSON.parse(raw)?.projects ?? {};
 }
 
 function parseArgs() {
-  const fixtureIdx = process.argv.indexOf("--fixture");
-  const fixture =
-    fixtureIdx >= 0 ? process.argv[fixtureIdx + 1] : undefined;
-  return { fixture };
+  const flag = (name) => {
+    const i = process.argv.indexOf(name);
+    return i >= 0 ? process.argv[i + 1] : undefined;
+  };
+  return { fixture: flag("--fixture"), project: flag("--project") };
+}
+
+/**
+ * Resolve the --project flag to a concrete Firestore project id.
+ * Accepts a .firebaserc alias (default/test/prod) or a raw id that matches a
+ * known project. Rejects anything else so a typo cannot silently pick a project.
+ */
+function resolveTargetProjectId(projectFlag, projects) {
+  if (!projectFlag) return null;
+  if (projects[projectFlag]) return projects[projectFlag];
+  const knownIds = new Set(Object.values(projects));
+  if (knownIds.has(projectFlag)) return projectFlag;
+  const aliases = Object.keys(projects).join(", ") || "(none)";
+  const ids = [...knownIds].join(", ") || "(none)";
+  throw new Error(
+    `Unknown --project "${projectFlag}". Use an alias (${aliases}) or a known id (${ids}).`,
+  );
+}
+
+/** project_id from the service-account file, if GOOGLE_APPLICATION_CREDENTIALS points at one. */
+function credentialProjectId() {
+  const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (!credPath) return null;
+  try {
+    return JSON.parse(fs.readFileSync(credPath, "utf8")).project_id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 async function loadFromFirestore(db) {
@@ -37,7 +77,13 @@ async function loadFromFirestore(db) {
     txSnap,
     txLinesSnap,
     returnsSnap,
+    returnItemsSnap,
+    restorationsSnap,
+    writeOffsSnap,
     discardsSnap,
+    discardItemsSnap,
+    discardLotsSnap,
+    salesSnap,
   ] = await Promise.all([
     db.collection("products").get(),
     db.collection("stock_lots").get(),
@@ -47,7 +93,13 @@ async function loadFromFirestore(db) {
     db.collection("inventory_transactions").get(),
     db.collection("inventory_transaction_lines").get(),
     db.collection("invoice_returns").get(),
+    db.collection("invoice_return_items").get(),
+    db.collection("return_lot_restorations").get(),
+    db.collection("return_lot_write_offs").get(),
     db.collection("inventory_discards").get(),
+    db.collection("inventory_discard_items").get(),
+    db.collection("inventory_discard_lots").get(),
+    db.collection("sales").get(),
   ]);
 
   const mapDocs = (snap) =>
@@ -62,7 +114,13 @@ async function loadFromFirestore(db) {
     inventoryTransactions: mapDocs(txSnap),
     inventoryTransactionLines: mapDocs(txLinesSnap),
     invoiceReturns: mapDocs(returnsSnap),
+    invoiceReturnItems: mapDocs(returnItemsSnap),
+    returnLotRestorations: mapDocs(restorationsSnap),
+    returnLotWriteOffs: mapDocs(writeOffsSnap),
     inventoryDiscards: mapDocs(discardsSnap),
+    inventoryDiscardItems: mapDocs(discardItemsSnap),
+    inventoryDiscardLots: mapDocs(discardLotsSnap),
+    sales: mapDocs(salesSnap),
   };
 }
 
@@ -74,7 +132,7 @@ function loadFixture(fixturePath) {
 }
 
 async function main() {
-  const { fixture } = parseArgs();
+  const { fixture, project } = parseArgs();
 
   const { validateInventoryData, formatValidationSummary } = await import(
     "../../lib/inventory/validateInventory.ts"
@@ -87,12 +145,32 @@ async function main() {
     input = loadFixture(fixture);
     environment = "fixture";
   } else {
+    const projects = readFirebaseProjects();
+    const targetProjectId = resolveTargetProjectId(project, projects);
+    if (!targetProjectId) {
+      const aliases = Object.keys(projects).join(", ") || "(none)";
+      throw new Error(
+        "Refusing to run against live Firestore without --project. " +
+          `Pass --project <alias|id> (aliases: ${aliases}). ` +
+          "This guard prevents accidentally validating the wrong project. " +
+          "For an offline run use --fixture instead.",
+      );
+    }
+    const credProject = credentialProjectId();
+    if (credProject && credProject !== targetProjectId) {
+      throw new Error(
+        `Credential project "${credProject}" (from GOOGLE_APPLICATION_CREDENTIALS) ` +
+          `does not match --project target "${targetProjectId}". ` +
+          "Refusing to run to avoid cross-project reads.",
+      );
+    }
     if (!admin.apps.length) {
       admin.initializeApp({
         credential: admin.credential.applicationDefault(),
-        projectId: readDefaultProjectId(),
+        projectId: targetProjectId,
       });
     }
+    console.log(`Validating live Firestore project: ${targetProjectId}`);
     const db = admin.firestore();
     input = await loadFromFirestore(db);
     environment = "production";

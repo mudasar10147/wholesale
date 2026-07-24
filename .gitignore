@@ -40,3 +40,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# firebase emulator debug output (may contain document contents)
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
+pubsub-debug.log
+
+# validator / reconcile output — contains production stock/cost data (never commit).
+# See docs/inventory/PHASE1_INTEGRITY_ARCHITECTURE_V2.md §14. Already-tracked
+# 2026-07-10 incident reports are left in place as evidence.
+/reports/

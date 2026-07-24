@@ -929,9 +929,12 @@ service cloud.firestore {
     match /phase1_smoke/{docId} {
       allow read, write: if isAdmin();
     }
-    // MVP collections — clerks: read products for invoice lines; writes admin-only.
+    // MVP collections — clerks read products for invoice lines; the social planner
+    // reads them to pick what to share; writes admin-only. Read was `if true`
+    // (public); closed to authenticated app roles so product stock/cost is not
+    // world-readable, while keeping clerk + social read. Admin SDK bypasses rules.
     match /products/{docId} {
-      allow read: if true;
+      allow read: if isStaff() || isSocial();
       allow write: if isAdmin();
     }
     match /sales/{docId} {
@@ -995,6 +998,12 @@ service cloud.firestore {
         && request.resource.data.merged_by_uid == request.auth.uid;
       allow update, delete: if false;
     }
+    // Written only by the Admin SDK (lib/server/userAdmin.ts), which bypasses these
+    // rules. Admins may read the history; nothing may forge or alter it from a client.
+    match /user_admin_audit/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
     match /warehouses/{docId} {
       allow read: if isStaff();
       allow create, update: if isAdmin();
@@ -1009,6 +1018,26 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAdmin();
       allow update, delete: if false;
+    }
+    // Immutable repair audit (M0.5 baseline remediation + M6 workflow). Written by
+    // the repair identity (Admin SDK, bypasses rules); admins may read the history.
+    // Append-only: a repair record can never be altered or erased from a client.
+    match /inventory_repairs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+    // Validation run records + watermark, written server-side by the validator
+    // (Admin SDK, bypasses rules). Admins may read history; never mutable from a client.
+    match /inventory_validation_runs/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+    // Concurrency lock for on-demand runs, managed entirely server-side.
+    match /inventory_validation_locks/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
     match /schema_migrations/{docId} {
       allow read: if isAdmin();

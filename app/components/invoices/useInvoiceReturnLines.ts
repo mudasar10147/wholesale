@@ -11,10 +11,15 @@ import type { CounterSaleReturnInput } from "@/lib/firestore/counterSaleReturns"
 
 export type ReturnLineMode = "restock" | "discard";
 
-/** One row in the invoice form's "returns & discards" section. */
+/** One return/discard row in the invoice's combined line list. */
 export type ReturnLineDraft = {
   /** Local row id. */
   id: string;
+  /**
+   * Position key in the invoice's combined line list (sale lines share the same counter),
+   * so returns/discards stay exactly where they were added.
+   */
+  seq: number;
   /** invoiceItemId of the chosen past purchase line; "" until picked. */
   purchaseLineId: string;
   quantity: string;
@@ -43,8 +48,8 @@ function roundMoney2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-function newRow(mode: ReturnLineMode): ReturnLineDraft {
-  return { id: crypto.randomUUID(), purchaseLineId: "", quantity: "1", mode };
+function newRow(mode: ReturnLineMode, seq: number): ReturnLineDraft {
+  return { id: crypto.randomUUID(), seq, purchaseLineId: "", quantity: "1", mode };
 }
 
 /** Pure: turn the form rows into write-path inputs + a preview credit total. */
@@ -61,13 +66,7 @@ export function resolveReturnRows(
     const pl = row.purchaseLineId ? purchaseById.get(row.purchaseLineId) : undefined;
     const qty = Number.parseInt(row.quantity.trim(), 10);
     // Every present row must be usable — never silently drop an unfinished return/discard row.
-    if (
-      !pl ||
-      !pl.invoiceFullyPaid ||
-      !Number.isInteger(qty) ||
-      qty <= 0 ||
-      qty > pl.returnableQuantity
-    ) {
+    if (!pl || !Number.isInteger(qty) || qty <= 0 || qty > pl.returnableQuantity) {
       hasInvalid = true;
       continue;
     }
@@ -78,6 +77,8 @@ export function resolveReturnRows(
       quantity_returned: qty,
       quantity_restock: row.mode === "restock" ? qty : 0,
       quantity_discard: row.mode === "discard" ? qty : 0,
+      // Carries the row's position so the saved invoice keeps the combined line order.
+      sort_order: row.seq,
     });
     display.push({
       productId: pl.productId,
@@ -129,15 +130,24 @@ export function useInvoiceReturnLines(customerId: string, initialRows?: ReturnLi
     [purchaseLines],
   );
 
-  const addReturn = useCallback(() => setRows((prev) => [...prev, newRow("restock")]), []);
-  const addDiscard = useCallback(() => setRows((prev) => [...prev, newRow("discard")]), []);
+  const addReturn = useCallback(
+    (seq: number) => setRows((prev) => [...prev, newRow("restock", seq)]),
+    [],
+  );
+  const addDiscard = useCallback(
+    (seq: number) => setRows((prev) => [...prev, newRow("discard", seq)]),
+    [],
+  );
   const removeRow = useCallback(
     (id: string) => setRows((prev) => prev.filter((r) => r.id !== id)),
     [],
   );
-  const updateRow = useCallback((id: string, patch: Partial<Omit<ReturnLineDraft, "id">>) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  }, []);
+  const updateRow = useCallback(
+    (id: string, patch: Partial<Omit<ReturnLineDraft, "id" | "seq">>) => {
+      setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    },
+    [],
+  );
   const reset = useCallback(() => setRows([]), []);
 
   const resolved = useMemo(() => resolveReturnRows(rows, purchaseById), [rows, purchaseById]);

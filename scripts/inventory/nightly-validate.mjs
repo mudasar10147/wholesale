@@ -10,8 +10,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const validateScript = path.join(__dirname, "validate.mjs");
+// The validator loads app lib modules that use the `@/` alias at runtime.
+const aliasHook = path.join(__dirname, "..", "support", "registerTsAlias.mjs");
 
-const child = spawn(process.execPath, [validateScript], {
+const child = spawn(process.execPath, ["--import", aliasHook, validateScript, ...process.argv.slice(2)], {
   stdio: "inherit",
   env: { ...process.env, INVENTORY_VALIDATION_MODE: "nightly" },
 });

@@ -266,6 +266,11 @@ export type InvoiceReturnLineEmbedded = {
   unit_price: number;
   /** Proportional credit for this return line, at the original price. */
   line_total: number;
+  /**
+   * Position among the invoice's combined lines (sale + return/discard), so the order the
+   * user built them in survives a reload.
+   */
+  sort_order?: number;
 };
 
 /**
@@ -559,7 +564,11 @@ export type InventoryTransactionType =
   | "ADJUSTMENT"
   | "DAMAGE"
   | "OPENING_BALANCE"
-  | "TRANSFER";
+  | "TRANSFER"
+  // Book/lot correction that changes a stored number without any physical movement.
+  // Carries `movement: false` and MUST never enter movement sums (invariants G4/G8).
+  // Written only by the M0.5 reconciliation tool (see docs/inventory/BASELINE_REMEDIATION.md).
+  | "RECONCILIATION";
 
 /**
  * Header for `inventory_transactions/{transactionId}` — append-only after post.
@@ -575,6 +584,14 @@ export type InventoryTransactionDoc = {
   reason?: string;
   notes?: string;
   item_ids: string[];
+  /**
+   * Whether this transaction represents a physical movement of goods. Absent is
+   * treated as `true` (all legacy rows moved stock). `RECONCILIATION` rows set it
+   * to `false` — they correct a stored number, nothing physically moved. Invariant
+   * G4 sums movement and reconciliation lines separately; G8 keeps `false` rows out
+   * of movement sums.
+   */
+  movement?: boolean;
   posted_at?: Timestamp;
   posted_by_uid?: string;
   voided_at?: Timestamp;
@@ -596,6 +613,76 @@ export type InventoryTransactionLineDoc = {
   before_on_hand?: number;
   after_on_hand?: number;
   created_at: Timestamp;
+};
+
+/**
+ * One lot's correction inside a `RECONCILIATION` ledger row. Every value is
+ * derived from append-only history (M0.5 §19.0.5-M.3), never chosen, so the
+ * repair is reconstructable without the tool.
+ */
+export type ReconciliationLotCorrection = {
+  lot_id: string;
+  qty_in: number;
+  before: number;
+  after: number;
+  delta: number;
+  history_implied: number;
+};
+
+/**
+ * A `RECONCILIATION` row in `inventory_transactions`. Superset of the standard
+ * header (so type/movement-aware ledger checks keep working) plus the per-lot
+ * corrections and book before/after. `movement` is always `false`.
+ * Temporary — written by the M0.5 tool, absorbed by M6's audited workflow.
+ */
+export type ReconciliationLedgerDoc = InventoryTransactionDoc & {
+  type: "RECONCILIATION";
+  movement: false;
+  product_id: string;
+  book_before: number;
+  book_after: number;
+  lot_total_before: number;
+  lot_total_after: number;
+  lot_corrections: ReconciliationLotCorrection[];
+  validation_run_id: string;
+  authority_category: InventoryRepairAuthority;
+  reason_detail: string;
+  approved_by_uid?: string;
+};
+
+export type InventoryRepairAuthority =
+  | "physical_count"
+  | "purchase_receipt"
+  | "invoice_history"
+  | "consumption_history"
+  | "return_history"
+  | "discard_history"
+  | "administrative";
+
+/**
+ * Immutable audit record for one product's repair, in `inventory_repairs/{repairId}`.
+ * The M0.5 emergency tool and M6's audited workflow write the SAME schema so the
+ * baseline repairs stay first-class history across the transition (§15.3, §19.0.5-M.8).
+ * A repair with no `ledger_transaction_id` is not a repair.
+ */
+export type InventoryRepairDoc = {
+  validation_run_id: string;
+  product_id: string;
+  invariant_id: string;
+  before_book_stock: number;
+  before_lot_total: number;
+  physical_count?: number;
+  approved_final_quantity: number;
+  adjustment_delta: number;
+  authority_category: InventoryRepairAuthority;
+  reason_detail: string;
+  related_document_ids: string[];
+  acted_by_uid: string;
+  approved_by_uid?: string;
+  created_at: Timestamp;
+  ledger_transaction_id: string;
+  /** The physical-movement ledger row, when a verified count differed from history. */
+  physical_adjustment_transaction_id?: string;
 };
 
 export type SchemaMigrationDoc = {

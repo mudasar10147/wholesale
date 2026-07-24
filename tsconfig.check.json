@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "//": "App typecheck for CI. Test files run under node --experimental-strip-types (which requires .ts import extensions tsc rejects), so they are excluded here and checked by running them.",
+  "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx"]
+}

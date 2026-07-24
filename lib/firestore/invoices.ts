@@ -14,6 +14,7 @@ import {
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
+import { emitPostingMetrics, nowMs } from "@/lib/inventory/postingMetrics";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
 import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
@@ -643,6 +644,21 @@ export async function updateDraftInvoice(
   });
 }
 
+/**
+ * Test-only seam for the C1 concurrency test (§12.4). The suite injects this hook
+ * to force a deterministic transaction-retry interleaving. It is `null` in
+ * production — postInvoice's behaviour is unchanged when it is unset.
+ */
+export type PostInvoiceConcurrencyHook = (info: {
+  invoiceId: string;
+  attempt: number;
+  phase: "afterReads";
+}) => Promise<void>;
+let postInvoiceConcurrencyHook: PostInvoiceConcurrencyHook | null = null;
+export function __setPostInvoiceConcurrencyHook(hook: PostInvoiceConcurrencyHook | null): void {
+  postInvoiceConcurrencyHook = hook;
+}
+
 export async function postInvoice(db: Firestore, invoiceId: string): Promise<void> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
@@ -764,27 +780,44 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     productByIdEarly,
     stockSnapshotEarly,
   );
+  // The dirty estimate (FIFO-spanned lots ≈ consumption-doc count) now sizes ONLY
+  // the op-cap preflight — it never seeds the in-transaction lot set (loaded fresh
+  // every attempt). The M2 fix loads ALL ACTIVE lots per product inside the
+  // transaction, so the guard is sized on active lots, not the spanned estimate
+  // (§17 S3). getDocs is non-transactional (S4 — not counted toward the 500 cap);
+  // the counted ops are the per-lot tx.get + the writes.
   const dirtyEstimate = simulateFifoForDirtyEstimate(invoiceItemsEarly, lotsByProductForEstimate);
-  const dirtyLotIdsToRead = Array.from(dirtyEstimate);
-  const preflightLotsByProduct = cloneLotsByProductForSimulation(lotsByProductForEstimate);
+  let activeLotsCountForEstimate = 0;
+  for (const rows of lotsDataByProduct.values()) {
+    for (const r of rows) {
+      if ((typeof r.data.qty_remaining === "number" ? r.data.qty_remaining : 0) > 0) activeLotsCountForEstimate += 1;
+    }
+  }
 
+  // CONSERVATIVE upper bound on the COUNTED (transactional) ops. Worst case:
+  //   reads  = 1 invoice + I items + P products + A active lots (tx.get each)
+  //   writes = P product updates + C consumption docs + I sales + I cogs + D lot updates + 1 invoice,
+  //   with consumption chunks C ≤ I + A (FIFO merge bound) and distinct lots written D ≤ A.
+  // ⇒ bound = 2 + 4·I + 2·P + 3·A. getDocs is non-transactional (spike S4 — not counted).
+  // dirtyEstimate.size is added as extra headroom (and keeps the preflight drift check alive).
   const postTxnOpEstimate =
-    1 +
-    itemIdsForEstimate.length +
-    productIdsForEstimate.length +
-    dirtyLotIdsToRead.length +
-    itemIdsForEstimate.length * 3 +
-    dirtyEstimate.size +
-    productIdsForEstimate.length +
-    1;
+    2 + // invoice read + write
+    itemIdsForEstimate.length * 4 + // item read + consumption(base) + sale + cogs
+    productIdsForEstimate.length * 2 + // product read + write
+    activeLotsCountForEstimate * 3 + // active lot tx.get + lot write + spill-consumption
+    dirtyEstimate.size; // headroom (distinct FIFO-spanned lots)
   if (postTxnOpEstimate > FIRESTORE_TXN_DOC_CAP) {
     throw new Error(
       `This invoice is too large to post in one step (estimated ${postTxnOpEstimate} Firestore operations; limit ${FIRESTORE_TXN_DOC_CAP}). Split into multiple drafts with fewer lines or fewer stock lots per product.`,
     );
   }
 
+  const postStartMs = nowMs();
+  let txnAttempt = 0;
+  let activeLotsRead = 0;
   try {
     await runTransaction(db, async (tx) => {
+    txnAttempt += 1;
     const invoiceSnap = await tx.get(invoiceRef);
     if (!invoiceSnap.exists()) {
       throw new Error("Invoice not found.");
@@ -852,33 +885,52 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       stockSnapshot.set(productId, currentStock);
     }
 
-    const lotsByProductId = cloneLotsByProductForSimulation(preflightLotsByProduct);
-
-    const freshDirtyLots = new Map<string, StockLotDoc>();
-    for (const lotId of dirtyLotIdsToRead) {
-      const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, lotId));
-      if (!lotSnap.exists()) {
-        continue;
-      }
-      freshDirtyLots.set(lotId, lotSnap.data() as StockLotDoc);
-    }
-    for (const [lotId, lotData] of freshDirtyLots) {
-      for (const rows of lotsByProductId.values()) {
-        const idx = rows.findIndex((row) => row.id === lotId);
-        if (idx >= 0) {
-          rows[idx] = { id: lotId, data: { ...lotData } };
-        }
-      }
-    }
-
+    // M2 — Option A (§11.2, proven by the M1.5-S spike). Recompute the FIFO working
+    // set from FRESH lot data on EVERY attempt; never reuse the pre-transaction
+    // estimate or snapshot. The product anchor was read first (tx.get above), so a
+    // concurrently-created lot co-writes the product and aborts us — the retry
+    // re-queries and sees it. The client SDK has no transactional query (§2.2b):
+    // getDocs is non-transactional (fresh each attempt) and every active lot we may
+    // write is re-read with tx.get to place a precondition on the write set.
+    const lotsByProductId = new Map<string, StockLotRow[]>();
     for (const productId of productIds) {
-      const product = productById.get(productId);
-      const currentStock = stockSnapshot.get(productId) ?? 0;
+      const currentLots = await fetchStockLotsForProduct(db, productId);
+      const rows: StockLotRow[] = [];
+      for (const lot of currentLots) {
+        const remaining = typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0;
+        if (remaining <= 0) continue; // active working set only
+        const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, lot.id));
+        if (!lotSnap.exists()) continue;
+        rows.push({ id: lot.id, data: lotSnap.data() as StockLotDoc });
+      }
+      lotsByProductId.set(productId, rows);
+    }
+    activeLotsRead = 0;
+    for (const rows of lotsByProductId.values()) activeLotsRead += rows.length;
+
+    // Sort each product's working lots FIFO (oldest received_at first) for consumption.
+    //
+    // The former in-transaction `assertBookStockMatchesLots(book, lotTotal)` was removed
+    // here. Under Option A the product (a `tx.get`) and the freshly-queried lots are not a
+    // single consistent snapshot, so a concurrent post committing mid-transaction makes
+    // book and lotTotal transiently disagree — which the one-sided check would hard-fail
+    // (a non-retryable throw) instead of letting the commit precondition force a retry.
+    // Correctness now rests on: the product anchor + per-lot write-set preconditions (any
+    // concurrent change aborts us and we retry with fresh reads), the FIFO insufficient-
+    // lots guard below, and the read-only validator (P1/L6). Blocking a post on drift is
+    // the job of the two-sided POST-STATE transactional assertion — M1's separate, gated
+    // PR — which asserts after the writes and is retry-compatible.
+    for (const productId of productIds) {
       const lots = lotsByProductId.get(productId) ?? [];
-      const lotTotal = lots.reduce((acc, row) => acc + (row.data.qty_remaining ?? 0), 0);
-      assertBookStockMatchesLots(productId, product, currentStock, lotTotal);
       sortLotsByReceivedAt(lots);
       lotsByProductId.set(productId, lots);
+    }
+
+    // Test-only seam (no-op in production): all reads and the assertion are done;
+    // the product precondition is established but nothing is written yet. The C1
+    // suite pauses here so a concurrent post can commit and force a retry.
+    if (postInvoiceConcurrencyHook) {
+      await postInvoiceConcurrencyHook({ invoiceId: trimmedId, attempt: txnAttempt, phase: "afterReads" });
     }
 
     for (const productId of productIds) {
@@ -1016,7 +1068,17 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     if (hasInlineReturns) {
       await finalizeCounterSaleReturns(db, trimmedId);
     }
+    emitPostingMetrics({
+      invoice_id: trimmedId, uid: auth.currentUser?.uid, outcome: "posted",
+      total_ms: nowMs() - postStartMs, txn_attempts: txnAttempt, retry_count: Math.max(0, txnAttempt - 1),
+      product_count: productIdsForEstimate.length, active_lots_read: activeLotsRead, op_estimate: postTxnOpEstimate,
+    });
   } catch (e) {
+    emitPostingMetrics({
+      invoice_id: trimmedId, uid: auth.currentUser?.uid, outcome: "failed",
+      total_ms: nowMs() - postStartMs, txn_attempts: txnAttempt, retry_count: Math.max(0, txnAttempt - 1),
+      product_count: productIdsForEstimate.length, active_lots_read: activeLotsRead, op_estimate: postTxnOpEstimate,
+    });
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
     if (
       e instanceof FirebaseError &&

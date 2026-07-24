@@ -1,0 +1,61 @@
+name: Nightly inventory validation
+
+# Full inventory validation once a night (§9.4 — nightly full is mandatory).
+# STRICTLY READ-ONLY over Firestore: emits a report file and writes NOTHING to
+# the database. Run history is retained as the uploaded artifact below (runbook
+# §0), not persisted to Firestore by this identity (§13).
+#
+# Requires repository secret INVENTORY_VALIDATOR_SA_KEY: the JSON key of a GCP
+# service account for the PRODUCTION project (wholesale-b4ff9) that is READ-ONLY
+# (roles/datastore.viewer — get + list only; no create/update/delete anywhere).
+# The run refuses unless the key's project_id matches --project (cross-project
+# guard in validate.mjs).
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 02:00 UTC nightly
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "full or incremental"
+        default: "full"
+        required: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Write service account key
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/sa.json"
+          printf '%s' "$INVENTORY_VALIDATOR_SA_KEY" > "$RUNNER_TEMP/sa.json"
+        env:
+          INVENTORY_VALIDATOR_SA_KEY: ${{ secrets.INVENTORY_VALIDATOR_SA_KEY }}
+
+      # Strict read-only: emits a report file to reports/, writes NOTHING to
+      # Firestore. Exits non-zero on any CRITICAL/ERROR, so a failed job is a real
+      # signal. Run history is retained as the artifact below (§0 of the runbook),
+      # not persisted by this identity.
+      - name: Full read-only validation
+        id: validate
+        run: npm run validate:inventory -- --project prod
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+
+      - name: Retain validation report (protected artifact)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: inventory-validation-${{ github.run_id }}
+          path: reports/*.json
+          retention-days: 90
+          if-no-files-found: warn
