@@ -151,9 +151,10 @@ export type ProductSearchHit = {
 };
 
 /**
- * Resolve a product for correction. An exact document-id match is returned first;
- * otherwise a case-sensitive name-prefix search returns candidates the operator must
- * select from. We never update from a typed name alone — selection yields a doc id.
+ * Resolve a product for correction. Case-insensitive substring match over product
+ * name and id — any word in the name matches, not just a prefix — returning candidates
+ * the operator selects from. We never update from a typed name alone: selection yields
+ * a doc id.
  */
 export async function searchProductsForCorrection(
   db: Firestore,
@@ -162,23 +163,27 @@ export async function searchProductsForCorrection(
 ): Promise<ProductSearchHit[]> {
   const query = rawQuery.trim();
   if (!query) return [];
-  const hits = new Map<string, ProductSearchHit>();
+  const needle = query.toLowerCase();
 
-  const byId = await db.collection(COLLECTIONS.products).doc(query).get();
-  if (byId.exists) hits.set(byId.id, toHit(byId.id, byId.data() as ProductDoc));
-
-  // Case-sensitive prefix on name (no lowercased field exists in the schema).
-  const snap = await db
-    .collection(COLLECTIONS.products)
-    .orderBy("name")
-    .startAt(query)
-    .endAt(`${query}`)
-    .limit(limit)
-    .get();
+  // Firestore has no native contains / case-insensitive query. The product set is
+  // small (admin tool), so scan it in memory: ANY word in the name — not just a
+  // prefix — matches, case-insensitively, and so does any part of the id (SKU).
+  // Ranked: exact id → name prefix → substring, then alphabetical.
+  const snap = await db.collection(COLLECTIONS.products).get();
+  const matches: Array<{ hit: ProductSearchHit; rank: number }> = [];
   for (const d of snap.docs) {
-    if (!hits.has(d.id)) hits.set(d.id, toHit(d.id, d.data() as ProductDoc));
+    const p = d.data() as ProductDoc;
+    const name = typeof p.name === "string" ? p.name : "";
+    const lname = name.toLowerCase();
+    const lid = d.id.toLowerCase();
+    let rank = -1;
+    if (lid === needle) rank = 0;
+    else if (lname.startsWith(needle)) rank = 1;
+    else if (lname.includes(needle) || lid.includes(needle)) rank = 2;
+    if (rank >= 0) matches.push({ hit: toHit(d.id, p), rank });
   }
-  return Array.from(hits.values()).slice(0, limit);
+  matches.sort((a, b) => a.rank - b.rank || a.hit.name.localeCompare(b.hit.name));
+  return matches.slice(0, limit).map((m) => m.hit);
 }
 
 function toHit(id: string, p: ProductDoc): ProductSearchHit {
