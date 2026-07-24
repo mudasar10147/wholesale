@@ -388,6 +388,17 @@ describe("physical stock correction", () => {
     assert.ok(hits.length >= 2, "ambiguous name returns multiple candidates for the operator to pick");
   });
 
+  it("search matches any word in the name, case-insensitively (not just a prefix)", async () => {
+    const p = uid("prod");
+    await seedProduct(p, { name: "BJT softy cable", book: 1, lots: [{ id: `${p}-l`, qty_in: 1, qty_remaining: 1 }] });
+    const found = async (q) => (await searchProductsForCorrection(db, q)).some((h) => h.id === p);
+    assert.equal(await found("softy"), true, "mid-word match");
+    assert.equal(await found("SOFTY"), true, "case-insensitive");
+    assert.equal(await found("cable"), true, "last word");
+    assert.equal(await found("bjt"), true, "prefix lower-case");
+    assert.equal(await found("nomatch"), false, "non-matching query returns nothing");
+  });
+
   it("recount-closed lots with prior consumptions are excluded from L6 and never deleted", async () => {
     const id = uid("p");
     // lot with history: qty_in 20, consumed 5 → history-implied remaining 15, but stored 15.
