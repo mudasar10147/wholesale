@@ -186,6 +186,10 @@ const checkL5: InvariantCheck = (ctx) => {
 const checkL6: InvariantCheck = (ctx) => {
   const out: InvariantFinding[] = [];
   for (const lot of ctx.input.lots) {
+    // A lot closed by a physical recount is frozen pre-recount history: its
+    // qty_remaining is deliberately forced to 0 and its old consumption chain is no
+    // longer asserted (the recount is a new epoch — see PHYSICAL_STOCK_CORRECTION.md).
+    if (lot.data.closed_by_recount === true) continue;
     const qi = isInt(lot.data.qty_in) ? lot.data.qty_in : 0;
     const qr = isInt(lot.data.qty_remaining) ? lot.data.qty_remaining : 0;
     const consumed = ctx.activeConsumptionByLot.get(lot.id) ?? 0;
