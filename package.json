@@ -37,7 +37,7 @@
     "test:ledger-ids": "node --experimental-strip-types lib/inventory/ledgerIds.test.ts",
     "check:coverage": "node --experimental-strip-types scripts/check-invariant-coverage.mjs",
     "test:inventory-pure": "npm run check:coverage && npm run test:reconcile-plan && npm run test:inventory-invariants && npm run test:inventory-validation && npm run test:inventory-detection && npm run test:inventory-discovery && npm run test:inventory-parity && npm run test:ledger-ids",
-    "test:inventory-emulator": "npm run test:rules:all && npm run test:inventory-reconcile && npm run test:inventory-run && npm run test:inventory-api && npm run test:integration && npm run test:concurrency",
+    "test:inventory-emulator": "npm run test:rules:all && npm run test:inventory-reconcile && npm run test:inventory-run && npm run test:inventory-api && npm run test:integration && npm run test:concurrency && npm run test:physical-recount",
     "test:integration": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/inventoryOperations.test.mjs\"",
     "test": "npm run typecheck && npm run test:inventory-pure",
     "migrate:inventory": "node scripts/migrations/run.mjs",
@@ -45,6 +45,7 @@
     "deploy:firestore-indexes": "firebase deploy --only firestore:indexes",
     "test:spike": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/integration/spikeTxnLotQuery.test.mjs\"",
     "test:concurrency": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/concurrentPost.test.mjs\"",
+    "test:physical-recount": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/physicalRecount.emulator.test.mjs\"",
     "prove:validator-readonly": "node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/prove-validator-readonly.mjs"
   },
   "dependencies": {

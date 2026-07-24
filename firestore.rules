@@ -1027,6 +1027,15 @@ service cloud.firestore {
       allow create: if isAdmin();
       allow update, delete: if false;
     }
+    // Immutable physical-recount stock-correction audit (admin re-baseline tool).
+    // Written server-side by the correction endpoint (Admin SDK, bypasses rules);
+    // admins may read the history. Append-only — an undo is a new correction, never
+    // an edit or delete.
+    match /physical_stock_corrections/{docId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
     // Validation run records + watermark, written server-side by the validator
     // (Admin SDK, bypasses rules). Admins may read history; never mutable from a client.
     match /inventory_validation_runs/{docId} {
