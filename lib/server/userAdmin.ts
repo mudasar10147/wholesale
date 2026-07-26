@@ -9,9 +9,10 @@ const LIST_PAGE_SIZE = 1000;
 
 /**
  * The role model has two shapes in the rules: admin is a boolean claim
- * (`token.admin == true`), clerk and social are a string claim (`token.role`).
- * We keep roles mutually exclusive and always write the whole claims object, so
- * `setCustomUserClaims` clears the other field for us — no half-set states.
+ * (`token.admin == true`), clerk, social and salesman are a string claim
+ * (`token.role`). We keep roles mutually exclusive and always write the whole
+ * claims object, so `setCustomUserClaims` clears the other field for us — no
+ * half-set states.
  */
 function claimsForRole(role: AppRole): Record<string, unknown> {
   return role === "admin" ? { admin: true } : { role };
@@ -22,6 +23,7 @@ export function roleFromClaims(claims: Record<string, unknown> | undefined): App
   if (claims.admin === true || claims.admin === "true") return "admin";
   if (claims.role === "clerk") return "clerk";
   if (claims.role === "social") return "social";
+  if (claims.role === "salesman") return "salesman";
   return null;
 }
 

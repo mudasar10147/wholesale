@@ -53,7 +53,7 @@ export default function SettingsPage() {
             <CardDescription>
               Create sign-in accounts and set what each person can do. Admins get full access
               including payments and settings; clerks handle day-to-day sales; the social
-              manager sees only the social planner.
+              manager sees only the social planner; a salesman sees only the sales catalog.
             </CardDescription>
           </CardHeader>
           <CardContent>

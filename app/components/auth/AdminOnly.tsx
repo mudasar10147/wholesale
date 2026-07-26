@@ -14,15 +14,15 @@ type AdminOnlyProps = {
  * page (Firestore rules already block the reads and writes).
  */
 export function AdminOnly({ children }: AdminOnlyProps) {
-  const { loading, isAdmin, isClerk, isSocial } = useAuth();
+  const { loading, isAdmin, isClerk, isSocial, isSalesman } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
     if (!isAdmin) {
-      router.replace(defaultRouteForUser({ isAdmin, isClerk, isSocial }));
+      router.replace(defaultRouteForUser({ isAdmin, isClerk, isSocial, isSalesman }));
     }
-  }, [loading, isAdmin, isClerk, isSocial, router]);
+  }, [loading, isAdmin, isClerk, isSocial, isSalesman, router]);
 
   if (loading) {
     return (
