@@ -13,14 +13,15 @@ import { Label } from "@/app/components/ui/Label";
 import { defaultRouteForUser } from "@/lib/navigation";
 
 export function LoginForm() {
-  const { user, loading, isAdmin, isClerk, isSocial, hasAppAccess } = useAuth();
+  const { user, loading, isAdmin, isClerk, isSocial, isSalesman, hasAppAccess } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedNext = searchParams.get("next");
-  // Without an explicit destination, land on the role's own home — sending a clerk or
-  // social user to "/" bounces them through a page they cannot read.
-  const next =
-    requestedNext?.startsWith("/") ? requestedNext : defaultRouteForUser({ isAdmin, isClerk, isSocial });
+  // Without an explicit destination, land on the role's own home — sending a clerk,
+  // social or salesman user to "/" bounces them through a page they cannot read.
+  const next = requestedNext?.startsWith("/")
+    ? requestedNext
+    : defaultRouteForUser({ isAdmin, isClerk, isSocial, isSalesman });
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -65,9 +66,10 @@ export function LoginForm() {
       <InlineAlert variant="error">
         This account is signed in but is not allowed to use the app. Set the{" "}
         <code className="rounded bg-surface-muted px-1">admin</code>,{" "}
-        <code className="rounded bg-surface-muted px-1">role: clerk</code>, or{" "}
-        <code className="rounded bg-surface-muted px-1">role: social</code> custom claim in Firebase, sign out, then
-        sign in again.
+        <code className="rounded bg-surface-muted px-1">role: clerk</code>,{" "}
+        <code className="rounded bg-surface-muted px-1">role: social</code>, or{" "}
+        <code className="rounded bg-surface-muted px-1">role: salesman</code> custom claim in Firebase, sign out,
+        then sign in again.
       </InlineAlert>
     );
   }

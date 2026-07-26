@@ -14,9 +14,9 @@ type DashboardNavLinksProps = {
 
 export function DashboardNavLinks({ onNavigate }: DashboardNavLinksProps) {
   const pathname = usePathname();
-  const { isAdmin, isClerk, isSocial } = useAuth();
+  const { isAdmin, isClerk, isSocial, isSalesman } = useAuth();
   const visibleItems = navItems.filter((item) =>
-    isNavVisibleForUser(item, { isAdmin, isClerk, isSocial }),
+    isNavVisibleForUser(item, { isAdmin, isClerk, isSocial, isSalesman }),
   );
 
   // The only count in the sidebar: weeks a social manager is waiting on the admin for.

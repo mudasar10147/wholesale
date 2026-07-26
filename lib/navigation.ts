@@ -1,6 +1,6 @@
 /** Primary app routes — single source of truth for sidebar and mobile nav. */
 
-export type NavItemRole = "admin" | "clerk" | "social";
+export type NavItemRole = "admin" | "clerk" | "social" | "salesman";
 
 export type NavItem = {
   href: string;
@@ -13,7 +13,11 @@ export type UserRoleFlags = {
   isAdmin: boolean;
   isClerk: boolean;
   isSocial: boolean;
+  isSalesman: boolean;
 };
+
+/** The salesman's whole app: the price-and-stock catalog, and nothing else. */
+export const SALES_CATALOG_ROUTE = "/share/sales-men";
 
 export const navItems: readonly NavItem[] = [
   { href: "/", label: "Dashboard", roles: ["admin"] },
@@ -29,6 +33,7 @@ export const navItems: readonly NavItem[] = [
   { href: "/reports/fifo", label: "FIFO Reports", roles: ["admin"] },
   { href: "/reports/purchases", label: "Purchase report", roles: ["admin"] },
   { href: "/social", label: "Social Media", roles: ["social"] },
+  { href: SALES_CATALOG_ROUTE, label: "Sales catalog", roles: ["salesman"] },
   { href: "/settings", label: "Settings", roles: ["admin"] },
 ];
 
@@ -36,6 +41,7 @@ export function isNavVisibleForUser(item: NavItem, opts: UserRoleFlags): boolean
   if (opts.isAdmin) return true;
   if (opts.isSocial) return item.roles.includes("social");
   if (opts.isClerk) return item.roles.includes("clerk");
+  if (opts.isSalesman) return item.roles.includes("salesman");
   return false;
 }
 
@@ -48,6 +54,7 @@ export function defaultRouteForUser(opts: UserRoleFlags): string {
   if (opts.isAdmin) return "/";
   if (opts.isSocial) return "/social";
   if (opts.isClerk) return "/sales";
+  if (opts.isSalesman) return SALES_CATALOG_ROUTE;
   return "/";
 }
 
