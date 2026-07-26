@@ -7,18 +7,25 @@ import { getAuthClient } from "@/lib/firebase";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
 
-export function RequireAdmin({ children }: { children: ReactNode }) {
-  const { user, loading, hasAppAccess } = useAuth();
+/**
+ * Gate for the sales catalog. This page used to be world-readable — anyone with the
+ * link saw every cost price, sale price and stock level. It is now a signed-in page
+ * for the `salesman` role (admins too, so an owner can check what the team sees).
+ *
+ * The page lives outside the dashboard shell, so unlike AdminOnly this guard has to
+ * handle the signed-out case itself and send the visitor to the login screen.
+ */
+export function RequireSalesman({ children }: { children: ReactNode }) {
+  const { user, loading, isAdmin, isSalesman } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const allowed = isAdmin || isSalesman;
 
   useEffect(() => {
     if (loading) return;
     if (user) return;
-    const dest =
-      pathname && pathname !== "/login" ? pathname : "/";
-    const q = `?next=${encodeURIComponent(dest)}`;
-    router.replace(`/login${q}`);
+    const dest = pathname && pathname !== "/login" ? pathname : "/";
+    router.replace(`/login?next=${encodeURIComponent(dest)}`);
   }, [loading, user, router, pathname]);
 
   if (loading) {
@@ -33,17 +40,14 @@ export function RequireAdmin({ children }: { children: ReactNode }) {
     return null;
   }
 
-  if (!hasAppAccess) {
+  if (!allowed) {
     return (
-      <div className="mx-auto flex max-w-md flex-col gap-4 rounded-lg border border-border bg-surface p-8 text-center">
+      <div className="mx-auto mt-16 flex max-w-md flex-col gap-4 rounded-lg border border-border bg-surface p-8 text-center">
         <h1 className="text-lg font-semibold text-foreground">Not authorized</h1>
         <p className="text-sm text-muted-foreground">
-          This account is not allowed to use the app. Ask an owner to set the{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">admin</code>,{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: clerk</code>,{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: social</code>, or{" "}
-          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: salesman</code> custom claim on your
-          user in Firebase.
+          The sales catalog is only for accounts with the{" "}
+          <code className="rounded bg-surface-muted px-1 py-0.5 text-xs">role: salesman</code> claim. Ask an owner
+          to give you that role in Settings → Users &amp; roles.
         </p>
         <Button
           type="button"

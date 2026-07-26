@@ -19,6 +19,12 @@ service cloud.firestore {
     function isSocial() {
       return isSignedIn() && request.auth.token.role == 'social';
     }
+    // Salesman: the sales catalog page only (product name, prices, qty on hand).
+    // Like isSocial() this is deliberately NOT part of isStaff() — a salesman must
+    // never reach sales, customers, cash or anything else in the business.
+    function isSalesman() {
+      return isSignedIn() && request.auth.token.role == 'salesman';
+    }
     function isStaff() {
       return isAdmin() || isClerk();
     }
@@ -930,11 +936,12 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
     // MVP collections — clerks read products for invoice lines; the social planner
-    // reads them to pick what to share; writes admin-only. Read was `if true`
-    // (public); closed to authenticated app roles so product stock/cost is not
-    // world-readable, while keeping clerk + social read. Admin SDK bypasses rules.
+    // reads them to pick what to share; the salesman reads them for the sales
+    // catalog; writes admin-only. Read was `if true` (public); closed to
+    // authenticated app roles so product stock/cost is not world-readable.
+    // Admin SDK bypasses rules.
     match /products/{docId} {
-      allow read: if isStaff() || isSocial();
+      allow read: if isStaff() || isSocial() || isSalesman();
       allow write: if isAdmin();
     }
     match /sales/{docId} {
@@ -951,8 +958,12 @@ service cloud.firestore {
       // The social manager reads/writes only their own planner config — never cash or pricing.
       // The new-arrival window is a non-sensitive display rule read by every product surface,
       // so any signed-in user may read it (only admins may change it).
+      // Clerks need the engagement tier thresholds: the Customers page computes each
+      // customer's tier client-side, and without this read it silently falls back to
+      // built-in defaults instead of what the admin configured.
       allow read: if isAdmin()
         || (docId == 'social_media' && isSocial())
+        || (docId == 'customer_engagement' && isStaff())
         || (docId == 'new_arrival' && isSignedIn());
       allow create, update: if
         (

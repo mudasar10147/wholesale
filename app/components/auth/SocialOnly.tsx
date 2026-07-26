@@ -10,16 +10,16 @@ import { defaultRouteForUser } from "@/lib/navigation";
  * back to their own landing page (Firestore rules already block the reads).
  */
 export function SocialOnly({ children }: { children: ReactNode }) {
-  const { loading, isAdmin, isClerk, isSocial } = useAuth();
+  const { loading, isAdmin, isClerk, isSocial, isSalesman } = useAuth();
   const router = useRouter();
   const allowed = isAdmin || isSocial;
 
   useEffect(() => {
     if (loading) return;
     if (!allowed) {
-      router.replace(defaultRouteForUser({ isAdmin, isClerk, isSocial }));
+      router.replace(defaultRouteForUser({ isAdmin, isClerk, isSocial, isSalesman }));
     }
-  }, [loading, allowed, isAdmin, isClerk, isSocial, router]);
+  }, [loading, allowed, isAdmin, isClerk, isSocial, isSalesman, router]);
 
   if (loading) {
     return (

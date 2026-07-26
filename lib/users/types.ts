@@ -2,18 +2,20 @@ import type { AppRole } from "@/lib/server/auth";
 
 export type { AppRole };
 
-export const APP_ROLES: readonly AppRole[] = ["admin", "clerk", "social"] as const;
+export const APP_ROLES: readonly AppRole[] = ["admin", "clerk", "social", "salesman"] as const;
 
 export const ROLE_LABELS: Record<AppRole, string> = {
   admin: "Admin",
   clerk: "Clerk",
   social: "Social manager",
+  salesman: "Salesman",
 };
 
 export const ROLE_DESCRIPTIONS: Record<AppRole, string> = {
   admin: "Full access, including posting, payments, settings and user management.",
   clerk: "Day-to-day sales — drafts and customers. No settings or payments.",
   social: "Social planner and suggestions only.",
+  salesman: "Sales catalog only — prices and stock on hand. Nothing else in the app.",
 };
 
 /** Firebase Auth is the source of truth for users; there is no `users` collection. */

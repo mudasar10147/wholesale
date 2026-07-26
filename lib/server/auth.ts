@@ -12,7 +12,7 @@ type AppUserClaims = {
 };
 
 /** Mirrors the `NavItemRole` union and the Firestore rules helpers. */
-export type AppRole = "admin" | "clerk" | "social";
+export type AppRole = "admin" | "clerk" | "social" | "salesman";
 
 function isAdminClaim(claims: AppUserClaims): boolean {
   return claims.admin === true || claims.admin === "true";
@@ -23,7 +23,12 @@ function hasRole(claims: AppUserClaims, role: AppRole): boolean {
 }
 
 function hasAppAccess(claims: AppUserClaims): boolean {
-  return isAdminClaim(claims) || claims.role === "clerk" || claims.role === "social";
+  return (
+    isAdminClaim(claims) ||
+    claims.role === "clerk" ||
+    claims.role === "social" ||
+    claims.role === "salesman"
+  );
 }
 
 export async function verifyRequestAuth(request: Request, requireAdmin: boolean): Promise<{ uid: string }> {
