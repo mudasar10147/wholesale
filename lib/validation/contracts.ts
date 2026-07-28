@@ -167,7 +167,11 @@ export function assertValidCreateInvoiceInput(input: CreateInvoiceInput): void {
     if (!Number.isFinite(line.line_discount) || line.line_discount < 0) {
       throw new Error("Line discount must be zero or greater.");
     }
-    if (line.line_discount > line.quantity * line.unit_price) {
+    const offerDiscount = line.offer_discount ?? 0;
+    if (!Number.isFinite(offerDiscount) || offerDiscount < 0) {
+      throw new Error("Offer discount must be zero or greater.");
+    }
+    if (line.line_discount + offerDiscount > line.quantity * line.unit_price) {
       throw new Error("Line discount cannot exceed line amount.");
     }
   }

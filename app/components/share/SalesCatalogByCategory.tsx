@@ -7,6 +7,9 @@ import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { downloadCatalogPdf, type CatalogPdfOptionalColumn } from "@/lib/share/salesCatalogPdf";
 import { SalesCatalogPdfModal } from "@/app/components/share/SalesCatalogPdfModal";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
+import { useLiveOffers } from "@/lib/firestore/liveOffers";
+import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
@@ -23,6 +26,8 @@ function formatMoney(value: number): string {
 }
 
 export function SalesCatalogByCategory() {
+  const { offers: liveOffers, index: offerIndex } = useLiveOffers();
+  const { settings: newArrivalSettings } = useNewArrivalSettings();
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -96,7 +101,11 @@ export function SalesCatalogByCategory() {
     if (filteredRows.length === 0 || pdfPending) return;
     setPdfPending(true);
     try {
-      await downloadCatalogPdf(filteredRows, { columns });
+      await downloadCatalogPdf(filteredRows, {
+        columns,
+        offers: liveOffers,
+        newArrivalThresholdDays: newArrivalSettings.thresholdDays,
+      });
       setPdfModalOpen(false);
     } catch (downloadError) {
       setError(getFirestoreUserMessage(downloadError));
@@ -193,7 +202,16 @@ export function SalesCatalogByCategory() {
                     <tr key={product.id} className={index % 2 === 0 ? "bg-surface" : "bg-surface-muted/50"}>
                       <td className="px-4 py-3 font-medium text-foreground">{product.name}</td>
                       <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(product.cost_price)}</td>
-                      <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(product.sale_price)}</td>
+                      <td className="px-4 py-3 tabular-nums text-foreground">
+                        <OfferPriceText
+                          price={offerIndex.price({
+                            id: product.id,
+                            salePrice: product.sale_price,
+                            createdAt: product.created_at,
+                          })}
+                          format={formatMoney}
+                        />
+                      </td>
                       <td className="px-4 py-3 tabular-nums text-foreground">
                         {product.stock_quantity.toLocaleString()}
                       </td>

@@ -1,5 +1,12 @@
 import type { ProductDoc } from "@/lib/types/firestore";
+import { DEFAULT_NEW_ARRIVAL_THRESHOLD_DAYS } from "@/lib/types/firestore";
 import { loadPublicPngAsDataUrl } from "@/lib/pdf/loadPublicImage";
+import {
+  buildOfferPriceIndex,
+  formatOfferPriceCell,
+  type OfferPriceIndex,
+  type OfferPricingRule,
+} from "@/lib/pricing/offerPricing";
 
 export type SalesCatalogPdfRow = ProductDoc & { id: string };
 
@@ -17,6 +24,9 @@ export const CATALOG_PDF_COLUMN_ORDER: CatalogPdfOptionalColumn[] = ["purchase",
 export type DownloadCatalogPdfOptions = {
   columns: CatalogPdfOptionalColumn[];
   title?: string;
+  /** Live offers, so the catalog a salesman hands out shows the sale price. */
+  offers?: readonly OfferPricingRule[];
+  newArrivalThresholdDays?: number;
 };
 
 function formatMoney(value: number): string {
@@ -34,12 +44,25 @@ function formatPriceOrOutOfStock(value: number): string {
   return value <= 0 ? "Out of stock" : formatMoney(value);
 }
 
-function cellValue(product: SalesCatalogPdfRow, column: CatalogPdfOptionalColumn): string {
+function cellValue(
+  product: SalesCatalogPdfRow,
+  column: CatalogPdfOptionalColumn,
+  offerIndex: OfferPriceIndex,
+): string {
   switch (column) {
     case "purchase":
       return formatPriceOrOutOfStock(product.cost_price);
-    case "sale":
-      return formatPriceOrOutOfStock(product.sale_price);
+    case "sale": {
+      // Availability is a stock question, not a price one: a product discounted to zero is
+      // still on the shelf, and must not print as "Out of stock".
+      if (product.stock_quantity <= 0) return "Out of stock";
+      const price = offerIndex.price({
+        id: product.id,
+        salePrice: product.sale_price,
+        createdAt: product.created_at,
+      });
+      return formatOfferPriceCell(price, formatMoney);
+    }
     case "quantity":
       return formatStockOrOutOfStock(product.stock_quantity);
   }
@@ -74,6 +97,11 @@ export async function downloadCatalogPdf(
   }
 
   const columns = CATALOG_PDF_COLUMN_ORDER.filter((c) => options.columns.includes(c));
+  // Defaults to no offers, so existing callers keep printing plain list prices.
+  const offerIndex = buildOfferPriceIndex(
+    options.offers ?? [],
+    options.newArrivalThresholdDays ?? DEFAULT_NEW_ARRIVAL_THRESHOLD_DAYS,
+  );
   if (columns.length === 0) {
     throw new Error("Select at least one column besides product name.");
   }
@@ -165,7 +193,7 @@ export async function downloadCatalogPdf(
     ]);
     const products = grouped.get(category)!.slice().sort((a, b) => a.name.localeCompare(b.name));
     for (const product of products) {
-      tableRows.push([product.name, ...columns.map((col) => cellValue(product, col))]);
+      tableRows.push([product.name, ...columns.map((col) => cellValue(product, col, offerIndex))]);
     }
   }
 

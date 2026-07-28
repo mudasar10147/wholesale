@@ -431,9 +431,18 @@ export type InvoiceItemDoc = {
   product_id: string;
   quantity: number;
   unit_price: number;
+  /** The clerk's own discount on this line. */
   line_discount: number;
   line_delivery_charge: number;
   line_total: number;
+  /**
+   * Discount from a live promotional offer, separate from `line_discount` so the receipt can
+   * show the saving. Absent on lines written before offers set prices, and on any line that
+   * was not on offer.
+   */
+  offer_discount?: number;
+  /** Title of the offer that priced this line, for the receipt. */
+  offer_label?: string;
   created_at: Timestamp;
   updated_at: Timestamp;
 };
@@ -856,7 +865,18 @@ export type SocialOfferDoc = {
   discount_type: SocialOfferDiscountType;
   /** Percent (0–100) or flat currency amount. Ignored when discount_type is "none". */
   discount_value: number;
+  /**
+   * In a normal offer, the products it covers. In a sitewide offer, the products it EXCLUDES.
+   * Capped at 100 by the rules either way.
+   */
   product_ids: string[];
+  /**
+   * Sitewide sale: every product except those listed above. Absent on offers authored before
+   * this field existed — treat undefined as false everywhere.
+   */
+  applies_to_all?: boolean;
+  /** Sitewide sales skip new arrivals unless this is set. Ignored by normal offers. */
+  includes_new_arrivals?: boolean;
   /** `YYYY-MM-DD`. */
   starts_on: string;
   ends_on: string;

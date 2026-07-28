@@ -5,6 +5,9 @@ export type InvoiceTextLine = {
   line_discount: number;
   line_delivery_charge: number;
   line_total: number;
+  /** Promotional saving on this line. Shown to the customer as its own line. */
+  offer_discount?: number;
+  offer_label?: string;
 };
 
 export function buildInvoicePlainText(params: {
@@ -22,10 +25,13 @@ export function buildInvoicePlainText(params: {
   lines: InvoiceTextLine[];
 }): string {
   const lines = params.lines
-    .map(
-      (l, i) =>
-        `${i + 1}. ${l.product_name}\n   Qty ${l.quantity} × ${l.unit_price.toFixed(2)}  disc ${l.line_discount.toFixed(2)}  delivery ${l.line_delivery_charge.toFixed(2)}  = ${l.line_total.toFixed(2)}`,
-    )
+    .map((l, i) => {
+      const head = `${i + 1}. ${l.product_name}\n   Qty ${l.quantity} × ${l.unit_price.toFixed(2)}  disc ${l.line_discount.toFixed(2)}  delivery ${l.line_delivery_charge.toFixed(2)}  = ${l.line_total.toFixed(2)}`;
+      const offer = l.offer_discount && l.offer_discount > 0.001
+        ? `\n   ${l.offer_label ?? "Offer"}: −${l.offer_discount.toFixed(2)}`
+        : "";
+      return head + offer;
+    })
     .join("\n");
 
   const parts = [

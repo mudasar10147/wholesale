@@ -19,12 +19,32 @@ export function toPrice(n: number): string {
   return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "0";
 }
 
-export function productLine(product: SocialProductRow, currencyPrefix: string): string {
-  return `${cleanName(product.name)} - ${currencyPrefix} ${toPrice(product.salePrice)}`;
+/**
+ * One product's line in a caption. Pass `listPrice` when the product is on offer and
+ * `product.salePrice` already holds the discounted price — the old price is then struck
+ * through, WhatsApp-style. Omit it and the output is byte-identical to before offers existed.
+ */
+export function productLine(
+  product: SocialProductRow,
+  currencyPrefix: string,
+  listPrice?: number,
+): string {
+  const name = cleanName(product.name);
+  const now = `${currencyPrefix} ${toPrice(product.salePrice)}`;
+  if (typeof listPrice === "number" && Number.isFinite(listPrice) && listPrice > product.salePrice) {
+    return `${name} - ~${currencyPrefix} ${toPrice(listPrice)}~ ${now}`;
+  }
+  return `${name} - ${now}`;
 }
 
-/** Short human phrasing of an offer's discount, e.g. "10% off" or "Rs. 250 off". */
-export function describeOffer(offer: SocialOfferDoc, currencyPrefix: string): string {
+/**
+ * Short human phrasing of an offer's discount, e.g. "10% off" or "Rs. 250 off".
+ * Takes only the two fields it reads, so a pricing rule can be passed as well as a stored doc.
+ */
+export function describeOffer(
+  offer: Pick<SocialOfferDoc, "discount_type" | "discount_value">,
+  currencyPrefix: string,
+): string {
   if (offer.discount_type === "percent") {
     return `${toPrice(offer.discount_value)}% off`;
   }
@@ -55,6 +75,11 @@ export type BuildCaptionInput = {
   headline?: string;
   currencyPrefix: string;
   footerLine: string;
+  /**
+   * Effective prices for products under a live offer, keyed by product id. When a product
+   * appears here its caption line shows the old price struck through. Omit for plain pricing.
+   */
+  offerPricesById?: Map<string, { effectivePrice: number; listPrice: number }>;
 };
 
 /**
@@ -67,6 +92,7 @@ export function buildCaption({
   headline,
   currencyPrefix,
   footerLine,
+  offerPricesById,
 }: BuildCaptionInput): string {
   const blocks: string[][] = [];
 
@@ -75,7 +101,17 @@ export function buildCaption({
     blocks.push([trimmedHeadline]);
   }
   if (products.length > 0) {
-    blocks.push(products.map((product) => productLine(product, currencyPrefix)));
+    blocks.push(
+      products.map((product) => {
+        const priced = offerPricesById?.get(product.id);
+        if (!priced) return productLine(product, currencyPrefix);
+        return productLine(
+          { ...product, salePrice: priced.effectivePrice },
+          currencyPrefix,
+          priced.listPrice,
+        );
+      }),
+    );
   }
   if (offer) {
     blocks.push(offerBlock(offer, currencyPrefix));

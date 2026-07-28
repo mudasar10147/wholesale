@@ -284,6 +284,86 @@ describe("social post validation", () => {
     );
   });
 
+  /**
+   * A sitewide sale is the `applies_to_all` flag, never a longer product_ids array — the
+   * 100 cap still holds, and in that mode the list reads as exclusions instead.
+   */
+  function offerDoc(over = {}) {
+    return {
+      title: "Azadi Sale",
+      discount_type: "percent",
+      discount_value: 10,
+      product_ids: [],
+      starts_on: "2026-08-01",
+      ends_on: "2026-08-31",
+      is_active: true,
+      created_by: "social-user",
+      created_at: new Date(),
+      updated_at: new Date(),
+      ...over,
+    };
+  }
+
+  it("accepts a sitewide offer", async () => {
+    await assertSucceeds(
+      setDoc(doc(socialDb(), "social_offers", "site1"), offerDoc({ applies_to_all: true })),
+    );
+  });
+
+  it("accepts a sitewide offer that opts new arrivals in", async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(socialDb(), "social_offers", "site2"),
+        offerDoc({ applies_to_all: true, includes_new_arrivals: true }),
+      ),
+    );
+  });
+
+  it("accepts a sitewide offer carrying an exclusion list", async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(socialDb(), "social_offers", "site3"),
+        offerDoc({ applies_to_all: true, product_ids: ["p1", "p2"] }),
+      ),
+    );
+  });
+
+  // The guarantee that let the rules be deployed ahead of the app code.
+  it("still accepts an offer carrying neither new flag", async () => {
+    await assertSucceeds(setDoc(doc(socialDb(), "social_offers", "site4"), offerDoc()));
+  });
+
+  it("rejects a non-boolean applies_to_all", async () => {
+    await assertFails(
+      setDoc(doc(socialDb(), "social_offers", "bad9"), offerDoc({ applies_to_all: "yes" })),
+    );
+  });
+
+  it("rejects a non-boolean includes_new_arrivals", async () => {
+    await assertFails(
+      setDoc(doc(socialDb(), "social_offers", "bad10"), offerDoc({ includes_new_arrivals: 1 })),
+    );
+  });
+
+  // Proves hasOnlyKeys was not loosened while the two new keys were added.
+  it("still rejects an unknown extra key", async () => {
+    await assertFails(
+      setDoc(doc(socialDb(), "social_offers", "bad11"), offerDoc({ all_products: true })),
+    );
+  });
+
+  it("still caps product_ids at 100, even for a sitewide offer", async () => {
+    await assertFails(
+      setDoc(
+        doc(socialDb(), "social_offers", "bad12"),
+        offerDoc({
+          applies_to_all: true,
+          product_ids: Array.from({ length: 101 }, (_, i) => `p${i}`),
+        }),
+      ),
+    );
+  });
+
   it("rejects a notepad doc whose week_key does not match its id", async () => {
     await assertFails(
       setDoc(doc(socialDb(), "social_notes", "2026-W30"), {

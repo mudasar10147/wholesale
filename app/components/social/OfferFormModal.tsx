@@ -66,6 +66,10 @@ export function OfferFormModal({
   const [startsOn, setStartsOn] = useState(existing?.starts_on ?? toDateKey(new Date()));
   const [endsOn, setEndsOn] = useState(existing?.ends_on ?? defaultEndDate());
   const [isActive, setIsActive] = useState(existing?.is_active ?? true);
+  const [appliesToAll, setAppliesToAll] = useState(existing?.applies_to_all ?? false);
+  const [includesNewArrivals, setIncludesNewArrivals] = useState(
+    existing?.includes_new_arrivals ?? false,
+  );
   const [selected, setSelected] = useState<SocialProductRow[]>(() => {
     if (existing) {
       return existing.product_ids
@@ -108,7 +112,11 @@ export function OfferFormModal({
         description,
         discountType,
         discountValue: parsedDiscount,
+        // Kept whole even in sitewide mode, where it reads as the exclusion list — so
+        // unticking restores exactly what was picked rather than losing it.
         productIds: selected.map((p) => p.id),
+        appliesToAll,
+        includesNewArrivals,
         startsOn,
         endsOn,
         isActive,
@@ -234,8 +242,57 @@ export function OfferFormModal({
             />
           </div>
 
+          <div className="space-y-3 rounded-lg border border-border bg-surface-muted/40 p-3">
+            <label className="flex items-start gap-2 text-sm font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={appliesToAll}
+                onChange={(e) => setAppliesToAll(e.target.checked)}
+                className="mt-0.5 h-4 w-4"
+              />
+              <span>
+                Apply to every product
+                <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                  A sitewide sale. Everything in the catalog is discounted, including products
+                  added while it runs.
+                </span>
+              </span>
+            </label>
+
+            {appliesToAll ? (
+              <label className="ml-6 flex items-start gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={includesNewArrivals}
+                  onChange={(e) => setIncludesNewArrivals(e.target.checked)}
+                  className="mt-0.5 h-4 w-4"
+                />
+                <span>
+                  Include new arrivals
+                  <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                    Off by default: products added in the last {newArrivalSettings.thresholdDays}{" "}
+                    days stay at full price.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+          </div>
+
+          {appliesToAll && discountType !== "none" ? (
+            <InlineAlert variant="warning">
+              This changes the selling price of every product from {startsOn} to {endsOn}.
+            </InlineAlert>
+          ) : null}
+
           <div className="space-y-2">
-            <Label>Products ({selected.length})</Label>
+            <Label>
+              {appliesToAll ? `Excluded products (${selected.length})` : `Products (${selected.length})`}
+            </Label>
+            {appliesToAll ? (
+              <p className="text-xs text-muted-foreground">
+                Everything is on offer except what you list here.
+              </p>
+            ) : null}
             <SearchableSelect
               options={searchOptions}
               value=""
@@ -255,8 +312,12 @@ export function OfferFormModal({
                   </span>
                 </span>
               )}
-              placeholder="Add a product to this offer…"
-              ariaLabel="Add a product to this offer"
+              placeholder={
+                appliesToAll ? "Exclude a product from this offer…" : "Add a product to this offer…"
+              }
+              ariaLabel={
+                appliesToAll ? "Exclude a product from this offer" : "Add a product to this offer"
+              }
             />
             {selected.length > 0 ? (
               <ul className="divide-y divide-border rounded-lg border border-border">

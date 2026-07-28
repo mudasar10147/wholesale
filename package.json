@@ -15,7 +15,7 @@
     "test:engagement": "node --experimental-strip-types lib/customers/customerEngagement.test.ts",
     "test:delivery-balance": "node --experimental-strip-types lib/invoices/deliveryBalanceList.test.ts",
     "test:counter-sale": "node --experimental-strip-types lib/invoices/counterSaleCalculations.test.ts",
-    "test:social": "node --experimental-strip-types --test lib/social/suggestionRanking.test.ts lib/social/weekKeys.test.ts lib/social/postTypes.test.ts",
+    "test:social": "node --experimental-strip-types --test lib/social/suggestionRanking.test.ts lib/social/weekKeys.test.ts lib/social/postTypes.test.ts lib/social/captions.test.ts",
     "test:rules": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/social.rules.test.mjs\"",
     "test:rules:inventory": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/inventory-ledger.rules.test.mjs\"",
     "test:rules:roles": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/roles.rules.test.mjs\"",
@@ -37,7 +37,7 @@
     "test:inventory-parity": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/inventory/inventoryParity.test.ts",
     "test:ledger-ids": "node --experimental-strip-types lib/inventory/ledgerIds.test.ts",
     "check:coverage": "node --experimental-strip-types scripts/check-invariant-coverage.mjs",
-    "test:inventory-pure": "npm run check:coverage && npm run test:reconcile-plan && npm run test:inventory-invariants && npm run test:inventory-validation && npm run test:inventory-detection && npm run test:inventory-discovery && npm run test:inventory-parity && npm run test:ledger-ids",
+    "test:inventory-pure": "npm run check:coverage && npm run test:reconcile-plan && npm run test:inventory-invariants && npm run test:inventory-validation && npm run test:inventory-detection && npm run test:inventory-discovery && npm run test:inventory-parity && npm run test:ledger-ids && npm run test:pricing && npm run test:social",
     "test:inventory-emulator": "npm run test:rules:all && npm run test:inventory-reconcile && npm run test:inventory-run && npm run test:inventory-api && npm run test:integration && npm run test:concurrency && npm run test:physical-recount",
     "test:integration": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/inventoryOperations.test.mjs\"",
     "test": "npm run typecheck && npm run test:inventory-pure",
@@ -47,7 +47,8 @@
     "test:spike": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/integration/spikeTxnLotQuery.test.mjs\"",
     "test:concurrency": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/concurrentPost.test.mjs\"",
     "test:physical-recount": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/physicalRecount.emulator.test.mjs\"",
-    "prove:validator-readonly": "node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/prove-validator-readonly.mjs"
+    "prove:validator-readonly": "node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/prove-validator-readonly.mjs",
+    "test:pricing": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/pricing/offerPricing.test.ts lib/invoices/lineSeed.test.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

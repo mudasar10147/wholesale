@@ -91,8 +91,12 @@ export function SocialOffersPanel({
                       </span>
                     </span>
                     <span className="block text-xs text-muted-foreground">
-                      {offer.starts_on} → {offer.ends_on} · {offer.product_ids.length} product
-                      {offer.product_ids.length === 1 ? "" : "s"}
+                      {offer.starts_on} → {offer.ends_on} ·{" "}
+                      {offer.applies_to_all
+                        ? offer.product_ids.length === 0
+                          ? "All products"
+                          : `All products except ${offer.product_ids.length}`
+                        : `${offer.product_ids.length} product${offer.product_ids.length === 1 ? "" : "s"}`}
                     </span>
                   </span>
                   <span className="flex gap-2">

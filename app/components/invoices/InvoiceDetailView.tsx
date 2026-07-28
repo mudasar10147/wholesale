@@ -269,6 +269,8 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
       line_discount: data.line_discount,
       line_delivery_charge: data.line_delivery_charge,
       line_total: data.line_total,
+      offer_discount: data.offer_discount,
+      offer_label: data.offer_label,
     }));
     return buildInvoicePlainText({
       order_id: invoice.order_id,
@@ -357,6 +359,8 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
         line_discount: data.line_discount,
         line_delivery_charge: data.line_delivery_charge,
         line_total: data.line_total,
+        offer_discount: data.offer_discount,
+        offer_label: data.offer_label,
       }));
       await downloadInvoicePdf({
         order_id: invoice.order_id,
@@ -486,6 +490,10 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     quantity: data.quantity,
     unit_price: data.unit_price,
     line_discount: data.line_discount,
+    // Carried through, or reopening a draft would quietly drop the offer the customer was
+    // quoted and re-save the line at full price.
+    offer_discount: data.offer_discount,
+    offer_label: data.offer_label,
   }));
 
   return (

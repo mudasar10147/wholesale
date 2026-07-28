@@ -42,6 +42,12 @@ import {
 import { ProductSuggestionsModal } from "@/app/components/social/ProductSuggestionsModal";
 import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
+import {
+  buildOfferPriceIndex,
+  selectLiveOffers,
+  type OfferPricingRule,
+} from "@/lib/pricing/offerPricing";
 
 export type PostEditorTarget =
   | { mode: "edit"; post: SocialPostRow }
@@ -134,6 +140,31 @@ export function PostEditorModal({
     [selected, recentlyPostedIds],
   );
 
+  // Derived from the offers this week already loaded, deliberately not from useLiveOffers():
+  // two listeners on social_offers on one page is worse than one.
+  const offerIndex = useMemo(
+    () =>
+      buildOfferPriceIndex(
+        selectLiveOffers(offers as OfferPricingRule[], toDateKey(new Date())),
+        newArrivalSettings.thresholdDays,
+      ),
+    [offers, newArrivalSettings.thresholdDays],
+  );
+  const offerPricesById = useMemo(() => {
+    const map = new Map<string, { effectivePrice: number; listPrice: number }>();
+    for (const p of selected) {
+      const priced = offerIndex.price({
+        id: p.id,
+        salePrice: p.salePrice,
+        createdAt: p.createdAtMs,
+      });
+      if (priced.offer) {
+        map.set(p.id, { effectivePrice: priced.effectivePrice, listPrice: priced.listPrice });
+      }
+    }
+    return map;
+  }, [offerIndex, selected]);
+
   const composedCaption = useMemo(
     () =>
       buildCaption({
@@ -144,6 +175,7 @@ export function PostEditorModal({
         headline: HEADLINE_BY_KIND[kind],
         currencyPrefix: settings.currency_prefix,
         footerLine: settings.footer_line,
+        offerPricesById,
       }),
     [
       sections.products,
@@ -153,6 +185,7 @@ export function PostEditorModal({
       kind,
       settings.currency_prefix,
       settings.footer_line,
+      offerPricesById,
     ],
   );
 
@@ -484,7 +517,16 @@ export function PostEditorModal({
                             {recentlyPostedIds.has(product.id) ? <RecentlyPostedBadge /> : null}
                           </span>
                           <span className="block text-xs text-muted-foreground">
-                            {settings.currency_prefix} {toPrice(product.salePrice)} ·{" "}
+                            {settings.currency_prefix}{" "}
+                            <OfferPriceText
+                              price={offerIndex.price({
+                                id: product.id,
+                                salePrice: product.salePrice,
+                                createdAt: product.createdAtMs,
+                              })}
+                              format={toPrice}
+                            />{" "}
+                            ·{" "}
                             {product.stockQuantity} in stock
                           </span>
                         </span>

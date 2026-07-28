@@ -4,9 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { offerDiscountForQuantity, seedLineForProduct } from "@/lib/invoices/lineSeed";
+import { useLiveOffers } from "@/lib/firestore/liveOffers";
+import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { updateDraftInvoice } from "@/lib/firestore/invoices";
-import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
 import { useInvoiceReturnLines, type ReturnLineDraft } from "@/app/components/invoices/useInvoiceReturnLines";
 import {
@@ -49,6 +53,8 @@ type ProductOption = {
   sale_price: number;
   cost_price: number;
   stock_quantity: number;
+  /** Only read to decide whether a sitewide offer skips this product as a new arrival. */
+  created_at?: unknown;
   searchText: string;
 };
 type ItemInput = {
@@ -59,6 +65,10 @@ type ItemInput = {
   quantity: string;
   unitPrice: string;
   lineDiscount: string;
+  /** Saving on ONE unit from the winning live offer. Zero when nothing applies. */
+  offerDiscountPerUnit: number;
+  /** Offer title, for the receipt. */
+  offerLabel: string | null;
 };
 
 function money(n: number): string {
@@ -73,6 +83,8 @@ function nextItem(seq: number, seed = ""): ItemInput {
     quantity: "1",
     unitPrice: "",
     lineDiscount: "0",
+    offerDiscountPerUnit: 0,
+    offerLabel: null,
   };
 }
 
@@ -85,7 +97,10 @@ type Props = {
   initialDiscount: string;
   initialDelivery: string;
   initialNotes: string;
-  initialLines: Array<Pick<InvoiceItemDoc, "product_id" | "quantity" | "unit_price" | "line_discount">>;
+  initialLines: Array<
+    Pick<InvoiceItemDoc, "product_id" | "quantity" | "unit_price" | "line_discount"> &
+      Partial<Pick<InvoiceItemDoc, "offer_discount" | "offer_label">>
+  >;
   /** Existing inline return lines on the draft, so editing doesn't wipe them. */
   initialReturnLines?: InvoiceReturnLineEmbedded[];
   onSaved: () => void;
@@ -145,6 +160,13 @@ export function EditDraftInvoiceForm({
         quantity: String(l.quantity),
         unitPrice: String(l.unit_price),
         lineDiscount: String(l.line_discount),
+        // Rehydrated from what was SAVED, never re-resolved against today's offers: a draft
+        // quoted during a sale keeps the price the customer was given, even after it ends.
+        offerDiscountPerUnit:
+          typeof l.offer_discount === "number" && l.quantity > 0
+            ? l.offer_discount / l.quantity
+            : 0,
+        offerLabel: l.offer_label ?? null,
       };
     });
     const maxSeq = Math.max(0, ...returnRows.map((r) => r.seq), ...itemRows.map((i) => i.seq));
@@ -157,6 +179,8 @@ export function EditDraftInvoiceForm({
     return seqRef.current;
   }, []);
 
+  const { offers: liveOffers, index: offerIndex } = useLiveOffers();
+  const { settings: newArrivalSettings } = useNewArrivalSettings();
   const [items, setItems] = useState<ItemInput[]>(() =>
     initialSeed.itemRows.length > 0 ? initialSeed.itemRows : [nextItem(initialSeed.maxSeq + 1)],
   );
@@ -229,6 +253,7 @@ export function EditDraftInvoiceForm({
           sale_price: d.sale_price,
           cost_price: d.cost_price,
           stock_quantity: d.stock_quantity,
+          created_at: d.created_at,
           searchText: `${d.name} ${d.sale_price} ${d.cost_price} ${d.stock_quantity}`.toLowerCase(),
         });
       });
@@ -250,6 +275,8 @@ export function EditDraftInvoiceForm({
           quantity: qty.value,
           unit_price: price.value,
           line_discount: discount.value,
+          offer_discount: offerDiscountForQuantity(line.offerDiscountPerUnit, qty.value),
+          ...(line.offerLabel ? { offer_label: line.offerLabel } : {}),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -272,7 +299,20 @@ export function EditDraftInvoiceForm({
         if (line.id !== id) return line;
         if (key === "productId") {
           const p = products.find((x) => x.id === value);
-          return { ...line, productId: value, unitPrice: p ? String(p.sale_price) : line.unitPrice };
+          const seeded = seedLineForProduct(
+            p ? { id: p.id, salePrice: p.sale_price, createdAt: p.created_at } : undefined,
+            liveOffers,
+            newArrivalSettings.thresholdDays,
+          );
+          // The unit price stays the LIST price; the offer rides alongside as its own discount
+          // so the customer sees the saving on the receipt and the clerk's box stays free.
+          return {
+            ...line,
+            productId: value,
+            unitPrice: seeded ? seeded.unitPrice : line.unitPrice,
+            offerDiscountPerUnit: seeded ? seeded.offerDiscountPerUnit : 0,
+            offerLabel: seeded ? seeded.offerLabel : null,
+          };
         }
         return { ...line, [key]: value };
       }),
@@ -302,12 +342,7 @@ export function EditDraftInvoiceForm({
       return;
     }
 
-    const linePayload: {
-      product_id: string;
-      quantity: number;
-      unit_price: number;
-      line_discount: number;
-    }[] = [];
+    const linePayload: InvoiceCalcLineInput[] = [];
 
     const stockIssues: string[] = [];
 
@@ -324,7 +359,8 @@ export function EditDraftInvoiceForm({
         return;
       }
       const base = qty.value * price.value;
-      if (discount.value > base) {
+      const offerDiscount = offerDiscountForQuantity(line.offerDiscountPerUnit, qty.value);
+      if (discount.value + offerDiscount > base) {
         setError("Line discount cannot exceed line amount.");
         return;
       }
@@ -344,6 +380,8 @@ export function EditDraftInvoiceForm({
         quantity: qty.value,
         unit_price: price.value,
         line_discount: discount.value,
+        offer_discount: offerDiscount,
+        ...(line.offerLabel ? { offer_label: line.offerLabel } : {}),
       });
     }
 
@@ -525,8 +563,16 @@ export function EditDraftInvoiceForm({
                         <div className="space-y-0.5">
                           <p className="font-medium text-foreground">{p.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            Stock: {p.stock_quantity.toLocaleString()} | Sale: {money(p.sale_price)} | Purchase:{" "}
-                            {money(p.cost_price)}
+                            Stock: {p.stock_quantity.toLocaleString()} | Sale:{" "}
+                            <OfferPriceText
+                              price={offerIndex.price({
+                                id: p.id,
+                                salePrice: p.sale_price,
+                                createdAt: p.created_at,
+                              })}
+                              format={money}
+                            />{" "}
+                            | Purchase: {money(p.cost_price)}
                           </p>
                         </div>
                       )}
