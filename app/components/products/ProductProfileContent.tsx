@@ -10,6 +10,7 @@ import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchInvoiceItemsForProduct } from "@/lib/firestore/productInvoiceItemsQuery";
 import { fetchSalesForProduct } from "@/lib/firestore/productSalesQuery";
 import { fetchStockLotsForProduct } from "@/lib/firestore/stockLotsQuery";
+import { ConnectedOfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import type { SaleDocRow } from "@/lib/firestore/salesDrilldown";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 import { computeProductPurchaseStats } from "@/lib/inventory/productPurchaseStats";
@@ -425,7 +426,16 @@ export function ProductProfileContent() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Sale price</CardTitle>
           </CardHeader>
-          <CardContent className="text-xl font-semibold tabular-nums">{formatMoney(product.sale_price)}</CardContent>
+          <CardContent className="text-xl font-semibold tabular-nums">
+            <ConnectedOfferPriceText
+              product={{
+                id: productId,
+                salePrice: product.sale_price,
+                createdAt: product.created_at,
+              }}
+              format={formatMoney}
+            />
+          </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">

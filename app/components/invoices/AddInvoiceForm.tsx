@@ -6,9 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { offerDiscountForQuantity, seedLineForProduct } from "@/lib/invoices/lineSeed";
+import { useLiveOffers } from "@/lib/firestore/liveOffers";
+import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { createDraftInvoice } from "@/lib/firestore/invoices";
-import { calculateInvoiceSummary } from "@/lib/invoices/calculations";
+import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
 import { useInvoiceReturnLines } from "@/app/components/invoices/useInvoiceReturnLines";
 import {
@@ -46,6 +50,8 @@ type ProductOption = {
   sale_price: number;
   cost_price: number;
   stock_quantity: number;
+  /** Only read to decide whether a sitewide offer skips this product as a new arrival. */
+  created_at?: unknown;
   searchText: string;
 };
 type ItemInput = {
@@ -56,6 +62,10 @@ type ItemInput = {
   quantity: string;
   unitPrice: string;
   lineDiscount: string;
+  /** Saving on ONE unit from the winning live offer. Zero when nothing applies. */
+  offerDiscountPerUnit: number;
+  /** Offer title, for the receipt. */
+  offerLabel: string | null;
 };
 
 const ALERT_ID = "invoice-form-alert";
@@ -81,6 +91,8 @@ function nextItem(seq: number, seed = ""): ItemInput {
     quantity: "1",
     unitPrice: "",
     lineDiscount: "0",
+    offerDiscountPerUnit: 0,
+    offerLabel: null,
   };
 }
 
@@ -110,6 +122,8 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
     seqRef.current += 1;
     return seqRef.current;
   }, []);
+  const { offers: liveOffers, index: offerIndex } = useLiveOffers();
+  const { settings: newArrivalSettings } = useNewArrivalSettings();
   const [items, setItems] = useState<ItemInput[]>(() => [nextItem(1)]);
 
   const [submitting, setSubmitting] = useState(false);
@@ -188,6 +202,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
           sale_price: d.sale_price,
           cost_price: d.cost_price,
           stock_quantity: d.stock_quantity,
+          created_at: d.created_at,
           searchText: `${d.name} ${d.sale_price} ${d.cost_price} ${d.stock_quantity}`.toLowerCase(),
         });
       });
@@ -209,6 +224,8 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
           quantity: qty.value,
           unit_price: price.value,
           line_discount: discount.value,
+          offer_discount: offerDiscountForQuantity(line.offerDiscountPerUnit, qty.value),
+          ...(line.offerLabel ? { offer_label: line.offerLabel } : {}),
         };
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -231,7 +248,20 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
         if (line.id !== id) return line;
         if (key === "productId") {
           const p = products.find((x) => x.id === value);
-          return { ...line, productId: value, unitPrice: p ? String(p.sale_price) : line.unitPrice };
+          const seeded = seedLineForProduct(
+            p ? { id: p.id, salePrice: p.sale_price, createdAt: p.created_at } : undefined,
+            liveOffers,
+            newArrivalSettings.thresholdDays,
+          );
+          // The unit price stays the LIST price; the offer rides alongside as its own discount
+          // so the customer sees the saving on the receipt and the clerk's box stays free.
+          return {
+            ...line,
+            productId: value,
+            unitPrice: seeded ? seeded.unitPrice : line.unitPrice,
+            offerDiscountPerUnit: seeded ? seeded.offerDiscountPerUnit : 0,
+            offerLabel: seeded ? seeded.offerLabel : null,
+          };
         }
         return { ...line, [key]: value };
       }),
@@ -266,12 +296,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
       return;
     }
 
-    const linePayload: {
-      product_id: string;
-      quantity: number;
-      unit_price: number;
-      line_discount: number;
-    }[] = [];
+    const linePayload: InvoiceCalcLineInput[] = [];
 
     const stockIssues: string[] = [];
 
@@ -288,7 +313,8 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
         return;
       }
       const base = qty.value * price.value;
-      if (discount.value > base) {
+      const offerDiscount = offerDiscountForQuantity(line.offerDiscountPerUnit, qty.value);
+      if (discount.value + offerDiscount > base) {
         setError("Line discount cannot exceed line amount.");
         return;
       }
@@ -308,6 +334,8 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
         quantity: qty.value,
         unit_price: price.value,
         line_discount: discount.value,
+        offer_discount: offerDiscount,
+        ...(line.offerLabel ? { offer_label: line.offerLabel } : {}),
       });
     }
 
@@ -511,8 +539,16 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
                         <div className="space-y-0.5">
                           <p className="font-medium text-foreground">{p.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            Stock: {p.stock_quantity.toLocaleString()} | Sale: {money(p.sale_price)} | Purchase:{" "}
-                            {money(p.cost_price)}
+                            Stock: {p.stock_quantity.toLocaleString()} | Sale:{" "}
+                            <OfferPriceText
+                              price={offerIndex.price({
+                                id: p.id,
+                                salePrice: p.sale_price,
+                                createdAt: p.created_at,
+                              })}
+                              format={money}
+                            />{" "}
+                            | Purchase: {money(p.cost_price)}
                           </p>
                         </div>
                       )}

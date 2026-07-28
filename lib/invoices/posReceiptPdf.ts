@@ -70,6 +70,8 @@ export function buildPosReceiptInputFromCalc(params: {
     line_discount: l.line_discount,
     line_delivery_charge: l.line_delivery_charge,
     line_total: l.line_total,
+    offer_discount: l.offer_discount,
+    offer_label: l.offer_label,
   }));
 
   const returnLines = params.returnLines ?? [];
@@ -342,7 +344,11 @@ async function drawPosReceiptOnDoc(
     y += 4;
   }
 
-  const anyLineDisc = input.lines.some((l) => l.line_discount > 0.001);
+  // A promotional discount counts as a discount for the receipt's purposes: the Disc column
+  // must show BOTH, or the printed row stops adding up (Total is already net of the offer).
+  const lineDiscTotal = (l: (typeof input.lines)[number]) =>
+    l.line_discount + (l.offer_discount ?? 0);
+  const anyLineDisc = input.lines.some((l) => lineDiscTotal(l) > 0.001);
   const anyLineDeliv = input.lines.some((l) => l.line_delivery_charge > 0.001);
   const wideTable = anyLineDisc || anyLineDeliv;
 
@@ -352,13 +358,16 @@ async function drawPosReceiptOnDoc(
 
   const tableFontSize = wideTable ? 7 : 8;
   const body = input.lines.map((l) => {
-    const name = shortProductName(l.product_name, wideTable ? 38 : 44);
+    const base = shortProductName(l.product_name, wideTable ? 38 : 44);
+    // Naming the campaign on the item row is the only place a thermal receipt has room for it.
+    const name =
+      l.offer_label && (l.offer_discount ?? 0) > 0.001 ? `${base}\n(${l.offer_label})` : base;
     if (wideTable) {
       return [
         name,
         String(l.quantity),
         moneyTableCell(l.unit_price),
-        anyLineDisc ? moneyTableCell(l.line_discount) : "—",
+        anyLineDisc ? moneyTableCell(lineDiscTotal(l)) : "—",
         anyLineDeliv ? moneyTableCell(l.line_delivery_charge) : "—",
         moneyTableCell(l.line_total),
       ];
