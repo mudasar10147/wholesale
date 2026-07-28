@@ -79,15 +79,21 @@ export async function downloadInvoicePdf(input: InvoicePdfInput): Promise<void> 
 
   autoTable(doc, {
     startY: y,
-    head: [["Product", "Qty", "Unit", "Disc", "Deliv.", "Line total"]],
-    body: input.lines.map((l) => [
-      l.product_name.length > 48 ? `${l.product_name.slice(0, 45)}…` : l.product_name,
-      String(l.quantity),
-      l.unit_price.toFixed(2),
-      l.line_discount.toFixed(2),
-      l.line_delivery_charge.toFixed(2),
-      l.line_total.toFixed(2),
-    ]),
+    head: [["Product", "Qty", "Unit", "Offer", "Disc", "Deliv.", "Line total"]],
+    body: input.lines.map((l) => {
+      const name = l.product_name.length > 48 ? `${l.product_name.slice(0, 45)}…` : l.product_name;
+      const offerDiscount = l.offer_discount ?? 0;
+      return [
+        // The full-page invoice has room to say which campaign priced the line.
+        offerDiscount > 0.001 && l.offer_label ? `${name}\n${l.offer_label}` : name,
+        String(l.quantity),
+        l.unit_price.toFixed(2),
+        offerDiscount > 0.001 ? `−${offerDiscount.toFixed(2)}` : "—",
+        l.line_discount.toFixed(2),
+        l.line_delivery_charge.toFixed(2),
+        l.line_total.toFixed(2),
+      ];
+    }),
     styles: { fontSize: 9, cellPadding: 1.5 },
     headStyles: { fillColor: [67, 56, 202], textColor: 255 },
     margin: { left: margin, right: margin },

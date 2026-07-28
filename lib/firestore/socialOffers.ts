@@ -19,7 +19,10 @@ export type SocialOfferInput = {
   description?: string;
   discountType: SocialOfferDiscountType;
   discountValue: number;
+  /** Covered products, or excluded ones when `appliesToAll` is set. */
   productIds: string[];
+  appliesToAll: boolean;
+  includesNewArrivals: boolean;
   startsOn: string;
   endsOn: string;
   isActive: boolean;
@@ -46,7 +49,11 @@ function assertValidInput(input: SocialOfferInput): void {
     throw new Error("A percentage discount cannot exceed 100.");
   }
   if (input.productIds.length > 100) {
-    throw new Error("An offer can hold at most 100 products.");
+    throw new Error(
+      input.appliesToAll
+        ? "An offer can exclude at most 100 products."
+        : "An offer can hold at most 100 products.",
+    );
   }
 }
 
@@ -60,10 +67,12 @@ export async function fetchSocialOffers(db: Firestore): Promise<SocialOfferRow[]
   return rows;
 }
 
-/** Active, and today falls inside the validity window. */
-export function isOfferLive(offer: SocialOfferDoc, todayKey: string): boolean {
-  return offer.is_active && offer.starts_on <= todayKey && offer.ends_on >= todayKey;
-}
+/**
+ * Re-exported from the pure pricing module, which is where it belongs now that offers set
+ * prices: this file has value imports from `firebase/firestore`, and a `--experimental-strip-types`
+ * test of the pricer must not drag the whole SDK in behind it.
+ */
+export { isOfferLive } from "@/lib/pricing/offerPricing";
 
 export async function createSocialOffer(
   db: Firestore,
@@ -78,6 +87,8 @@ export async function createSocialOffer(
     discount_type: input.discountType,
     discount_value: input.discountType === "none" ? 0 : input.discountValue,
     product_ids: input.productIds,
+    applies_to_all: input.appliesToAll,
+    includes_new_arrivals: input.includesNewArrivals,
     starts_on: input.startsOn,
     ends_on: input.endsOn,
     is_active: input.isActive,
@@ -100,7 +111,11 @@ export async function updateSocialOffer(
     description: description ? description : deleteField(),
     discount_type: input.discountType,
     discount_value: input.discountType === "none" ? 0 : input.discountValue,
+    // Written whole either way: the curated list survives a sitewide toggle, so unticking
+    // brings it back instead of silently losing what someone picked.
     product_ids: input.productIds,
+    applies_to_all: input.appliesToAll,
+    includes_new_arrivals: input.includesNewArrivals,
     starts_on: input.startsOn,
     ends_on: input.endsOn,
     is_active: input.isActive,

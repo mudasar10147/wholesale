@@ -25,6 +25,8 @@ import { StockAdjustModal } from "@/app/components/inventory/StockAdjustModal";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
 import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
+import { useLiveOffers } from "@/lib/firestore/liveOffers";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
@@ -102,6 +104,7 @@ export function InventoryStockOperationsTab({
   const searchParams = useSearchParams();
   const lowOnly = searchParams.get("low") === "1";
   const { settings: newArrivalSettings } = useNewArrivalSettings();
+  const { index: offerIndex } = useLiveOffers();
 
   // The DisplayRow projection drops created_at; look it back up by id to badge new arrivals.
   const createdAtById = useMemo(
@@ -481,7 +484,14 @@ export function InventoryStockOperationsTab({
                         {formatMoney(row.cost_price)}
                       </td>
                       <td className="px-4 py-3 tabular-nums text-foreground">
-                        {formatMoney(row.sale_price)}
+                        <OfferPriceText
+                          price={offerIndex.price({
+                            id: row.id,
+                            salePrice: row.sale_price,
+                            createdAt: createdAtById.get(row.id),
+                          })}
+                          format={formatMoney}
+                        />
                       </td>
                       {lowOnly ? (
                         <td className="px-4 py-3">

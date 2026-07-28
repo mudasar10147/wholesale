@@ -2,10 +2,25 @@ export type InvoiceCalcLineInput = {
   product_id: string;
   quantity: number;
   unit_price: number;
+  /** The clerk's own discount, typed on the line. */
   line_discount: number;
+  /**
+   * Discount from a live promotional offer, kept apart from `line_discount` so the receipt can
+   * show the saving and the two never overwrite each other. Optional: absent means none, which
+   * is how every line written before offers existed reads.
+   */
+  offer_discount?: number;
+  /** Offer title, carried through untouched so the receipt can name the campaign. */
+  offer_label?: string;
 };
 
-export type InvoiceCalculatedLine = InvoiceCalcLineInput & {
+export type InvoiceCalculatedLine = {
+  product_id: string;
+  quantity: number;
+  unit_price: number;
+  line_discount: number;
+  offer_discount: number;
+  offer_label?: string;
   line_delivery_charge: number;
   line_total: number;
 };
@@ -67,10 +82,15 @@ function allocateByWeight(totalCents: number, weights: number[]): number[] {
 /**
  * Calculates line totals with allocated delivery charge.
  * Formula:
- * - net_line = (quantity * unit_price) - line_discount
+ * - net_line = (quantity * unit_price) - line_discount - offer_discount
  * - line_total = net_line + line_delivery_charge
  * - subtotal = sum(net_line)
  * - total = subtotal - discount_amount + delivery_charge
+ *
+ * The offer discount is taken first and the clerk's own discount is clamped to what is left,
+ * so when the two together exceed the line it is the manual one that gives way — an offer is a
+ * price the customer was already shown. Emitted line_discount/offer_discount are the clamped
+ * values, so the identity firestore.rules re-checks holds exactly.
  */
 export function calculateInvoiceSummary(params: {
   lines: InvoiceCalcLineInput[];
@@ -81,16 +101,25 @@ export function calculateInvoiceSummary(params: {
     const quantity = Number.isFinite(line.quantity) ? Math.max(0, Math.trunc(line.quantity)) : 0;
     const unitPrice = Number.isFinite(line.unit_price) ? Math.max(0, line.unit_price) : 0;
     const rawBaseCents = toCents(quantity * unitPrice);
+
+    const offerDiscount = Number.isFinite(line.offer_discount)
+      ? Math.max(0, line.offer_discount as number)
+      : 0;
+    const offerDiscountCents = Math.min(toCents(offerDiscount), rawBaseCents);
+
     const lineDiscount = Number.isFinite(line.line_discount) ? Math.max(0, line.line_discount) : 0;
-    const maxDiscount = fromCents(rawBaseCents);
-    const clampedDiscountCents = toCents(Math.min(lineDiscount, maxDiscount));
-    const netCents = Math.max(0, rawBaseCents - clampedDiscountCents);
+    const remainingCents = rawBaseCents - offerDiscountCents;
+    const clampedDiscountCents = Math.min(toCents(lineDiscount), remainingCents);
+
+    const netCents = rawBaseCents - offerDiscountCents - clampedDiscountCents;
 
     return {
       product_id: line.product_id,
       quantity,
       unit_price: fromCents(toCents(unitPrice)),
       line_discount_cents: clampedDiscountCents,
+      offer_discount_cents: offerDiscountCents,
+      offer_label: line.offer_label,
       net_cents: netCents,
     };
   });
@@ -110,6 +139,8 @@ export function calculateInvoiceSummary(params: {
       quantity: line.quantity,
       unit_price: line.unit_price,
       line_discount: fromCents(line.line_discount_cents),
+      offer_discount: fromCents(line.offer_discount_cents),
+      ...(line.offer_label ? { offer_label: line.offer_label } : {}),
       line_delivery_charge: fromCents(lineDeliveryCents),
       line_total: fromCents(line.net_cents + lineDeliveryCents),
     };

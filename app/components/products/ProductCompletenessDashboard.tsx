@@ -20,6 +20,8 @@ import type { ProductDoc } from "@/lib/types/firestore";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
+import { useLiveOffers } from "@/lib/firestore/liveOffers";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
@@ -54,6 +56,7 @@ function ProductTable({
   onEdit: (id: string) => void;
 }) {
   const { settings: newArrivalSettings } = useNewArrivalSettings();
+  const { index: offerIndex } = useLiveOffers();
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground" role="status">
@@ -122,7 +125,18 @@ function ProductTable({
                 {typeof row.cost_price === "number" ? formatMoney(row.cost_price) : "—"}
               </td>
               <td className="px-3 py-2 align-middle tabular-nums">
-                {typeof row.sale_price === "number" ? formatMoney(row.sale_price) : "—"}
+                {typeof row.sale_price === "number" ? (
+                  <OfferPriceText
+                    price={offerIndex.price({
+                      id: row.id,
+                      salePrice: row.sale_price,
+                      createdAt: row.created_at,
+                    })}
+                    format={formatMoney}
+                  />
+                ) : (
+                  "—"
+                )}
               </td>
               <td className="px-3 py-2 align-middle tabular-nums">
                 {typeof row.stock_quantity === "number" ? row.stock_quantity : "—"}

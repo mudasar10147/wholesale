@@ -15,6 +15,8 @@ import { COLLECTIONS } from "@/lib/firestore/collections";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
+import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
+import { useLiveOffers } from "@/lib/firestore/liveOffers";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
@@ -38,6 +40,7 @@ function formatDate(ts: Timestamp) {
 export function ProductList() {
   const router = useRouter();
   const { settings: newArrivalSettings } = useNewArrivalSettings();
+  const { index: offerIndex } = useLiveOffers();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +188,16 @@ export function ProductList() {
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
                     <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.cost_price)}</td>
-                    <td className="px-4 py-3 tabular-nums text-foreground">{formatMoney(row.sale_price)}</td>
+                    <td className="px-4 py-3 tabular-nums text-foreground">
+                      <OfferPriceText
+                        price={offerIndex.price({
+                          id: row.id,
+                          salePrice: row.sale_price,
+                          createdAt: row.created_at,
+                        })}
+                        format={formatMoney}
+                      />
+                    </td>
                     <td className="px-4 py-3 tabular-nums text-foreground">
                       {row.stock_quantity.toLocaleString()}
                     </td>

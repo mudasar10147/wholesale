@@ -413,6 +413,10 @@ export async function createDraftInvoice(
         line_discount: line.line_discount,
         line_delivery_charge: line.line_delivery_charge,
         line_total: line.line_total,
+        // Only written when an offer actually applied: lines with no promotion keep the exact
+        // shape they had before offers existed, and firestore.rules validates both forms.
+        ...(line.offer_discount > 0 ? { offer_discount: line.offer_discount } : {}),
+        ...(line.offer_label ? { offer_label: line.offer_label } : {}),
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       });
@@ -571,6 +575,9 @@ export async function updateDraftInvoice(
           line_discount: line.line_discount,
           line_delivery_charge: line.line_delivery_charge,
           line_total: line.line_total,
+          // Only written when an offer actually applied — see the sibling write sites.
+          ...(line.offer_discount > 0 ? { offer_discount: line.offer_discount } : {}),
+          ...(line.offer_label ? { offer_label: line.offer_label } : {}),
           created_at: serverTimestamp(),
           updated_at: serverTimestamp(),
         });
@@ -637,6 +644,10 @@ export async function updateDraftInvoice(
         line_discount: line.line_discount,
         line_delivery_charge: line.line_delivery_charge,
         line_total: line.line_total,
+        // Only written when an offer actually applied: lines with no promotion keep the exact
+        // shape they had before offers existed, and firestore.rules validates both forms.
+        ...(line.offer_discount > 0 ? { offer_discount: line.offer_discount } : {}),
+        ...(line.offer_label ? { offer_label: line.offer_label } : {}),
         created_at: serverTimestamp(),
         updated_at: serverTimestamp(),
       });

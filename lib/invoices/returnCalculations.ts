@@ -85,7 +85,13 @@ export function calculateReturnSummary(
     }
 
     const ratio = qtyReturned / original.quantity;
-    const lineDiscount = roundMoney2(original.line_discount * ratio);
+    // A return line has no offer field of its own, so the promotional discount is folded into
+    // its line_discount. That keeps the credit equal to what the customer actually paid AND
+    // keeps validInvoiceReturnItemBase's line_total identity true — split them and every
+    // return against an offer line would be rejected by the rules.
+    const originalOfferDiscount =
+      typeof original.offer_discount === "number" ? original.offer_discount : 0;
+    const lineDiscount = roundMoney2((original.line_discount + originalOfferDiscount) * ratio);
     const lineDelivery = roundMoney2(original.line_delivery_charge * ratio);
     const lineTotal = roundMoney2(original.line_total * ratio);
     const net = roundMoney2(lineTotal - lineDelivery);

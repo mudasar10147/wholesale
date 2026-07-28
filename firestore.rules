@@ -174,7 +174,7 @@ service cloud.firestore {
     function validInvoiceItemBase(data) {
       return hasOnlyKeys(
         data,
-        ['invoice_id', 'order_id', 'customer_id', 'product_id', 'quantity', 'unit_price', 'line_discount', 'line_delivery_charge', 'line_total', 'created_at', 'updated_at']
+        ['invoice_id', 'order_id', 'customer_id', 'product_id', 'quantity', 'unit_price', 'line_discount', 'line_delivery_charge', 'line_total', 'offer_discount', 'offer_label', 'created_at', 'updated_at']
       )
       && data.invoice_id is string
       && data.invoice_id.size() > 0
@@ -195,9 +195,26 @@ service cloud.firestore {
       && data.line_delivery_charge >= 0
       && data.line_total is number
       && data.line_total >= 0
-      && approxMoneyEq(
-        data.line_total,
-        (data.quantity * data.unit_price) - data.line_discount + data.line_delivery_charge
+      // Promotional discount from a live offer, kept apart from the clerk's own line_discount
+      // so the receipt can show the saving and so "what did that sale cost us" stays answerable.
+      && (!('offer_label' in data) || (data.offer_label is string && data.offer_label.size() <= 120))
+      // Two branches, not one with a default: rules have no "missing means zero", and lines
+      // written before offers existed carry neither key.
+      && (
+        (
+          !('offer_discount' in data)
+          && approxMoneyEq(
+            data.line_total,
+            (data.quantity * data.unit_price) - data.line_discount + data.line_delivery_charge
+          )
+        ) || (
+          data.offer_discount is number
+          && data.offer_discount >= 0
+          && approxMoneyEq(
+            data.line_total,
+            (data.quantity * data.unit_price) - data.line_discount - data.offer_discount + data.line_delivery_charge
+          )
+        )
       )
       && data.created_at is timestamp
       && data.updated_at is timestamp;
@@ -888,6 +905,8 @@ service cloud.firestore {
         'discount_type',
         'discount_value',
         'product_ids',
+        'applies_to_all',
+        'includes_new_arrivals',
         'starts_on',
         'ends_on',
         'is_active',
@@ -902,7 +921,13 @@ service cloud.firestore {
       && data.discount_value is number
       && data.discount_value >= 0
       && data.product_ids is list
+      // The cap stays. A sitewide sale is the `applies_to_all` flag, never a longer list —
+      // which is also why the list can safely double as the exclusion list in that mode.
       && data.product_ids.size() <= 100
+      // Both optional: offers authored before these existed must keep validating, so the
+      // rules can be deployed ahead of the app code that writes them.
+      && (!('applies_to_all' in data) || data.applies_to_all is bool)
+      && (!('includes_new_arrivals' in data) || data.includes_new_arrivals is bool)
       && isDateKey(data.starts_on)
       && isDateKey(data.ends_on)
       && data.ends_on >= data.starts_on
@@ -1374,8 +1399,13 @@ service cloud.firestore {
             || socialManagerWeekPlanWrite(request.resource.data, resource.data.status));
       allow delete: if isAdmin();
     }
+    // An offer is a price rule now, not just caption decoration: every surface that shows a
+    // product's price has to resolve it, so the read set matches /products exactly. Safe — an
+    // offer carries no cost, customer, supplier or margin data, only a title, a discount and
+    // product ids. Authoring stays with the social manager: reading a price is not setting one.
     match /social_offers/{docId} {
-      allow read, delete: if isSocialManager();
+      allow read: if isStaff() || isSocial() || isSalesman();
+      allow delete: if isSocialManager();
       allow create: if isSocialManager() && validSocialOfferBase(request.resource.data);
       allow update: if isSocialManager() && validSocialOfferBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at
