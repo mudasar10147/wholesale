@@ -2,7 +2,7 @@ import { collection, getDocs, type Firestore } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { fetchCashSettings, getActualCashBalance, getOpeningBalance } from "@/lib/firestore/cashSettings";
 import { fetchAllCashEntries } from "@/lib/firestore/cashEntries";
-import type { ExpenseDoc, InvoiceDoc, SaleDoc, StockLotDoc } from "@/lib/types/firestore";
+import type { CashEntryDoc, ExpenseDoc, InvoiceDoc, SaleDoc, StockLotDoc } from "@/lib/types/firestore";
 
 function roundMoney2(n: number): number {
   return Math.round(n * 100) / 100;
@@ -28,78 +28,77 @@ export type CashInHandSnapshot = CashInHandBreakdown & {
   totalCashInHand: number;
 };
 
-/**
- * Estimated cash on hand: opening balance + cash-style inflows − outflows.
- * Invoice revenue uses collections (`paid_amount`), not posted line totals.
- */
-export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandSnapshot> {
-  const [settings, salesSnap, expensesSnap, invoicesSnap, lotsSnap, cashEntries] = await Promise.all([
-    fetchCashSettings(db),
-    getDocs(collection(db, COLLECTIONS.sales)),
-    getDocs(collection(db, COLLECTIONS.expenses)),
-    getDocs(collection(db, COLLECTIONS.invoices)),
-    getDocs(collection(db, COLLECTIONS.stockLots)),
-    fetchAllCashEntries(db),
-  ]);
+/** Everything the cash-in-hand estimate needs, already loaded. */
+export type CashInHandInputs = {
+  sales: readonly Pick<SaleDoc, "invoice_id" | "total_amount">[];
+  expenses: readonly Pick<ExpenseDoc, "amount">[];
+  invoices: readonly Pick<InvoiceDoc, "status" | "paid_amount">[];
+  stockLots: readonly Pick<StockLotDoc, "source" | "unit_cost" | "qty_in">[];
+  cashEntries: readonly Pick<CashEntryDoc, "amount" | "entry_type">[];
+  openingBalance: number;
+  actualCashBalance: number | null;
+};
 
+/**
+ * Estimated cash on hand from already-loaded documents. Pure — the single place
+ * the cash formula lives, so callers that hold the data (e.g. Business
+ * Intelligence) never re-query or re-derive it.
+ */
+export function computeCashInHandSnapshot(input: CashInHandInputs): CashInHandSnapshot {
   let cashWalkInSales = 0;
-  salesSnap.forEach((d) => {
-    const s = d.data() as SaleDoc;
+  for (const s of input.sales) {
     const inv = s.invoice_id;
     if (typeof inv === "string" && inv.trim().length > 0) {
-      return;
+      continue;
     }
     const amt = typeof s.total_amount === "number" ? s.total_amount : 0;
     if (Number.isFinite(amt)) {
       cashWalkInSales += amt;
     }
-  });
+  }
 
   let totalExpenses = 0;
-  expensesSnap.forEach((d) => {
-    const e = d.data() as ExpenseDoc;
+  for (const e of input.expenses) {
     const amt = typeof e.amount === "number" ? e.amount : 0;
     if (Number.isFinite(amt)) {
       totalExpenses += amt;
     }
-  });
+  }
 
   let cashInvoicePayments = 0;
-  invoicesSnap.forEach((d) => {
-    const inv = d.data() as InvoiceDoc;
+  for (const inv of input.invoices) {
     if (inv.status === "void" || inv.status !== "posted") {
-      return;
+      continue;
     }
     const paid = typeof inv.paid_amount === "number" ? inv.paid_amount : 0;
     if (Number.isFinite(paid)) {
       cashInvoicePayments += paid;
     }
-  });
+  }
 
   let stockPurchasesCash = 0;
-  lotsSnap.forEach((d) => {
-    const lot = d.data() as StockLotDoc;
+  for (const lot of input.stockLots) {
     if (lot.source !== "stock_in") {
-      return;
+      continue;
     }
     const uc = typeof lot.unit_cost === "number" ? lot.unit_cost : 0;
     const q = typeof lot.qty_in === "number" ? lot.qty_in : 0;
     if (Number.isFinite(uc) && Number.isFinite(q)) {
       stockPurchasesCash += uc * q;
     }
-  });
+  }
 
   let manualCashAdded = 0;
   let manualCashRemoved = 0;
-  for (const entry of cashEntries) {
+  for (const entry of input.cashEntries) {
     const amount = typeof entry.amount === "number" ? entry.amount : 0;
     if (!Number.isFinite(amount) || amount <= 0) continue;
     if (entry.entry_type === "add") manualCashAdded += amount;
     if (entry.entry_type === "remove") manualCashRemoved += amount;
   }
 
-  const openingBalance = getOpeningBalance(settings);
-  const actualCashBalance = getActualCashBalance(settings);
+  const openingBalance = input.openingBalance;
+  const actualCashBalance = input.actualCashBalance;
 
   const operationalCash = roundMoney2(
     cashWalkInSales + cashInvoicePayments - totalExpenses - stockPurchasesCash,
@@ -123,4 +122,38 @@ export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandS
     actualCashBalance,
     totalCashInHand,
   };
+}
+
+/**
+ * Estimated cash on hand: opening balance + cash-style inflows − outflows.
+ * Invoice revenue uses collections (`paid_amount`), not posted line totals.
+ */
+export async function loadCashInHandSnapshot(db: Firestore): Promise<CashInHandSnapshot> {
+  const [settings, salesSnap, expensesSnap, invoicesSnap, lotsSnap, cashEntries] = await Promise.all([
+    fetchCashSettings(db),
+    getDocs(collection(db, COLLECTIONS.sales)),
+    getDocs(collection(db, COLLECTIONS.expenses)),
+    getDocs(collection(db, COLLECTIONS.invoices)),
+    getDocs(collection(db, COLLECTIONS.stockLots)),
+    fetchAllCashEntries(db),
+  ]);
+
+  const sales: SaleDoc[] = [];
+  salesSnap.forEach((d) => sales.push(d.data() as SaleDoc));
+  const expenses: ExpenseDoc[] = [];
+  expensesSnap.forEach((d) => expenses.push(d.data() as ExpenseDoc));
+  const invoices: InvoiceDoc[] = [];
+  invoicesSnap.forEach((d) => invoices.push(d.data() as InvoiceDoc));
+  const stockLots: StockLotDoc[] = [];
+  lotsSnap.forEach((d) => stockLots.push(d.data() as StockLotDoc));
+
+  return computeCashInHandSnapshot({
+    sales,
+    expenses,
+    invoices,
+    stockLots,
+    cashEntries,
+    openingBalance: getOpeningBalance(settings),
+    actualCashBalance: getActualCashBalance(settings),
+  });
 }

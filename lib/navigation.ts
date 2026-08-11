@@ -21,6 +21,7 @@ export const SALES_CATALOG_ROUTE = "/share/sales-men";
 
 export const navItems: readonly NavItem[] = [
   { href: "/", label: "Dashboard", roles: ["admin"] },
+  { href: "/business-intelligence", label: "Business Intelligence", roles: ["admin"] },
   { href: "/products", label: "Products", roles: ["admin"] },
   { href: "/inventory", label: "Inventory", roles: ["admin"] },
   { href: "/inventory/stock-correction", label: "Stock correction", roles: ["admin"] },
