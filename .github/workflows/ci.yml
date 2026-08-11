@@ -39,6 +39,7 @@ jobs:
           npm run test:inventory-discovery
           npm run test:inventory-parity
           npm run test:ledger-ids
+          npm run test:bi
 
       - name: Rules tests (emulator)
         run: npm run test:rules:all
