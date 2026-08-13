@@ -1,9 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
-import { getDb } from "@/lib/firebase";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useMemo, useState } from "react";
+import { useTraders } from "@/lib/firestore/referenceData";
 import type { TraderDoc } from "@/lib/types/firestore";
 import { AddTraderModal } from "@/app/components/traders/AddTraderModal";
 import { Button } from "@/app/components/ui/Button";
@@ -29,21 +27,17 @@ export function TraderSelectInput({
   "aria-invalid": ariaInvalid,
   "aria-describedby": ariaDescribedBy,
 }: TraderSelectInputProps) {
-  const [traders, setTraders] = useState<TraderRow[]>([]);
+  const { rows: traderRows } = useTraders();
   const [showModal, setShowModal] = useState(false);
 
-  useEffect(() => {
-    const unsub = onSnapshot(collection(getDb(), COLLECTIONS.traders), (snap) => {
-      const next: TraderRow[] = [];
-      snap.forEach((docSnap) => {
-        const data = docSnap.data() as TraderDoc;
-        if (data.is_active !== false) next.push({ id: docSnap.id, ...data });
-      });
-      next.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" }));
-      setTraders(next);
-    });
-    return () => unsub();
-  }, []);
+  const traders = useMemo<TraderRow[]>(() => {
+    const next: TraderRow[] = [];
+    for (const { id: traderId, data } of traderRows) {
+      if (data.is_active !== false) next.push({ id: traderId, ...data });
+    }
+    next.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" }));
+    return next;
+  }, [traderRows]);
 
   const nameById = useMemo(() => {
     const map = new Map<string, string>();

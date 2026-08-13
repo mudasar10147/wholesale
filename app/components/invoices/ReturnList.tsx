@@ -13,7 +13,8 @@ import {
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import type { CustomerDoc, InvoiceReturnDoc, InvoiceReturnStatus } from "@/lib/types/firestore";
+import { useCustomerNames } from "@/lib/firestore/referenceData";
+import type { InvoiceReturnDoc, InvoiceReturnStatus } from "@/lib/types/firestore";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { cn } from "@/lib/utils";
 
@@ -65,22 +66,10 @@ type Props = {
 
 export function ReturnList({ originalInvoiceId, draftsOnly = false }: Props) {
   const [rows, setRows] = useState<ReturnRow[]>([]);
-  const [customerNameById, setCustomerNameById] = useState<Map<string, string>>(() => new Map());
+  const customerNameById = useCustomerNames();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.customers), (snap) => {
-      const next = new Map<string, string>();
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as CustomerDoc;
-        next.set(docSnap.id, d.name?.trim() || docSnap.id);
-      });
-      setCustomerNameById(next);
-    });
-    return () => unsub();
-  }, []);
 
   useEffect(() => {
     const db = getDb();

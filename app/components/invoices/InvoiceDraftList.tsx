@@ -8,6 +8,7 @@ import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useCustomerNames } from "@/lib/firestore/referenceData";
 import { deleteDraftInvoice, postInvoice, recordInvoicePayment, voidInvoice } from "@/lib/firestore/invoices";
 import {
   formatInvoiceVoidBlockedMessage,
@@ -26,7 +27,7 @@ import {
   matchesInvoiceTab,
   type InvoiceListTab,
 } from "@/lib/invoices/invoiceListTabs";
-import type { CustomerDoc, InvoiceDoc, InvoiceReturnDoc } from "@/lib/types/firestore";
+import type { InvoiceDoc, InvoiceReturnDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { RecordInvoicePaymentModal } from "@/app/components/invoices/RecordInvoicePaymentModal";
 import { Button, ButtonLink, buttonClasses } from "@/app/components/ui/Button";
@@ -215,7 +216,7 @@ function RowActionsMenu({ items }: { items: ActionItem[] }) {
 export function InvoiceDraftList() {
   const { isAdmin } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
-  const [customerNameById, setCustomerNameById] = useState<Map<string, string>>(() => new Map());
+  const customerNameById = useCustomerNames();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -268,20 +269,6 @@ export function InvoiceDraftList() {
         setError(getFirestoreUserMessage(err));
       },
     );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.customers), (snap) => {
-      const next = new Map<string, string>();
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as CustomerDoc;
-        const name = d.name?.trim();
-        next.set(docSnap.id, name || docSnap.id);
-      });
-      setCustomerNameById(next);
-    });
     return () => unsub();
   }, []);
 

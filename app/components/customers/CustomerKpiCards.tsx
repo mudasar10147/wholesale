@@ -4,13 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useCustomers } from "@/lib/firestore/referenceData";
 import { computeCustomerEngagement } from "@/lib/customers/customerEngagement";
 import { useCustomerEngagementSettings } from "@/lib/firestore/customerEngagementSettings";
 import {
   getInvoiceAmountDue,
   getInvoiceEffectiveTotal,
 } from "@/lib/invoices/invoiceEffective";
-import type { CustomerDoc, InvoiceDoc } from "@/lib/types/firestore";
+import type { InvoiceDoc } from "@/lib/types/firestore";
 import { StatCard } from "@/app/components/ui/StatCard";
 
 function money(n: number): string {
@@ -19,23 +20,13 @@ function money(n: number): string {
 
 export function CustomerKpiCards() {
   const { settings } = useCustomerEngagementSettings();
-  const [customers, setCustomers] = useState<Array<CustomerDoc & { id: string }>>([]);
+  const { rows: customerRows, loading } = useCustomers();
   const [invoices, setInvoices] = useState<Array<InvoiceDoc & { id: string }>>([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(getDb(), COLLECTIONS.customers),
-      (snap) => {
-        setLoading(false);
-        const next: Array<CustomerDoc & { id: string }> = [];
-        snap.forEach((d) => next.push({ id: d.id, ...(d.data() as CustomerDoc) }));
-        setCustomers(next);
-      },
-      () => setLoading(false),
-    );
-    return () => unsub();
-  }, []);
+  const customers = useMemo(
+    () => customerRows.map(({ id, data }) => ({ id, ...data })),
+    [customerRows],
+  );
 
   useEffect(() => {
     const unsub = onSnapshot(collection(getDb(), COLLECTIONS.invoices), (snap) => {
