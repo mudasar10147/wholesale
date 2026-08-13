@@ -16,7 +16,7 @@ type PageProps = {
 export default async function NewInvoicePage({ searchParams }: PageProps) {
   const { customerId } = await searchParams;
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Create invoice"
         description="Attach products as invoice items with quantity, unit sale price, discounts, and delivery. Saving creates a draft and returns you to Sales."

@@ -6,7 +6,7 @@ import { PageHeader } from "@/app/components/layout/PageHeader";
 export default function ProductsPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Products"
           description="Add items, browse your catalog, and complete product details. Open a product to see its full history."

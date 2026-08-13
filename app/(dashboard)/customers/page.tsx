@@ -5,7 +5,7 @@ import { PageHeader } from "@/app/components/layout/PageHeader";
 
 export default function CustomersPage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Customers"
         description="Create, edit, and archive customer records for invoice-based sales tracking."

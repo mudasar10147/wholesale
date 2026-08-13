@@ -88,9 +88,13 @@ export function DashboardExtendedKpiGrid({
             <StatSkeleton key={i} />
           ))}
         </KpiSection>
-        {["Inventory velocity", "Inventory on hand", "Stock and customers"].map((title) => (
-          <KpiSection key={title} title={title}>
-            {[1, 2, 3].map((i) => (
+        {[
+          { title: "Stock and customers", cards: 4, grid: "sm:grid-cols-2 lg:grid-cols-4" },
+          { title: "Inventory on hand", cards: 3, grid: undefined },
+          { title: "Inventory velocity", cards: 3, grid: undefined },
+        ].map((section) => (
+          <KpiSection key={section.title} title={section.title} gridClassName={section.grid}>
+            {Array.from({ length: section.cards }, (_, i) => (
               <StatSkeleton key={i} />
             ))}
           </KpiSection>
@@ -129,6 +133,54 @@ export function DashboardExtendedKpiGrid({
       </KpiSection>
 
       <KpiSection
+        title="Stock and customers"
+        description="Catalogue size, reorder alerts and customer count."
+        gridClassName="sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <StatCard
+          label="Products"
+          value={stock ? stock.productCount.toLocaleString() : "—"}
+          hint="Total SKUs carried."
+        />
+        <StatCard
+          label="Products need reorder"
+          value={stock ? stock.reorderCount.toLocaleString() : "—"}
+          hint={`Stock 1–${LOW_STOCK_THRESHOLD} units.`}
+        />
+        <StatCard
+          label="Out of stock count"
+          value={stock ? stock.outOfStockCount.toLocaleString() : "—"}
+          hint="Zero units on hand."
+        />
+        <StatCard
+          label="Total customers"
+          value={customerCount !== null ? customerCount.toLocaleString() : "—"}
+          hint="Active customers (not archived)."
+        />
+      </KpiSection>
+
+      <KpiSection
+        title="Inventory on hand"
+        description="Current snapshot of stock held."
+      >
+        <StatCard
+          label="Inventory at retail"
+          value={stock ? formatMoney(stock.totalValueAtRetail) : "—"}
+          hint="Stock × list sale price."
+        />
+        <StatCard
+          label="Total units on hand"
+          value={stock ? stock.totalUnits.toLocaleString() : "—"}
+          hint="Sum of stock quantities across products."
+        />
+        <StatCard
+          label="Total inventory value"
+          value={stock ? formatMoney(stock.totalValueAtCost) : "—"}
+          hint="At current product cost × units on hand."
+        />
+      </KpiSection>
+
+      <KpiSection
         title="Inventory velocity"
         description={`Based on calendar week Mon–Sun (${weekLabel}). Mon–Sat uses the last completed route week; Sunday uses the current week. Not tied to the date picker.`}
       >
@@ -158,45 +210,6 @@ export function DashboardExtendedKpiGrid({
               ? `${daysHealth ?? ""} At the ${weekLabel} route-week pace.`.trim()
               : noSalesHint
           }
-        />
-      </KpiSection>
-
-      <KpiSection
-        title="Inventory on hand"
-        description="Current snapshot — if all stock sold at list price (cost from FIFO lots)."
-      >
-        <StatCard
-          label="Inventory at retail"
-          value={stock ? formatMoney(stock.totalValueAtRetail) : "—"}
-          hint="Stock × list sale price."
-        />
-        <StatCard
-          label="Unrealized profit on stock"
-          value={stock ? formatMoney(stock.unrealizedGrossProfit) : "—"}
-          hint="Retail value minus FIFO lot cost."
-        />
-        <StatCard
-          label="Unrealized gross margin %"
-          value={stock ? formatPercent(stock.inventoryMarginPct) : "—"}
-          hint="(Retail − lot cost) ÷ retail."
-        />
-      </KpiSection>
-
-      <KpiSection title="Stock and customers" description="Reorder alerts and customer count.">
-        <StatCard
-          label="Products need reorder"
-          value={stock ? stock.reorderCount.toLocaleString() : "—"}
-          hint={`Stock 1–${LOW_STOCK_THRESHOLD} units.`}
-        />
-        <StatCard
-          label="Out of stock count"
-          value={stock ? stock.outOfStockCount.toLocaleString() : "—"}
-          hint="Zero units on hand."
-        />
-        <StatCard
-          label="Total customers"
-          value={customerCount !== null ? customerCount.toLocaleString() : "—"}
-          hint="Active customers (not archived)."
         />
       </KpiSection>
     </div>

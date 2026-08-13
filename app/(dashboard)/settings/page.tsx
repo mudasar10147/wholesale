@@ -14,7 +14,7 @@ import {
 export default function SettingsPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Settings"
           description="Configure business rules used across the app — the new arrival window and customer engagement tiers."

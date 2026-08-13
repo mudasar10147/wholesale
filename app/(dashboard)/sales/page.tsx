@@ -12,7 +12,7 @@ import {
 
 export default function SalesPage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Sales"
         description="Create draft invoices, then post them to finalize sales and decrement stock from invoice items."

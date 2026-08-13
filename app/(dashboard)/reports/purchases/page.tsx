@@ -12,7 +12,7 @@ import {
 export default function PurchaseReportsPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Purchase report"
           description="Track inventory stocked in by trader and by day from FIFO purchase receipts."
