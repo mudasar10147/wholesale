@@ -8,7 +8,7 @@ type PageProps = {
 export default async function CreateReturnPage({ params }: PageProps) {
   const { invoiceId } = await params;
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Create return"
         description="Return items from a posted invoice. Stock is restored when the return is posted."

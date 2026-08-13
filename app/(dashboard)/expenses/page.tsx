@@ -12,7 +12,7 @@ import {
 
 export default function ExpensesPage() {
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Expenses"
         description="Record business spending. Each entry is stored in Firestore with the time it was added."

@@ -52,6 +52,18 @@ const PANEL_ID = "customer-section-panel";
 export function CustomerPageTabs() {
   const { isAdmin, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<CustomerPageTab>("engagement");
+  /**
+   * Tabs that have been opened at least once.
+   *
+   * Panels used to be rendered eagerly and merely CSS-hidden, so opening this
+   * page mounted all four and subscribed every one of their listeners — 1,584
+   * Firestore reads to show one tab. Mounting on first open makes the page cost
+   * only what is actually looked at; keeping opened tabs mounted (hidden rather
+   * than unmounted) means switching back is free instead of re-subscribing.
+   */
+  const [openedTabs, setOpenedTabs] = useState<ReadonlySet<CustomerPageTab>>(
+    () => new Set<CustomerPageTab>(["engagement"]),
+  );
 
   const visibleTabs = useMemo(() => {
     if (authLoading) return DEFAULT_TAB_ORDER.filter((t) => t !== "returns");
@@ -68,10 +80,14 @@ export function CustomerPageTabs() {
   const selectTab = useCallback((tab: CustomerPageTab) => {
     const scrollY = window.scrollY;
     setActiveTab(tab);
+    setOpenedTabs((prev) => (prev.has(tab) ? prev : new Set(prev).add(tab)));
     requestAnimationFrame(() => {
       window.scrollTo(0, scrollY);
     });
   }, []);
+
+  /** The active tab always renders, even if state was changed without `selectTab`. */
+  const isOpened = (tab: CustomerPageTab) => openedTabs.has(tab) || tab === activeTab;
 
   const meta = TAB_META[activeTab];
 
@@ -115,20 +131,26 @@ export function CustomerPageTabs() {
         </div>
 
         <div id={PANEL_ID} role="tabpanel" aria-labelledby={`customer-tab-${activeTab}`}>
-          <div className={activeTab === "engagement" ? undefined : "hidden"}>
-            <CustomerEngagementPanel />
-          </div>
-          {isAdmin ? (
+          {isOpened("engagement") ? (
+            <div className={activeTab === "engagement" ? undefined : "hidden"}>
+              <CustomerEngagementPanel />
+            </div>
+          ) : null}
+          {isAdmin && isOpened("returns") ? (
             <div className={activeTab === "returns" ? undefined : "hidden"}>
               <CustomerPurchaseReturnPanel />
             </div>
           ) : null}
-          <div className={activeTab === "management" ? undefined : "hidden"}>
-            <CustomerCrudPanel />
-          </div>
-          <div className={activeTab === "ledger" ? undefined : "hidden"}>
-            <CustomerLedgerTable />
-          </div>
+          {isOpened("management") ? (
+            <div className={activeTab === "management" ? undefined : "hidden"}>
+              <CustomerCrudPanel />
+            </div>
+          ) : null}
+          {isOpened("ledger") ? (
+            <div className={activeTab === "ledger" ? undefined : "hidden"}>
+              <CustomerLedgerTable />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

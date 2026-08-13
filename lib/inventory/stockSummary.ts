@@ -34,13 +34,15 @@ export type StockSummaryData = {
 
 /**
  * Aggregate product counts and list low-stock SKUs (sorted by stock ascending).
+ *
+ * Pure — takes documents the caller already holds. Keeping the fetch out of here
+ * is what lets the dashboard read `products` and `stock_lots` once and share them
+ * across every panel instead of re-querying per panel.
  */
-export async function loadStockSummary(db: Firestore): Promise<StockSummaryData> {
-  const [productsSnap, lotsSnap] = await Promise.all([
-    getDocs(collection(db, COLLECTIONS.products)),
-    getDocs(collection(db, COLLECTIONS.stockLots)),
-  ]);
-
+export function computeStockSummary(
+  products: readonly { id: string; data: ProductDoc }[],
+  stockLots: readonly StockLotDoc[],
+): StockSummaryData {
   let totalUnits = 0;
   let totalValueAtCost = 0;
   let totalValueAtRetail = 0;
@@ -48,8 +50,7 @@ export async function loadStockSummary(db: Firestore): Promise<StockSummaryData>
   let outOfStockCount = 0;
   const low: LowStockItem[] = [];
 
-  productsSnap.forEach((docSnap) => {
-    const d = docSnap.data() as ProductDoc;
+  for (const { id, data: d } of products) {
     const qty = typeof d.stock_quantity === "number" ? d.stock_quantity : 0;
     const cost = typeof d.cost_price === "number" ? d.cost_price : 0;
     const sale = typeof d.sale_price === "number" ? d.sale_price : 0;
@@ -65,16 +66,15 @@ export async function loadStockSummary(db: Firestore): Promise<StockSummaryData>
 
     if (qty <= LOW_STOCK_THRESHOLD) {
       low.push({
-        id: docSnap.id,
+        id,
         name: typeof d.name === "string" ? d.name : "—",
         stock_quantity: qty,
       });
     }
-  });
+  }
 
   let totalValueAtLotCost = 0;
-  lotsSnap.forEach((docSnap) => {
-    const lot = docSnap.data() as StockLotDoc;
+  for (const lot of stockLots) {
     const qty =
       typeof lot.qty_remaining === "number" && Number.isInteger(lot.qty_remaining)
         ? lot.qty_remaining
@@ -84,7 +84,7 @@ export async function loadStockSummary(db: Firestore): Promise<StockSummaryData>
     if (qty > 0) {
       totalValueAtLotCost += qty * unitCost;
     }
-  });
+  }
 
   const unrealizedGrossProfit = totalValueAtRetail - totalValueAtLotCost;
   const inventoryMarginPct =
@@ -93,7 +93,7 @@ export async function loadStockSummary(db: Firestore): Promise<StockSummaryData>
   low.sort((a, b) => a.stock_quantity - b.stock_quantity);
 
   return {
-    productCount: productsSnap.size,
+    productCount: products.length,
     totalUnits,
     totalValueAtCost,
     lowStockItems: low,
@@ -104,4 +104,19 @@ export async function loadStockSummary(db: Firestore): Promise<StockSummaryData>
     reorderCount,
     outOfStockCount,
   };
+}
+
+/** Fetches products + lots and summarises them. Prefer {@link computeStockSummary} when the caller already holds the documents. */
+export async function loadStockSummary(db: Firestore): Promise<StockSummaryData> {
+  const [productsSnap, lotsSnap] = await Promise.all([
+    getDocs(collection(db, COLLECTIONS.products)),
+    getDocs(collection(db, COLLECTIONS.stockLots)),
+  ]);
+
+  const products: { id: string; data: ProductDoc }[] = [];
+  productsSnap.forEach((d) => products.push({ id: d.id, data: d.data() as ProductDoc }));
+  const lots: StockLotDoc[] = [];
+  lotsSnap.forEach((d) => lots.push(d.data() as StockLotDoc));
+
+  return computeStockSummary(products, lots);
 }

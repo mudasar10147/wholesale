@@ -1,5 +1,6 @@
 import { AdminOnly } from "@/app/components/auth/AdminOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
+import { CashSettingsForm } from "@/app/components/settings/CashSettingsForm";
 import { CustomerEngagementSettingsForm } from "@/app/components/settings/CustomerEngagementSettingsForm";
 import { NewArrivalSettingsForm } from "@/app/components/settings/NewArrivalSettingsForm";
 import { UserManagementSection } from "@/app/components/settings/UserManagementSection";
@@ -14,11 +15,25 @@ import {
 export default function SettingsPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Settings"
-          description="Configure business rules used across the app — the new arrival window and customer engagement tiers."
+          description="Configure business rules used across the app — cash balances, the new arrival window and customer engagement tiers."
         />
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Cash balances</CardTitle>
+            <CardDescription>
+              The opening balance every cash figure builds on, and optionally what was physically
+              counted. Cash in hand on the dashboard is derived from these plus recorded sales,
+              expenses, stock purchases and manual entries.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <CashSettingsForm />
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

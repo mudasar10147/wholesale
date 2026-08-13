@@ -12,7 +12,7 @@ import {
 export default function FifoReportsPage() {
   return (
     <AdminOnly>
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="FIFO Reports"
         description="Audit FIFO inventory layers, validate stock reconciliation, and track per-invoice gross margin."

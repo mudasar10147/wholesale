@@ -16,7 +16,7 @@ import {
 export default function LoansPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Loans"
           description="Track money you borrowed and money you lent. Record what you borrow, repay, lend, or collect, and see the outstanding balance per party."

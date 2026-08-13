@@ -5,6 +5,7 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useCustomers } from "@/lib/firestore/referenceData";
 import {
   computeCustomerEngagement,
   countByEngagementTab,
@@ -42,61 +43,42 @@ function formatDate(d: Date | null): string {
 
 export function CustomerEngagementPanel() {
   const { settings, loading: settingsLoading } = useCustomerEngagementSettings();
-  const [customers, setCustomers] = useState<CustomerRow[]>([]);
+  const {
+    rows: customerRows,
+    loading: customersLoading,
+    error: customersError,
+  } = useCustomers();
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [invoicesLoading, setInvoicesLoading] = useState(true);
+  const [invoicesError, setInvoicesError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<CustomerEngagementTab>("all");
 
+  const customers = useMemo<CustomerRow[]>(
+    () => customerRows.map(({ id, data }) => ({ id, ...data })),
+    [customerRows],
+  );
+
   useEffect(() => {
-    const db = getDb();
-    let customersReady = false;
-    let invoicesReady = false;
-
-    function maybeDone() {
-      if (customersReady && invoicesReady) setLoading(false);
-    }
-
-    const unsubCustomers = onSnapshot(
-      collection(db, COLLECTIONS.customers),
-      (snap) => {
-        customersReady = true;
-        setError(null);
-        const next: CustomerRow[] = [];
-        snap.forEach((d) => next.push({ id: d.id, ...(d.data() as CustomerDoc) }));
-        setCustomers(next);
-        maybeDone();
-      },
-      (err) => {
-        customersReady = true;
-        setLoading(false);
-        setError(getFirestoreUserMessage(err));
-      },
-    );
-
     const unsubInvoices = onSnapshot(
-      collection(db, COLLECTIONS.invoices),
+      collection(getDb(), COLLECTIONS.invoices),
       (snap) => {
-        invoicesReady = true;
-        setError(null);
         const next: InvoiceRow[] = [];
         snap.forEach((d) => next.push({ id: d.id, ...(d.data() as InvoiceDoc) }));
         setInvoices(next);
-        maybeDone();
+        setInvoicesError(null);
+        setInvoicesLoading(false);
       },
       (err) => {
-        invoicesReady = true;
-        setLoading(false);
-        setError(getFirestoreUserMessage(err));
+        setInvoicesError(getFirestoreUserMessage(err));
+        setInvoicesLoading(false);
       },
     );
-
-    return () => {
-      unsubCustomers();
-      unsubInvoices();
-    };
+    return () => unsubInvoices();
   }, []);
+
+  const loading = customersLoading || invoicesLoading;
+  const error = customersError ?? invoicesError;
 
   const engagementRows = useMemo(() => {
     const invoiceInputs = invoices

@@ -5,7 +5,7 @@ import { TraderProfileContent } from "@/app/components/traders/TraderProfileCont
 export default function TraderProfilePage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Trader profile"
           description="Contact details and everything purchased from this trader: units, amount paid, and recent receipts."

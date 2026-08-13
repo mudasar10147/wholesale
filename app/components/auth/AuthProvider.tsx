@@ -1,8 +1,9 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { onAuthStateChanged, type User } from "firebase/auth";
 import { getAuthClient } from "@/lib/firebase";
+import { resetReferenceData } from "@/lib/firestore/referenceData";
 
 type AuthContextValue = {
   user: User | null;
@@ -48,9 +49,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isSocial, setIsSocial] = useState(false);
   const [isSalesman, setIsSalesman] = useState(false);
 
+  /** Last signed-in uid, so shared caches can be dropped when the user changes. */
+  const lastUidRef = useRef<string | null>(null);
+
   useEffect(() => {
     const auth = getAuthClient();
     const unsub = onAuthStateChanged(auth, async (u) => {
+      // Reference data is cached for the whole session, so signing out (or
+      // switching accounts) must drop it rather than show it to the next user.
+      const nextUid = u?.uid ?? null;
+      if (lastUidRef.current !== null && lastUidRef.current !== nextUid) {
+        resetReferenceData();
+      }
+      lastUidRef.current = nextUid;
+
       if (u) {
         // Keep loading true until ID token claims are known — avoids a frame where
         // user is set but role flags are wrong (false flash on login).

@@ -1,13 +1,20 @@
-import {
-  collection,
-  getDocs,
-  query,
-  where,
-  type Firestore,
-  Timestamp,
-} from "firebase/firestore";
-import { COLLECTIONS } from "@/lib/firestore/collections";
-import type { ExpenseDoc, InventoryDiscardDoc, InvoiceDoc, InvoiceReturnDoc, ProductDoc, SaleDoc } from "@/lib/types/firestore";
+/**
+ * Period metrics for the dashboard — pure functions over documents the caller
+ * already holds.
+ *
+ * These used to fetch their own inputs, which meant the dashboard read `invoices`
+ * four times and `products` three times per page load. They now take the data,
+ * so `loadDashboardData` can read each collection exactly once and share it.
+ */
+import type { Timestamp } from "firebase/firestore";
+import type {
+  ExpenseDoc,
+  InventoryDiscardDoc,
+  InvoiceDoc,
+  InvoiceReturnDoc,
+  ProductDoc,
+  SaleDoc,
+} from "@/lib/types/firestore";
 import { computeProfitBreakdown, computeCogs, sumSaleAmounts, type ProfitBreakdown } from "@/lib/profit/metrics";
 import { getCurrentYearBounds, getInventoryVelocityWeekBounds, getTodayBounds } from "@/lib/profit/periods";
 import { periodDayCount } from "@/lib/inventory/turnoverMetrics";
@@ -25,7 +32,10 @@ export function filterSalesForProfitReporting(
   });
 }
 
-function buildCostMap(products: { id: string; data: ProductDoc }[]): Map<string, number> {
+/** Map of product id → current cost price, for COGS fallback on legacy walk-in rows. */
+export function buildCostMap(
+  products: readonly { id: string; data: ProductDoc }[],
+): Map<string, number> {
   const m = new Map<string, number>();
   for (const p of products) {
     const c = p.data.cost_price;
@@ -34,127 +44,117 @@ function buildCostMap(products: { id: string; data: ProductDoc }[]): Map<string,
   return m;
 }
 
-async function fetchSalesInRange(
-  db: Firestore,
-  start: Date,
-  end: Date,
-): Promise<SaleDoc[]> {
-  const startTs = Timestamp.fromDate(start);
-  const endTs = Timestamp.fromDate(end);
-  const q = query(
-    collection(db, COLLECTIONS.sales),
-    where("date", ">=", startTs),
-    where("date", "<=", endTs),
-  );
-  const snap = await getDocs(q);
-  const out: SaleDoc[] = [];
-  snap.forEach((d) => out.push(d.data() as SaleDoc));
-  return out;
-}
-
-async function fetchExpensesInRange(
-  db: Firestore,
-  start: Date,
-  end: Date,
-): Promise<ExpenseDoc[]> {
-  const startTs = Timestamp.fromDate(start);
-  const endTs = Timestamp.fromDate(end);
-  const q = query(
-    collection(db, COLLECTIONS.expenses),
-    where("date", ">=", startTs),
-    where("date", "<=", endTs),
-  );
-  const snap = await getDocs(q);
-  const out: ExpenseDoc[] = [];
-  snap.forEach((d) => out.push(d.data() as ExpenseDoc));
-  return out;
-}
-
-async function fetchAllProducts(db: Firestore): Promise<Map<string, number>> {
-  const snap = await getDocs(collection(db, COLLECTIONS.products));
-  const list: { id: string; data: ProductDoc }[] = [];
-  snap.forEach((d) => list.push({ id: d.id, data: d.data() as ProductDoc }));
-  return buildCostMap(list);
-}
-
-async function fetchVoidInvoiceIds(db: Firestore): Promise<Set<string>> {
-  const snap = await getDocs(collection(db, COLLECTIONS.invoices));
+/** Ids of void invoices — sale rows belonging to these are excluded from reporting. */
+export function voidInvoiceIdsFrom(
+  invoices: readonly { id: string; data: Pick<InvoiceDoc, "status"> }[],
+): Set<string> {
   const ids = new Set<string>();
-  snap.forEach((d) => {
-    const inv = d.data() as InvoiceDoc;
-    if (inv.status === "void") ids.add(d.id);
-  });
+  for (const inv of invoices) {
+    if (inv.data.status === "void") ids.add(inv.id);
+  }
   return ids;
 }
 
-async function fetchDamagedWriteOffsInRange(
-  db: Firestore,
+/**
+ * In-memory equivalent of `where(field, ">=", start) && where(field, "<=", end)`.
+ * Rows without a usable timestamp are excluded, matching Firestore's behaviour
+ * of skipping documents that are missing the ordered field.
+ */
+function withinRange(ts: Timestamp | undefined, startMs: number, endMs: number): boolean {
+  const ms = ts?.toMillis?.();
+  return typeof ms === "number" && Number.isFinite(ms) && ms >= startMs && ms <= endMs;
+}
+
+export function salesInRange(sales: readonly SaleDoc[], start: Date, end: Date): SaleDoc[] {
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  return sales.filter((s) => withinRange(s.date, startMs, endMs));
+}
+
+export function expensesInRange(
+  expenses: readonly ExpenseDoc[],
   start: Date,
   end: Date,
-): Promise<number> {
+): ExpenseDoc[] {
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  return expenses.filter((e) => withinRange(e.date, startMs, endMs));
+}
+
+/**
+ * FIFO discard write-offs in a window: posted returns plus stock discards.
+ * Rows with no timestamp fall back to 0, which lands outside any real window.
+ */
+export function damagedWriteOffsInRange(
+  invoiceReturns: readonly InvoiceReturnDoc[],
+  inventoryDiscards: readonly InventoryDiscardDoc[],
+  start: Date,
+  end: Date,
+): number {
   const startMs = start.getTime();
   const endMs = end.getTime();
   let total = 0;
 
-  const returnsSnap = await getDocs(collection(db, COLLECTIONS.invoiceReturns));
-  returnsSnap.forEach((d) => {
-    const row = d.data() as InvoiceReturnDoc;
-    if (row.status !== "posted") return;
+  for (const row of invoiceReturns) {
+    if (row.status !== "posted") continue;
     const ms = row.posted_at?.toMillis?.() ?? 0;
-    if (ms < startMs || ms > endMs) return;
+    if (ms < startMs || ms > endMs) continue;
     const writeOff =
       typeof row.write_off_cogs_amount === "number" ? row.write_off_cogs_amount : 0;
     if (Number.isFinite(writeOff)) total += writeOff;
-  });
+  }
 
-  const discardsSnap = await getDocs(collection(db, COLLECTIONS.inventoryDiscards));
-  discardsSnap.forEach((d) => {
-    const row = d.data() as InventoryDiscardDoc;
+  for (const row of inventoryDiscards) {
     const ms = row.created_at?.toMillis?.() ?? 0;
-    if (ms < startMs || ms > endMs) return;
-    const writeOff =
-      typeof row.total_cogs_amount === "number" ? row.total_cogs_amount : 0;
+    if (ms < startMs || ms > endMs) continue;
+    const writeOff = typeof row.total_cogs_amount === "number" ? row.total_cogs_amount : 0;
     if (Number.isFinite(writeOff)) total += writeOff;
-  });
+  }
 
   return total;
 }
 
-/**
- * Loads sales + expenses for [start, end] and computes profit using sale COGS when available.
- */
-export async function loadProfitForPeriod(
-  db: Firestore,
+/** Everything the period computations read, loaded once by the caller. */
+export type PeriodInputs = {
+  sales: readonly SaleDoc[];
+  expenses: readonly ExpenseDoc[];
+  costByProductId: Map<string, number>;
+  voidInvoiceIds: Set<string>;
+  invoiceReturns: readonly InvoiceReturnDoc[];
+  inventoryDiscards: readonly InventoryDiscardDoc[];
+};
+
+/** Profit for [start, end], using sale COGS when available. */
+export function computeProfitForPeriod(
+  input: PeriodInputs,
   start: Date,
   end: Date,
-): Promise<ProfitBreakdown> {
-  const [costByProductId, sales, expenses, voidInvoiceIds, damagedWriteOffs] = await Promise.all([
-    fetchAllProducts(db),
-    fetchSalesInRange(db, start, end),
-    fetchExpensesInRange(db, start, end),
-    fetchVoidInvoiceIds(db),
-    fetchDamagedWriteOffsInRange(db, start, end),
-  ]);
-  const filteredSales = filterSalesForProfitReporting(sales, voidInvoiceIds);
-  return computeProfitBreakdown(filteredSales, expenses, costByProductId, damagedWriteOffs);
+): ProfitBreakdown {
+  const sales = filterSalesForProfitReporting(
+    salesInRange(input.sales, start, end),
+    input.voidInvoiceIds,
+  );
+  const expenses = expensesInRange(input.expenses, start, end);
+  const damaged = damagedWriteOffsInRange(
+    input.invoiceReturns,
+    input.inventoryDiscards,
+    start,
+    end,
+  );
+  return computeProfitBreakdown(sales, expenses, input.costByProductId, damaged);
 }
 
-/**
- * Sum sale COGS for a calendar Mon–Sun week used for inventory velocity, excluding void invoices.
- */
-export async function loadCogsForVelocityWeek(
-  db: Firestore,
+/** Sale COGS for the Mon–Sun route week used by inventory velocity. */
+export function computeCogsForVelocityWeek(
+  input: Pick<PeriodInputs, "sales" | "costByProductId" | "voidInvoiceIds">,
   now = new Date(),
-): Promise<{ weeklyCogs: number; week: { start: Date; end: Date; label: string } }> {
+): { weeklyCogs: number; week: { start: Date; end: Date; label: string } } {
   const week = getInventoryVelocityWeekBounds(now);
-  const [costByProductId, sales, voidInvoiceIds] = await Promise.all([
-    fetchAllProducts(db),
-    fetchSalesInRange(db, week.start, week.end),
-    fetchVoidInvoiceIds(db),
-  ]);
-  const filteredSales = filterSalesForProfitReporting(sales, voidInvoiceIds);
-  const weeklyCogs = computeCogs(filteredSales, costByProductId);
-  return { weeklyCogs, week };
+  const sales = filterSalesForProfitReporting(
+    salesInRange(input.sales, week.start, week.end),
+    input.voidInvoiceIds,
+  );
+  return { weeklyCogs: computeCogs(sales, input.costByProductId), week };
 }
 
 export type YtdWeeklySalesSummary = {
@@ -176,19 +176,18 @@ function formatYtdRangeLabel(start: Date, end: Date): string {
  * Average weekly sales from the start of the calendar year through today.
  * Weeks are counted from the first posted sale in the year (e.g. April) when later than Jan 1.
  */
-export async function loadYtdAverageWeeklySales(
-  db: Firestore,
+export function computeYtdAverageWeeklySales(
+  input: Pick<PeriodInputs, "sales" | "voidInvoiceIds">,
   now = new Date(),
-): Promise<YtdWeeklySalesSummary> {
+): YtdWeeklySalesSummary {
   const year = now.getFullYear();
   const yearStart = getCurrentYearBounds(now).start;
   const end = getTodayBounds(now).end;
 
-  const [sales, voidInvoiceIds] = await Promise.all([
-    fetchSalesInRange(db, yearStart, end),
-    fetchVoidInvoiceIds(db),
-  ]);
-  const filteredSales = filterSalesForProfitReporting(sales, voidInvoiceIds);
+  const filteredSales = filterSalesForProfitReporting(
+    salesInRange(input.sales, yearStart, end),
+    input.voidInvoiceIds,
+  );
   const totalSales = sumSaleAmounts(filteredSales);
 
   if (filteredSales.length === 0) {
@@ -208,9 +207,7 @@ export async function loadYtdAverageWeeklySales(
   }
   const firstSaleDay = new Date(firstSaleMs);
 
-  const avgFrom = new Date(
-    Math.max(yearStart.getTime(), firstSaleDay.getTime()),
-  );
+  const avgFrom = new Date(Math.max(yearStart.getTime(), firstSaleDay.getTime()));
   avgFrom.setHours(0, 0, 0, 0);
 
   const daysElapsed = periodDayCount(avgFrom, end);

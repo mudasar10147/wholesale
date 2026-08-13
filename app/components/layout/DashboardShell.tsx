@@ -32,7 +32,7 @@ export function DashboardShell({ children }: DashboardShellProps) {
           onMenuClick={() => setMobileNavOpen((open) => !open)}
           menuContentId={menuPanelId}
         />
-        <main className="flex-1 px-4 pb-8 pt-4 sm:px-8 sm:py-10 lg:px-10">
+        <main className="flex-1 px-4 pb-6 pt-3 sm:px-6 sm:py-5 lg:px-8">
           <div className="mx-auto w-full max-w-5xl">{children}</div>
         </main>
       </div>

@@ -13,7 +13,7 @@ import {
 export default function TradersPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Traders"
           description="Suppliers you buy stock from. Create, edit, and archive traders, then pick them when stocking in."
