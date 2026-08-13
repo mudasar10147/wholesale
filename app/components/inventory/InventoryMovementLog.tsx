@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { collection, limit, onSnapshot, orderBy, query, type Timestamp } from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
+import { collection, limit, onSnapshot, orderBy, query, where, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
@@ -20,53 +20,83 @@ function formatDate(ts?: Timestamp) {
   }
 }
 
+/** Firestore rejects an `in` filter with more than 30 comparison values. */
+const IN_QUERY_MAX_VALUES = 30;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 export function InventoryMovementLog({ productId }: { productId?: string }) {
   const [transactions, setTransactions] = useState<TxnRow[]>([]);
+  const [transactionsLoaded, setTransactionsLoaded] = useState(false);
   const [lines, setLines] = useState<LineRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  /** Which transaction set `lines` currently covers, so partial loads are not shown. */
+  const [linesKey, setLinesKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const db = getDb();
-    let done = 0;
-    const mark = () => {
-      done += 1;
-      if (done >= 2) setLoading(false);
-    };
-
     const unsubTx = onSnapshot(
       query(collection(db, COLLECTIONS.inventoryTransactions), orderBy("posted_at", "desc"), limit(100)),
       (snap) => {
         const next: TxnRow[] = [];
         snap.forEach((d) => next.push({ id: d.id, ...(d.data() as InventoryTransactionDoc) }));
         setTransactions(next);
-        mark();
+        setTransactionsLoaded(true);
       },
       (err) => {
         setError(getFirestoreUserMessage(err));
-        setLoading(false);
+        setTransactionsLoaded(true);
       },
     );
-
-    const unsubLines = onSnapshot(
-      collection(db, COLLECTIONS.inventoryTransactionLines),
-      (snap) => {
-        const next: LineRow[] = [];
-        snap.forEach((d) => next.push({ id: d.id, ...(d.data() as InventoryTransactionLineDoc) }));
-        setLines(next);
-        mark();
-      },
-      (err) => {
-        setError(getFirestoreUserMessage(err));
-        setLoading(false);
-      },
-    );
-
-    return () => {
-      unsubTx();
-      unsubLines();
-    };
+    return () => unsubTx();
   }, []);
+
+  const txnIdsKey = useMemo(() => transactions.map((t) => t.id).join(","), [transactions]);
+
+  /**
+   * Lines are fetched for the transactions actually on screen. Reading the whole
+   * collection here meant the log pulled every line ever written (661 in
+   * production) to render 100 rows; scoping to the visible headers reads only
+   * what those rows need.
+   */
+  useEffect(() => {
+    if (!txnIdsKey) return;
+    const db = getDb();
+    const groups = chunk(txnIdsKey.split(","), IN_QUERY_MAX_VALUES);
+    const buffers: LineRow[][] = groups.map(() => []);
+    const reported = new Set<number>();
+
+    const unsubs = groups.map((group, i) =>
+      onSnapshot(
+        query(
+          collection(db, COLLECTIONS.inventoryTransactionLines),
+          where("transaction_id", "in", group),
+        ),
+        (snap) => {
+          const next: LineRow[] = [];
+          snap.forEach((d) => next.push({ id: d.id, ...(d.data() as InventoryTransactionLineDoc) }));
+          buffers[i] = next;
+          reported.add(i);
+          setLines(buffers.flat());
+          if (reported.size === groups.length) setLinesKey(txnIdsKey);
+        },
+        (err) => {
+          setError(getFirestoreUserMessage(err));
+          setLinesKey(txnIdsKey);
+        },
+      ),
+    );
+
+    return () => unsubs.forEach((unsub) => unsub());
+  }, [txnIdsKey]);
+
+  // No transactions means there are no lines to wait for.
+  const linesReady = transactions.length === 0 || linesKey === txnIdsKey;
+  const loading = !transactionsLoaded || !linesReady;
 
   const linesByTxn = new Map<string, LineRow[]>();
   for (const line of lines) {

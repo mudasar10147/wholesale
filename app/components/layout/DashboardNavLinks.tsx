@@ -35,7 +35,7 @@ export function DashboardNavLinks({ onNavigate }: DashboardNavLinksProps) {
             href={item.href}
             onClick={onNavigate}
             className={cn(
-              "flex items-center justify-between gap-2 rounded-r-lg border-l-2 border-transparent py-2.5 pl-3 pr-3 text-[0.8125rem] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)]",
+              "flex items-center justify-between gap-2 rounded-r-lg border-l-2 border-transparent py-1.5 pl-3 pr-3 text-[0.8125rem] font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)]",
               active
                 ? "border-primary bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-sidebar-foreground/85 hover:bg-surface-hover hover:text-sidebar-foreground",

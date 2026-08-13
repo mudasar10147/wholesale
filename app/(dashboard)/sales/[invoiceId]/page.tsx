@@ -8,7 +8,7 @@ type PageProps = {
 export default async function InvoiceDetailPage({ params }: PageProps) {
   const { invoiceId } = await params;
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Invoice"
         description="View lines, copy or download as text, edit drafts, post, create returns, void, or delete drafts."

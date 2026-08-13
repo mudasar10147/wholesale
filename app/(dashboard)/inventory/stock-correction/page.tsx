@@ -5,7 +5,7 @@ import { StockCorrectionWorkspace } from "@/app/components/inventory/StockCorrec
 export default function StockCorrectionPage() {
   return (
     <AdminOnly>
-      <div className="space-y-8">
+      <div className="space-y-6">
         <PageHeader
           title="Physical stock correction"
           description="Re-baseline products to their physically counted warehouse quantities. Admins only."

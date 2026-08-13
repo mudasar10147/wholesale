@@ -3,13 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { loadDashboardSnapshot } from "@/lib/dashboard/loadSnapshot";
-import type { StockSummaryData } from "@/lib/inventory/stockSummary";
 import {
-  computeWeeklyInventoryVelocity,
-  type WeeklyInventoryVelocity,
-} from "@/lib/inventory/turnoverMetrics";
-import { loadProfitForPeriod, loadCogsForVelocityWeek, loadYtdAverageWeeklySales, type YtdWeeklySalesSummary } from "@/lib/profit/loadPeriod";
+  computeCashSnapshot,
+  computeDashboard,
+  type DashboardRaw,
+} from "@/lib/dashboard/dashboardData";
+import { getDashboardRaw } from "@/lib/dashboard/dashboardCache";
 import {
   getBoundsFromDateInputs,
   getCurrentMonthBounds,
@@ -17,23 +16,33 @@ import {
   getTodayBounds,
   parseLocalDateInput,
 } from "@/lib/profit/periods";
-import type { ProfitBreakdown } from "@/lib/profit/metrics";
-import { loadCashInHandSnapshot, type CashInHandSnapshot } from "@/lib/finance/loadCashInHand";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { PeriodKpiRow } from "@/app/components/dashboard/PeriodKpiRow";
 import { SalesDrilldownModal } from "@/app/components/dashboard/SalesDrilldownModal";
-import { ProfitBreakdownCard } from "@/app/components/dashboard/ProfitBreakdownCard";
-import { StockSummary } from "@/app/components/dashboard/StockSummary";
-import { CashInHandCard } from "@/app/components/dashboard/CashInHandCard";
 import { CashInHandStatCard } from "@/app/components/dashboard/CashInHandStatCard";
-import { TotalAssetsCard } from "@/app/components/dashboard/TotalAssetsCard";
 import { DashboardExtendedKpiGrid } from "@/app/components/dashboard/DashboardExtendedKpiGrid";
-import { DashboardSecondaryStatRow } from "@/app/components/dashboard/DashboardSecondaryStatRow";
-import { ExpectedCashCards } from "@/app/components/dashboard/ExpectedCashCards";
 import { Input } from "@/app/components/ui/Input";
 
 type KpiPreset = "today" | "day" | "month" | "year" | "custom";
+
+function RefreshIcon() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 16 16"
+      className="h-4 w-4 shrink-0"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M13.5 8a5.5 5.5 0 1 1-1.72-4" />
+      <path d="M13.75 2.5v3.5h-3.5" />
+    </svg>
+  );
+}
 
 function toDateInputValue(date: Date): string {
   const y = date.getFullYear();
@@ -48,15 +57,10 @@ export function DashboardOverview() {
   const [singleDayDate, setSingleDayDate] = useState(() => toDateInputValue(initialNow));
   const [customStartDate, setCustomStartDate] = useState(() => toDateInputValue(initialNow));
   const [customEndDate, setCustomEndDate] = useState(() => toDateInputValue(initialNow));
-  const [selected, setSelected] = useState<ProfitBreakdown | null>(null);
-  const [stock, setStock] = useState<StockSummaryData | null>(null);
-  const [customerCount, setCustomerCount] = useState<number | null>(null);
-  const [weeklyVelocity, setWeeklyVelocity] = useState<WeeklyInventoryVelocity | null>(null);
-  const [ytdWeeklySales, setYtdWeeklySales] = useState<YtdWeeklySalesSummary | null>(null);
-  const [cashSnapshot, setCashSnapshot] = useState<CashInHandSnapshot | null>(null);
-  const [cashLoading, setCashLoading] = useState(true);
+  const [raw, setRaw] = useState<DashboardRaw | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<Date | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [salesDrillOpen, setSalesDrillOpen] = useState(false);
 
   const selectedRange = useMemo(() => {
@@ -113,88 +117,79 @@ export function DashboardOverview() {
     };
   }, [customEndDate, customStartDate, preset, singleDayDate]);
 
-  const load = useCallback(async () => {
+  /**
+   * Fetches only when the session cache has nothing fresh. Note the empty
+   * dependency list: changing the KPI period recomputes from documents already
+   * held rather than refetching, so preset clicks cost no reads.
+   */
+  const load = useCallback(async (force = false) => {
     setLoading(true);
-    setError(null);
-    const db = getDb();
-
-    setCashLoading(true);
+    setFetchError(null);
     try {
-      setCashSnapshot(await loadCashInHandSnapshot(db));
-    } catch {
-      setCashSnapshot(null);
-    } finally {
-      setCashLoading(false);
-    }
-
-    if (!selectedRange.bounds) {
-      setError("Select a valid date or date range.");
-      setSelected(null);
-      setStock(null);
-      setCustomerCount(null);
-      setWeeklyVelocity(null);
-      setYtdWeeklySales(null);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const [periodSummary, snapshot, velocityWeek, ytdSales] = await Promise.all([
-        loadProfitForPeriod(db, selectedRange.bounds.start, selectedRange.bounds.end),
-        loadDashboardSnapshot(db),
-        loadCogsForVelocityWeek(db),
-        loadYtdAverageWeeklySales(db),
-      ]);
-      setSelected(periodSummary);
-      setStock(snapshot.stock);
-      setCustomerCount(snapshot.activeCustomerCount);
-      setYtdWeeklySales(ytdSales);
-      setWeeklyVelocity(
-        computeWeeklyInventoryVelocity(
-          snapshot.stock.totalValueAtLotCost,
-          velocityWeek.weeklyCogs,
-          velocityWeek.week,
-        ),
-      );
+      const result = await getDashboardRaw(getDb(), { force });
+      setRaw(result.raw);
+      setFetchedAt(result.fetchedAt);
     } catch (e) {
-      setError(getFirestoreUserMessage(e));
-      setSelected(null);
-      setStock(null);
-      setCustomerCount(null);
-      setWeeklyVelocity(null);
-      setYtdWeeklySales(null);
+      setFetchError(getFirestoreUserMessage(e));
+      setRaw(null);
+      setFetchedAt(null);
     } finally {
       setLoading(false);
     }
-  }, [selectedRange.bounds]);
+  }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          KPIs use sales and expenses in local time. Period cards include gross and net margin %,
-          damaged write-offs, and inventory velocity (Mon–Sun route week). Snapshot cards show
-          inventory at retail, unrealized profit on stock, customer count, and reorder alerts.
-          Cash in hand is an all-time estimate from recorded flows.
-        </p>
-        <Button type="button" variant="outline" className="shrink-0" onClick={() => void load()}>
-          Refresh
-        </Button>
-      </div>
+  // Cash is period-independent, so it survives an invalid date range.
+  const cashSnapshot = useMemo(() => (raw ? computeCashSnapshot(raw) : null), [raw]);
 
+  const dashboard = useMemo(
+    () => (raw && selectedRange.bounds ? computeDashboard(raw, selectedRange.bounds) : null),
+    [raw, selectedRange.bounds],
+  );
+
+  const rangeError = selectedRange.bounds ? null : "Select a valid date or date range.";
+  const error = fetchError ?? rangeError;
+
+  const selected = dashboard?.profit ?? null;
+  const stock = dashboard?.stock ?? null;
+  const customerCount = dashboard?.activeCustomerCount ?? null;
+  const weeklyVelocity = dashboard?.velocity ?? null;
+  const ytdWeeklySales = dashboard?.ytdWeeklySales ?? null;
+
+  return (
+    <div className="space-y-6">
       {error ? <InlineAlert variant="error">{error}</InlineAlert> : null}
 
       <div className="space-y-4">
-      {!error ? (
-        <section aria-labelledby="selected-kpis-heading">
+      <section aria-label="KPI period">
           <div className="flex flex-col gap-3">
-            <h2 id="selected-kpis-heading" className="text-base font-semibold text-foreground">
-              KPI period
-            </h2>
+            <div className="flex items-center justify-between gap-3">
+              {fetchedAt ? (
+                <p className="text-xs text-muted-foreground">
+                  Figures as of{" "}
+                  {fetchedAt.toLocaleTimeString(undefined, {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+              ) : (
+                <span />
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => void load(true)}
+                disabled={loading}
+                aria-label="Refresh dashboard"
+                title="Refresh"
+              >
+                <RefreshIcon />
+              </Button>
+            </div>
             <div className="flex flex-wrap gap-2">
               <Button
                 type="button"
@@ -260,8 +255,7 @@ export function DashboardOverview() {
               Showing {selectedRange.label.toLowerCase()}: {selectedRange.description}
             </p>
           </div>
-        </section>
-      ) : null}
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-4" aria-label="Period KPIs and cash in hand">
         {!error ? (
@@ -279,7 +273,7 @@ export function DashboardOverview() {
         <div className={error ? "lg:col-span-4" : "lg:col-span-1"}>
           <CashInHandStatCard
             snapshot={cashSnapshot}
-            loading={cashLoading}
+            loading={loading}
             className="h-full lg:min-h-full"
           />
         </div>
@@ -308,45 +302,7 @@ export function DashboardOverview() {
         />
       ) : null}
 
-      <DashboardSecondaryStatRow
-        cashSnapshot={cashSnapshot}
-        cashLoading={cashLoading}
-        stock={stock}
-        stockLoading={loading}
-      />
       </div>
-
-      <ExpectedCashCards
-        snapshot={cashSnapshot}
-        loading={cashLoading}
-        onSaved={() => void load()}
-      />
-
-      <CashInHandCard
-        snapshot={cashSnapshot}
-        loading={cashLoading}
-        onSaved={() => void load()}
-      />
-
-      <TotalAssetsCard
-        cashSnapshot={cashSnapshot}
-        cashLoading={cashLoading}
-        stock={stock}
-        stockLoading={loading}
-      />
-
-      {!error ? (
-        <>
-          <StockSummary data={stock} loading={loading} />
-
-          <ProfitBreakdownCard
-            title={`${selectedRange.label} profit`}
-            description="Sales minus expenses and COGS for selected period (local time)."
-            breakdown={selected}
-            loading={loading}
-          />
-        </>
-      ) : null}
     </div>
   );
 }

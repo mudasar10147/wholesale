@@ -6,7 +6,7 @@ import { PageHeader } from "@/app/components/layout/PageHeader";
 export default function InventoryPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Inventory"
           description="Manage stock levels and costing in one place: stock in and out, FIFO lots, low-stock alerts, write-offs, and manual sale pricing."

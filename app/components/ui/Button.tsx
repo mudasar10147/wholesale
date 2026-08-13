@@ -3,7 +3,8 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 type ButtonVariant = "primary" | "outline" | "destructive";
-type ButtonSize = "sm" | "md";
+/** `icon` is a square, label-less button — pass an `aria-label` when you use it. */
+type ButtonSize = "sm" | "md" | "icon";
 
 const baseClasses =
   "inline-flex items-center justify-center rounded-lg font-medium transition-colors duration-[var(--duration-fast)] ease-[var(--ease-out)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--ring-offset)] disabled:pointer-events-none disabled:opacity-50";
@@ -20,6 +21,7 @@ const variantClasses: Record<ButtonVariant, string> = {
 const sizeClasses: Record<ButtonSize, string> = {
   sm: "px-3 py-1.5 text-xs",
   md: "px-4 py-2.5 text-sm",
+  icon: "h-9 w-9 shrink-0 text-sm",
 };
 
 export function buttonClasses(opts?: {

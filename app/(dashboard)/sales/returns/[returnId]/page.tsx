@@ -8,7 +8,7 @@ type PageProps = {
 export default async function ReturnDetailPage({ params }: PageProps) {
   const { returnId } = await params;
   return (
-    <div className="space-y-10">
+    <div className="space-y-6">
       <PageHeader
         title="Return"
         description="View return lines, settlement, and link back to the original invoice."

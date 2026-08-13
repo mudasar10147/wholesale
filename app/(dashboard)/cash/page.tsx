@@ -16,7 +16,7 @@ import {
 export default function CashLedgerPage() {
   return (
     <AdminOnly>
-      <div className="space-y-10">
+      <div className="space-y-6">
         <PageHeader
           title="Cash ledger"
           description="Record manual cash put in or taken out by hand — owner capital, drawings, bank transfers, and other movements. These adjust your cash-in-hand total. Loans have their own page."

@@ -3,14 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { offerDiscountForQuantity, seedLineForProduct } from "@/lib/invoices/lineSeed";
 import { useLiveOffers } from "@/lib/firestore/liveOffers";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useCustomers, useProducts } from "@/lib/firestore/referenceData";
 import { createDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
@@ -23,7 +22,6 @@ import {
   buildPosReceiptInputFromCalc,
   printPosReceipt,
 } from "@/lib/invoices/posReceiptPdf";
-import type { CustomerDoc, ProductDoc } from "@/lib/types/firestore";
 import {
   parseNonNegativeDecimal,
   parsePositiveIntStrict,
@@ -105,10 +103,6 @@ type AddInvoiceFormProps = {
 
 export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceFormProps = {}) {
   const router = useRouter();
-  const [customers, setCustomers] = useState<CustomerOption[]>([]);
-  const [products, setProducts] = useState<ProductOption[]>([]);
-  const [loadingCustomers, setLoadingCustomers] = useState(true);
-  const [loadingProducts, setLoadingProducts] = useState(true);
 
   const [customerId, setCustomerId] = useState("");
   const [orderId, setOrderId] = useState(() => createOrderId());
@@ -131,6 +125,44 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
   const [success, setSuccess] = useState<string | null>(null);
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
   const [stockGateMessage, setStockGateMessage] = useState<string | null>(null);
+
+  // Shared session-wide subscriptions — see lib/firestore/referenceData.ts.
+  const { rows: customerRows, loading: loadingCustomers } = useCustomers();
+  const { rows: productRows, loading: loadingProducts } = useProducts();
+
+  const customers = useMemo<CustomerOption[]>(() => {
+    const list: CustomerOption[] = [];
+    for (const { id: customerRowId, data: d } of customerRows) {
+      list.push({
+        id: customerRowId,
+        name: d.name,
+        phone: d.phone?.trim(),
+        email: d.email?.trim(),
+        address: d.address?.trim(),
+        is_active: d.is_active,
+        searchText: `${d.name} ${d.phone ?? ""} ${d.email ?? ""} ${d.address ?? ""}`.toLowerCase(),
+      });
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list.filter((c) => c.is_active);
+  }, [customerRows]);
+
+  const products = useMemo<ProductOption[]>(() => {
+    const list: ProductOption[] = [];
+    for (const { id: productRowId, data: d } of productRows) {
+      list.push({
+        id: productRowId,
+        name: d.name,
+        sale_price: d.sale_price,
+        cost_price: d.cost_price,
+        stock_quantity: d.stock_quantity,
+        created_at: d.created_at,
+        searchText: `${d.name} ${d.sale_price} ${d.cost_price} ${d.stock_quantity}`.toLowerCase(),
+      });
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list;
+  }, [productRows]);
 
   const productNameById = useMemo(
     () => new Map(products.map((p) => [p.id, p.name] as const)),
@@ -165,52 +197,6 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
       setCustomerId(initialCustomerId.trim());
     }
   }, [initialCustomerId]);
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.customers), (snap) => {
-      setLoadingCustomers(false);
-      const list: CustomerOption[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as CustomerDoc;
-        list.push({
-          id: docSnap.id,
-          name: d.name,
-          phone: d.phone?.trim(),
-          email: d.email?.trim(),
-          address: d.address?.trim(),
-          is_active: d.is_active,
-          searchText: `${d.name} ${d.phone ?? ""} ${d.email ?? ""} ${d.address ?? ""}`.toLowerCase(),
-        });
-      });
-      list.sort((a, b) => a.name.localeCompare(b.name));
-      setCustomers(list.filter((c) => c.is_active));
-    });
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      setLoadingProducts(false);
-      const list: ProductOption[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as ProductDoc;
-        list.push({
-          id: docSnap.id,
-          name: d.name,
-          sale_price: d.sale_price,
-          cost_price: d.cost_price,
-          stock_quantity: d.stock_quantity,
-          created_at: d.created_at,
-          searchText: `${d.name} ${d.sale_price} ${d.cost_price} ${d.stock_quantity}`.toLowerCase(),
-        });
-      });
-      list.sort((a, b) => a.name.localeCompare(b.name));
-      setProducts(list);
-    });
-    return () => unsub();
-  }, []);
 
   const calcPreview = useMemo(() => {
     const parsed = items
