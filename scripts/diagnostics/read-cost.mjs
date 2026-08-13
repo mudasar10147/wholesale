@@ -235,13 +235,12 @@ function buildPages(n) {
     },
     {
       route: "/sales",
-      note: "InvoiceDraftList + ReturnList",
+      note: "InvoiceDraftList + ReturnList; customer names come from the shared store",
       reads: [
-        ["InvoiceDraftList → invoice_returns", n.invoiceReturns],
         ["InvoiceDraftList → invoices", n.invoices],
-        ["InvoiceDraftList → customers", n.customers],
-        ["ReturnList → customers", n.customers],
+        ["InvoiceDraftList → invoice_returns", n.invoiceReturns],
         ["ReturnList → invoice_returns", n.invoiceReturns],
+        ["customers (shared, first use only)", 0],
       ],
     },
     {
@@ -273,11 +272,12 @@ function buildPages(n) {
     },
     {
       route: "/products",
+      note: "traders shared; ProductList + ProductStockInSummary still read products separately",
       reads: [
         ["ProductList → products", n.products],
-        ["ProductStockInSummary → stock_lots", n.stockLots],
         ["ProductStockInSummary → products", n.products],
-        ["TraderSelectInput → traders", n.traders],
+        ["ProductStockInSummary → stock_lots", n.stockLots],
+        ["traders (shared, first use only)", 0],
       ],
     },
     {
@@ -421,13 +421,19 @@ async function main() {
   }
 
   const views = Number(arg("--views", "10"));
-  const dash = totals.find(([r]) => r.startsWith("/ ("))?.[1] ?? 0;
+  const dash = totals.find(([r]) => r.startsWith("/ (dashboard home)"))?.[1] ?? 0;
   console.log(`\n━━ Daily projection ━━`);
-  console.log(`  ${views} dashboard views/day  →  ${fmt(dash * views)} reads`);
   console.log(`  Spark free tier is 50,000 reads/day.`);
-  if (dash > 0) {
-    console.log(`  Dashboard views to exhaust the free tier: ${Math.ceil(50000 / dash)}`);
-  }
+  console.log(
+    `  ${views} dashboard views, all cold  →  ${fmt(dash * views)} reads (${Math.ceil(50000 / Math.max(dash, 1))} views to exhaust)`,
+  );
+  console.log(
+    `  ...but the session cache means repeat visits and KPI-period switches cost 0,`,
+  );
+  console.log(
+    `  so ${views} views is typically 2-3 fetches ≈ ${fmt(dash * 3)} reads. Cold cost is the ceiling,`,
+  );
+  console.log(`  not the expected figure.`);
 
   const after = totals.find(([r]) => r.startsWith("/ (dashboard home)"))?.[1] ?? 0;
   const before = totals.find(([r]) => r.startsWith("/ (dashboard, pre-P1)"))?.[1] ?? 0;
