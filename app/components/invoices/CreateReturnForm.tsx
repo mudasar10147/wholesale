@@ -3,10 +3,9 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useProductNames } from "@/lib/firestore/referenceData";
 import {
   createReturnDraft,
   loadReturnableContext,
@@ -73,20 +72,9 @@ export function CreateReturnForm({ invoiceId }: Props) {
   const [settlementType, setSettlementType] = useState<InvoiceReturnDoc["settlement_type"]>("reduce_balance");
   const [returnReason, setReturnReason] = useState("");
   const [notes, setNotes] = useState("");
-  const [productNames, setProductNames] = useState<Map<string, string>>(new Map());
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const map = new Map<string, string>();
-      snap.forEach((d) => {
-        const name = (d.data().name as string | undefined)?.trim();
-        map.set(d.id, name || d.id);
-      });
-      setProductNames(map);
-    });
-    return () => unsub();
-  }, []);
+  // Spans archived products — return lines point at past purchases, which may be
+  // of a product that has since been retired.
+  const productNames = useProductNames();
 
   useEffect(() => {
     let cancelled = false;

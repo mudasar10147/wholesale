@@ -84,7 +84,13 @@ function millisOf(ts: unknown): number {
 
 const mapDocs = (snap: FirebaseFirestore.QuerySnapshot) => snap.docs.map((d) => ({ id: d.id, data: d.data() }));
 
-/** Load every inventory collection the validator reads (admin SDK). */
+/**
+ * Load every inventory collection the validator reads (admin SDK).
+ *
+ * Products are read whole, archived included, and must stay that way: archiving is a
+ * visibility flag, not a statement about the data. An archived product keeps its lots
+ * and its book stock, so it stays in scope for every invariant.
+ */
 export async function loadAllInventory(db: Firestore): Promise<ValidationInput> {
   const [
     products, lots, consumptions, invoices, itemCogs,

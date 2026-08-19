@@ -189,6 +189,8 @@ export function ProductStockInSummary() {
       },
     );
 
+    // Deliberately unfiltered: this reports what was purchased in a period, and a
+    // product archived since then was still bought then.
     const unsubProducts = onSnapshot(
       query(collection(db, COLLECTIONS.products)),
       (snap) => {

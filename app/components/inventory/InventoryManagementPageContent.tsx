@@ -15,6 +15,7 @@ import {
 import type { ProductDoc } from "@/lib/types/firestore";
 import { DiscardInventoryForm } from "@/app/components/inventory/DiscardInventoryForm";
 import { InventoryDiscardList } from "@/app/components/inventory/InventoryDiscardList";
+import { isProductActive } from "@/lib/products/archive";
 import { InventoryHealthDashboard } from "@/app/components/inventory/InventoryHealthDashboard";
 import { InventoryMovementLog } from "@/app/components/inventory/InventoryMovementLog";
 import { InventoryStockOperationsTab } from "@/app/components/inventory/InventoryStockOperationsTab";
@@ -62,7 +63,13 @@ export function InventoryManagementPageContent() {
         setError(null);
         setLoading(false);
         const next: Row[] = [];
-        snap.forEach((docSnap) => next.push({ id: docSnap.id, ...(docSnap.data() as ProductDoc) }));
+        snap.forEach((docSnap) => {
+          const data = docSnap.data() as ProductDoc;
+          // Archived products drop out of stock KPIs, the stock table and low-stock
+          // alerts. Their lots still exist and the validator still checks them.
+          if (!isProductActive(data)) return;
+          next.push({ id: docSnap.id, ...data });
+        });
         setRows(next);
       },
       (err) => {

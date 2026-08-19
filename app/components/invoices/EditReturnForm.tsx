@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useProductNames } from "@/lib/firestore/referenceData";
 import {
   loadReturnableContext,
   postReturn,
@@ -91,20 +90,9 @@ export function EditReturnForm({
   const [settlementType, setSettlementType] = useState(initialSettlementType);
   const [returnReason, setReturnReason] = useState(initialReturnReason);
   const [notes, setNotes] = useState(initialNotes);
-  const [productNames, setProductNames] = useState<Map<string, string>>(new Map());
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const map = new Map<string, string>();
-      snap.forEach((d) => {
-        const name = (d.data().name as string | undefined)?.trim();
-        map.set(d.id, name || d.id);
-      });
-      setProductNames(map);
-    });
-    return () => unsub();
-  }, []);
+  // Spans archived products — return lines point at past purchases, which may be
+  // of a product that has since been retired.
+  const productNames = useProductNames();
 
   useEffect(() => {
     let cancelled = false;

@@ -83,6 +83,7 @@ function toRow(product: SuggestionProduct, metricLabel: string, metricValue: num
     imageUrl: product.imageUrl,
     imagePath: product.imagePath,
     createdAtMs: product.createdAt ? product.createdAt.getTime() : undefined,
+    isActive: product.isActive,
     metricLabel,
     metricValue,
   };

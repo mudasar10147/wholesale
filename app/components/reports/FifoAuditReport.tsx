@@ -48,6 +48,8 @@ export function FifoAuditReport() {
       if (done >= total) setLoading(false);
     };
 
+    // Deliberately unfiltered: this audit reconciles book stock against open lots,
+    // and an archived product with a mismatch is exactly what must not be hidden.
     const unsubProducts = onSnapshot(
       query(collection(db, COLLECTIONS.products)),
       (snap) => {

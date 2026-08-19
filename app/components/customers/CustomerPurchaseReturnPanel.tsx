@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { useProductNames } from "@/lib/firestore/referenceData";
 import { CreateReturnLineModal } from "@/app/components/customers/CreateReturnLineModal";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -37,7 +38,8 @@ function formatDate(line: CustomerPurchaseLine): string {
 
 export function CustomerPurchaseReturnPanel() {
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
-  const [productNames, setProductNames] = useState<Map<string, string>>(new Map());
+  // Spans archived products — this panel is the customer's purchase/return history.
+  const productNames = useProductNames();
   const [customerId, setCustomerId] = useState("");
   const [productSearch, setProductSearch] = useState("");
   const [showFullyReturned, setShowFullyReturned] = useState(false);
@@ -63,17 +65,8 @@ export function CustomerPurchaseReturnPanel() {
         setError(getFirestoreUserMessage(err));
       },
     );
-    const unsubProducts = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const map = new Map<string, string>();
-      snap.forEach((d) => {
-        const name = (d.data().name as string | undefined)?.trim();
-        map.set(d.id, name || d.id);
-      });
-      setProductNames(map);
-    });
     return () => {
       unsubCustomers();
-      unsubProducts();
     };
   }, []);
 

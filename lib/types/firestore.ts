@@ -34,6 +34,14 @@ export type ProductDoc = {
   opening_ledger_status?: LedgerStatus;
   opening_inventory_transaction_id?: string;
   opening_ledger_error?: string;
+  /**
+   * Archived products are hidden from pickers, catalogs and valuation but keep
+   * their history. Optional (unlike `CustomerDoc.is_active`) because products
+   * predate the flag: absent means active, so no backfill is needed. Always read
+   * it through `isProductActive` in `@/lib/products/archive`.
+   */
+  is_active?: boolean;
+  archived_at?: Timestamp;
   created_at: Timestamp;
 };
 

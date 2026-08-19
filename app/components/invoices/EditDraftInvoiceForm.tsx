@@ -7,7 +7,7 @@ import { offerDiscountForQuantity, seedLineForProduct } from "@/lib/invoices/lin
 import { useLiveOffers } from "@/lib/firestore/liveOffers";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
-import { useCustomers, useProducts } from "@/lib/firestore/referenceData";
+import { useActiveProducts, useCustomers, useProductNames } from "@/lib/firestore/referenceData";
 import { updateDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
@@ -119,7 +119,7 @@ export function EditDraftInvoiceForm({
 }: Props) {
   // Shared session-wide subscriptions — see lib/firestore/referenceData.ts.
   const { rows: customerRows, loading: loadingCustomers } = useCustomers();
-  const { rows: productRows, loading: loadingProducts } = useProducts();
+  const { rows: productRows, loading: loadingProducts } = useActiveProducts();
 
   const customers = useMemo<CustomerOption[]>(() => {
     const list: CustomerOption[] = [];
@@ -216,10 +216,9 @@ export function EditDraftInvoiceForm({
   const [error, setError] = useState<string | null>(null);
   const [stockGateMessage, setStockGateMessage] = useState<string | null>(null);
 
-  const productNameById = useMemo(
-    () => new Map(products.map((p) => [p.id, p.name] as const)),
-    [products],
-  );
+  // Spans archived products too — a draft saved before a product was retired
+  // keeps that line, and the return lines point at older purchases still.
+  const productNameById = useProductNames();
   const returnLines = useInvoiceReturnLines(customerId, initialSeed.returnRows);
 
   const purchaseOptions = useMemo(
@@ -417,7 +416,7 @@ export function EditDraftInvoiceForm({
       });
       const customer = customers.find((c) => c.id === customerId);
       if (customer) {
-        const productNames = new Map(products.map((p) => [p.id, p.name] as const));
+        const productNames = productNameById;
         try {
           await printPosReceipt(
             buildPosReceiptInputFromCalc({

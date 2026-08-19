@@ -10,6 +10,7 @@ import { SalesCatalogPdfModal } from "@/app/components/share/SalesCatalogPdfModa
 import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import { useLiveOffers } from "@/lib/firestore/liveOffers";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
+import { isProductActive } from "@/lib/products/archive";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { Button } from "@/app/components/ui/Button";
 import { Input } from "@/app/components/ui/Input";
@@ -45,10 +46,10 @@ export function SalesCatalogByCategory() {
       (snapshot) => {
         const nextRows: ProductRow[] = [];
         snapshot.forEach((docSnapshot) => {
-          nextRows.push({
-            id: docSnapshot.id,
-            ...(docSnapshot.data() as ProductDoc),
-          });
+          const data = docSnapshot.data() as ProductDoc;
+          // A retired product is not for sale, so it never reaches the catalog.
+          if (!isProductActive(data)) return;
+          nextRows.push({ id: docSnapshot.id, ...data });
         });
         setRows(nextRows);
         setLoading(false);

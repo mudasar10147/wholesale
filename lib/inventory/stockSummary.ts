@@ -1,6 +1,7 @@
 import { collection, getDocs, type Firestore } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { DEFAULT_LOW_STOCK_THRESHOLD } from "@/lib/inventory/lowStock";
+import { archivedProductIds } from "@/lib/products/archive";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 
 /** Products at or below this level appear in `lowStockItems`. */
@@ -30,6 +31,16 @@ export type StockSummaryData = {
   reorderCount: number;
   /** Products with stock_quantity === 0. */
   outOfStockCount: number;
+  /** Archived products excluded from every figure above. */
+  archivedProductCount: number;
+  /** Units still on hand under archived products, excluded from `totalUnits`. */
+  archivedUnits: number;
+  /**
+   * Lot value excluded from `totalValueAtLotCost` because its product is archived.
+   * Reported rather than dropped: the stock physically exists and the inventory
+   * validator still counts it, so the dashboard must be able to explain the gap.
+   */
+  archivedValueAtLotCost: number;
 };
 
 /**
@@ -38,6 +49,11 @@ export type StockSummaryData = {
  * Pure — takes documents the caller already holds. Keeping the fetch out of here
  * is what lets the dashboard read `products` and `stock_lots` once and share them
  * across every panel instead of re-querying per panel.
+ *
+ * Archived products are excluded from every headline figure, including the lots
+ * they still hold. That stock has not gone anywhere — the validator and invariant
+ * P1 still count it — so the excluded amount comes back as `archivedUnits` and
+ * `archivedValueAtLotCost` for the dashboard to show as a reconciling footnote.
  */
 export function computeStockSummary(
   products: readonly { id: string; data: ProductDoc }[],
@@ -48,10 +64,21 @@ export function computeStockSummary(
   let totalValueAtRetail = 0;
   let reorderCount = 0;
   let outOfStockCount = 0;
+  let activeProductCount = 0;
+  let archivedProductCount = 0;
+  let archivedUnits = 0;
+  const archivedIds = archivedProductIds(products);
   const low: LowStockItem[] = [];
 
   for (const { id, data: d } of products) {
     const qty = typeof d.stock_quantity === "number" ? d.stock_quantity : 0;
+
+    if (archivedIds.has(id)) {
+      archivedProductCount += 1;
+      archivedUnits += qty;
+      continue;
+    }
+    activeProductCount += 1;
     const cost = typeof d.cost_price === "number" ? d.cost_price : 0;
     const sale = typeof d.sale_price === "number" ? d.sale_price : 0;
     totalUnits += qty;
@@ -74,6 +101,7 @@ export function computeStockSummary(
   }
 
   let totalValueAtLotCost = 0;
+  let archivedValueAtLotCost = 0;
   for (const lot of stockLots) {
     const qty =
       typeof lot.qty_remaining === "number" && Number.isInteger(lot.qty_remaining)
@@ -82,7 +110,11 @@ export function computeStockSummary(
     const unitCost =
       typeof lot.unit_cost === "number" && Number.isFinite(lot.unit_cost) ? lot.unit_cost : 0;
     if (qty > 0) {
-      totalValueAtLotCost += qty * unitCost;
+      if (archivedIds.has(lot.product_id)) {
+        archivedValueAtLotCost += qty * unitCost;
+      } else {
+        totalValueAtLotCost += qty * unitCost;
+      }
     }
   }
 
@@ -93,7 +125,7 @@ export function computeStockSummary(
   low.sort((a, b) => a.stock_quantity - b.stock_quantity);
 
   return {
-    productCount: products.length,
+    productCount: activeProductCount,
     totalUnits,
     totalValueAtCost,
     lowStockItems: low,
@@ -103,6 +135,9 @@ export function computeStockSummary(
     inventoryMarginPct,
     reorderCount,
     outOfStockCount,
+    archivedProductCount,
+    archivedUnits,
+    archivedValueAtLotCost,
   };
 }
 

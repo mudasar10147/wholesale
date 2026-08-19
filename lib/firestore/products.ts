@@ -96,6 +96,7 @@ export async function createProduct(db: Firestore, input: CreateProductInput): P
       cost_price: input.cost_price,
       sale_price,
       stock_quantity: 0,
+      is_active: true,
       created_at: serverTimestamp(),
     };
     if (cat) {
@@ -218,4 +219,27 @@ export async function updateProductSalePrice(
     throw new Error("Sale price must be zero or greater.");
   }
   await updateDoc(doc(db, COLLECTIONS.products, productId), { sale_price: salePrice });
+}
+
+/**
+ * Retire a product: hidden from pickers, catalogs and valuation, history kept.
+ *
+ * Deliberately touches no stock field, so this needs no transaction and no entry in
+ * docs/inventory/WRITER_INVENTORY.md. Any stock still on hand keeps its lots and is
+ * still checked by the inventory validator — it just stops counting toward the
+ * dashboard figures. Reversible via {@link restoreProduct}.
+ */
+export async function archiveProduct(db: Firestore, productId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.products, productId), {
+    is_active: false,
+    archived_at: serverTimestamp(),
+  });
+}
+
+/** Undo {@link archiveProduct}, putting the product back on every surface. */
+export async function restoreProduct(db: Firestore, productId: string): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.products, productId), {
+    is_active: true,
+    archived_at: deleteField(),
+  });
 }

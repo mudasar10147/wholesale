@@ -15,6 +15,12 @@ export type SocialProductRow = {
    * the social role (no cost, customer, or supplier data). Absent for pre-existing rows.
    */
   createdAtMs?: number;
+  /**
+   * False once the product is archived. Archived rows stay in the planner's lookup so a
+   * post that already references one keeps resolving — dropping them would blank the
+   * product out of the post on the next save — but they are kept out of the pickers.
+   */
+  isActive: boolean;
 };
 
 /** The four data-driven lenses in the suggestions popup. */

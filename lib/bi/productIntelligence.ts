@@ -11,6 +11,7 @@ import { num, timestampToDate, type WithId } from "@/lib/bi/dataset";
 import { MS_PER_DAY, startOfLocalDay } from "@/lib/bi/periods";
 import { grossMarginPct, markupPct, roundMoney2 } from "@/lib/bi/finance";
 import { isReportableSale, saleCogs } from "@/lib/bi/monthlySeries";
+import { isProductActive } from "@/lib/products/archive";
 
 /** No sale in this many days, with stock on hand, counts as dead. */
 export const DEAD_STOCK_DAYS = 180;
@@ -183,7 +184,11 @@ export function buildProductIntelligence(input: ProductIntelligenceInput): Produ
     }
   }
 
-  const products: ProductIntelRow[] = input.products.map((row) => {
+  // Archived products are retired lines — ranking them as slow-moving or dead stock
+  // would just be advice to act on something already dealt with.
+  const activeProducts = input.products.filter((row) => isProductActive(row.data));
+
+  const products: ProductIntelRow[] = activeProducts.map((row) => {
     const doc = row.data;
     const agg = salesByProduct.get(row.id);
     const lots = lotsByProduct.get(row.id);

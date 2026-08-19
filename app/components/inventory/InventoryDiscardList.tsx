@@ -13,8 +13,9 @@ import {
 } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { useProductNames } from "@/lib/firestore/referenceData";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import type { InventoryDiscardDoc, InventoryDiscardItemDoc, ProductDoc } from "@/lib/types/firestore";
+import type { InventoryDiscardDoc, InventoryDiscardItemDoc } from "@/lib/types/firestore";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 
@@ -36,7 +37,6 @@ function formatDate(ts: Timestamp | undefined) {
 
 export function InventoryDiscardList() {
   const [rows, setRows] = useState<DiscardRow[]>([]);
-  const [products, setProducts] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -69,18 +69,8 @@ export function InventoryDiscardList() {
     return () => unsub();
   }, []);
 
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const map = new Map<string, string>();
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as ProductDoc;
-        map.set(docSnap.id, d.name);
-      });
-      setProducts(map);
-    });
-    return () => unsub();
-  }, []);
+  // Spans archived products — a discard record is history and keeps its name.
+  const products = useProductNames();
 
   const productName = useMemo(
     () => (productId: string) => products.get(productId) ?? productId,

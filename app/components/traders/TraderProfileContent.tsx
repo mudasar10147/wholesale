@@ -6,8 +6,9 @@ import { useParams } from "next/navigation";
 import { collection, doc, getDoc, onSnapshot } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { useProductNames } from "@/lib/firestore/referenceData";
 import { COLLECTIONS } from "@/lib/firestore/collections";
-import type { ProductDoc, StockLotDoc, TraderDoc } from "@/lib/types/firestore";
+import type { StockLotDoc, TraderDoc } from "@/lib/types/firestore";
 import { computeTraderPurchaseStats } from "@/lib/inventory/traderPurchaseStats";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -40,7 +41,8 @@ export function TraderProfileContent() {
   const [traderError, setTraderError] = useState<string | null>(null);
 
   const [lots, setLots] = useState<LotRow[]>([]);
-  const [productNames, setProductNames] = useState<Map<string, string>>(() => new Map());
+  // Spans archived products — this is the trader's purchase history.
+  const productNames = useProductNames();
 
   useEffect(() => {
     if (!traderId) return;
@@ -71,14 +73,6 @@ export function TraderProfileContent() {
     return () => unsub();
   }, []);
 
-  useEffect(() => {
-    const unsub = onSnapshot(collection(getDb(), COLLECTIONS.products), (snap) => {
-      const map = new Map<string, string>();
-      snap.forEach((d) => map.set(d.id, (d.data() as ProductDoc).name ?? d.id));
-      setProductNames(map);
-    });
-    return () => unsub();
-  }, []);
 
   const stats = useMemo(
     () => computeTraderPurchaseStats(lots, traderId),

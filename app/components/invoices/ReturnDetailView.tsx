@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { collection, doc, getDoc, onSnapshot, type Timestamp } from "firebase/firestore";
+import { doc, getDoc, onSnapshot, type Timestamp } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteReturnDraft, postReturn } from "@/lib/firestore/invoiceReturns";
+import { useProductNames } from "@/lib/firestore/referenceData";
 import type { CustomerDoc, InvoiceReturnDoc, InvoiceReturnItemDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button } from "@/app/components/ui/Button";
@@ -55,7 +56,8 @@ export function ReturnDetailView({ returnId }: Props) {
   const [missing, setMissing] = useState(false);
   const [items, setItems] = useState<Array<{ id: string; data: InvoiceReturnItemDoc }>>([]);
   const [customerName, setCustomerName] = useState("");
-  const [productMap, setProductMap] = useState<Map<string, string>>(new Map());
+  // Spans archived products — a return is history, and its lines must keep their names.
+  const productMap = useProductNames();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -112,18 +114,6 @@ export function ReturnDetailView({ returnId }: Props) {
       cancelled = true;
     };
   }, [ret?.customer_id]);
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const map = new Map<string, string>();
-      snap.forEach((d) => {
-        map.set(d.id, (d.data().name as string)?.trim() || d.id);
-      });
-      setProductMap(map);
-    });
-    return () => unsub();
-  }, []);
 
   useEffect(() => {
     const itemIds = ret?.item_ids?.length ? ret.item_ids.filter(Boolean) : [];

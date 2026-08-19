@@ -1,13 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { collection, onSnapshot, query } from "firebase/firestore";
-import { getDb } from "@/lib/firebase";
-import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { useProducts } from "@/lib/firestore/referenceData";
+import { partitionProducts } from "@/lib/products/archive";
 import { getProductCompleteness, type ProductRow } from "@/lib/products/productCompleteness";
-import type { ProductDoc } from "@/lib/types/firestore";
 import { AddProductModal } from "@/app/components/products/AddProductModal";
 import { ProductCompletenessDashboard } from "@/app/components/products/ProductCompletenessDashboard";
 import { ProductList } from "@/app/components/products/ProductList";
@@ -17,14 +14,16 @@ import { StatCard } from "@/app/components/ui/StatCard";
 import { Card, CardContent } from "@/app/components/ui/Card";
 import { cn } from "@/lib/utils";
 
-type Tab = "all" | "completeness";
+type Tab = "all" | "archived" | "completeness";
 
 function formatMoney(n: number) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 function parseTab(value: string | null): Tab {
-  return value === "completeness" ? "completeness" : "all";
+  if (value === "completeness") return "completeness";
+  if (value === "archived") return "archived";
+  return "all";
 }
 
 export function ProductManagementPageContent() {
@@ -33,43 +32,28 @@ export function ProductManagementPageContent() {
   const searchParams = useSearchParams();
   const activeTab = parseTab(searchParams.get("tab"));
 
-  const [rows, setRows] = useState<ProductRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // One shared read for the whole page — the list and completeness tabs read the
+  // same store rather than each opening their own listener.
+  const { rows: productRows, loading, error } = useProducts();
   const [addOpen, setAddOpen] = useState(false);
 
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(
-      query(collection(db, COLLECTIONS.products)),
-      (snap) => {
-        setError(null);
-        setLoading(false);
-        const next: ProductRow[] = [];
-        snap.forEach((docSnap) => next.push({ id: docSnap.id, ...(docSnap.data() as ProductDoc) }));
-        setRows(next);
-      },
-      (err) => {
-        setLoading(false);
-        setError(getFirestoreUserMessage(err));
-      },
-    );
-    return () => unsub();
-  }, []);
-
   const kpis = useMemo(() => {
+    const all: ProductRow[] = productRows.map(({ id, data }) => ({ id, ...data }));
+    const { active, archived } = partitionProducts(all);
     let units = 0;
     let valueAtCost = 0;
     let incomplete = 0;
-    for (const row of rows) {
+    // Every headline figure counts active products only — archiving a product is
+    // what takes its stock out of the catalog's value.
+    for (const row of active) {
       const stock = typeof row.stock_quantity === "number" ? row.stock_quantity : 0;
       const cost = typeof row.cost_price === "number" ? row.cost_price : 0;
       units += stock;
       valueAtCost += cost * stock;
       if (!getProductCompleteness(row).complete) incomplete += 1;
     }
-    return { total: rows.length, units, valueAtCost, incomplete };
-  }, [rows]);
+    return { total: active.length, units, valueAtCost, incomplete, archived: archived.length };
+  }, [productRows]);
 
   const setTab = useCallback(
     (tab: Tab) => {
@@ -88,6 +72,7 @@ export function ProductManagementPageContent() {
       id: "completeness",
       label: kpis.incomplete > 0 ? `Catalog completeness (${kpis.incomplete})` : "Catalog completeness",
     },
+    { id: "archived", label: kpis.archived > 0 ? `Archived (${kpis.archived})` : "Archived" },
   ];
 
   return (
@@ -140,14 +125,25 @@ export function ProductManagementPageContent() {
         ))}
       </div>
 
-      {activeTab === "all" ? (
+      {activeTab === "completeness" ? (
+        <ProductCompletenessDashboard variant="embedded" />
+      ) : (
         <Card>
           <CardContent>
-            <ProductList />
+            {activeTab === "archived" ? (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Archived products are hidden from pickers, catalogs, dashboards and stock
+                  valuation. Their history is kept, so old invoices and ledger records still
+                  show them. Restore puts a product back everywhere.
+                </p>
+                <ProductList scope="archived" />
+              </div>
+            ) : (
+              <ProductList />
+            )}
           </CardContent>
         </Card>
-      ) : (
-        <ProductCompletenessDashboard variant="embedded" />
       )}
     </div>
   );

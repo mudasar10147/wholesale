@@ -9,7 +9,7 @@ import { offerDiscountForQuantity, seedLineForProduct } from "@/lib/invoices/lin
 import { useLiveOffers } from "@/lib/firestore/liveOffers";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
-import { useCustomers, useProducts } from "@/lib/firestore/referenceData";
+import { useActiveProducts, useCustomers, useProductNames } from "@/lib/firestore/referenceData";
 import { createDraftInvoice } from "@/lib/firestore/invoices";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { calculateCounterSaleSummary } from "@/lib/invoices/counterSaleCalculations";
@@ -128,7 +128,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
 
   // Shared session-wide subscriptions — see lib/firestore/referenceData.ts.
   const { rows: customerRows, loading: loadingCustomers } = useCustomers();
-  const { rows: productRows, loading: loadingProducts } = useProducts();
+  const { rows: productRows, loading: loadingProducts } = useActiveProducts();
 
   const customers = useMemo<CustomerOption[]>(() => {
     const list: CustomerOption[] = [];
@@ -164,10 +164,9 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
     return list;
   }, [productRows]);
 
-  const productNameById = useMemo(
-    () => new Map(products.map((p) => [p.id, p.name] as const)),
-    [products],
-  );
+  // Spans archived products too: counter-sale return lines point at past
+  // purchases, which may well be of a product that has since been retired.
+  const productNameById = useProductNames();
   const returnLines = useInvoiceReturnLines(customerId);
 
   const purchaseOptions = useMemo(
@@ -375,7 +374,7 @@ export function AddInvoiceForm({ redirectTo, initialCustomerId }: AddInvoiceForm
       const customer = customers.find((c) => c.id === customerId);
       let printErrorMessage: string | null = null;
       if (customer) {
-        const productNames = new Map(products.map((p) => [p.id, p.name] as const));
+        const productNames = productNameById;
         const createdAtLabel = new Date().toLocaleString(undefined, {
           dateStyle: "medium",
           timeStyle: "short",

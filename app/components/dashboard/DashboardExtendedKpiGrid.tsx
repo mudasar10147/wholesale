@@ -140,7 +140,11 @@ export function DashboardExtendedKpiGrid({
         <StatCard
           label="Products"
           value={stock ? stock.productCount.toLocaleString() : "—"}
-          hint="Total SKUs carried."
+          hint={
+            stock && stock.archivedProductCount > 0
+              ? `Active SKUs carried. ${stock.archivedProductCount.toLocaleString()} archived, not counted.`
+              : "Total SKUs carried."
+          }
         />
         <StatCard
           label="Products need reorder"
@@ -161,7 +165,11 @@ export function DashboardExtendedKpiGrid({
 
       <KpiSection
         title="Inventory on hand"
-        description="Current snapshot of stock held."
+        description={
+          stock && stock.archivedProductCount > 0
+            ? `Current snapshot of stock held. Excludes ${stock.archivedProductCount.toLocaleString()} archived product${stock.archivedProductCount === 1 ? "" : "s"} holding ${stock.archivedUnits.toLocaleString()} unit${stock.archivedUnits === 1 ? "" : "s"} (${formatMoney(stock.archivedValueAtLotCost)} at lot cost) — that stock still exists and is still checked by the inventory validator.`
+            : "Current snapshot of stock held."
+        }
       >
         <StatCard
           label="Inventory at retail"

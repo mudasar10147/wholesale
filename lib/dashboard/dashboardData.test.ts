@@ -152,3 +152,28 @@ test("empty data produces zeroes rather than throwing", () => {
   assert.equal(d.ytdWeeklySales.avgWeeklySales, null);
   assert.equal(d.cash.totalCashInHand, 0);
 });
+
+test("archiving a product removes it from stock but never rewrites past profit", () => {
+  const range = { start: new Date("2026-08-13T00:00:00"), end: new Date("2026-08-13T23:59:59") };
+
+  const before = computeDashboard(sampleRaw(), range, NOW);
+
+  // Retire p1 — the product every in-period sale was made against.
+  const raw = sampleRaw();
+  raw.products = raw.products.map((row) =>
+    row.id === "p1" ? { ...row, data: { ...row.data, is_active: false } } : row,
+  ) as DashboardRaw["products"];
+  const after = computeDashboard(raw, range, NOW);
+
+  // Profit is history: it must be identical. buildCostMap still sees the product.
+  assert.deepEqual(after.profit, before.profit);
+
+  // Stock is "what we hold now": p1 and its 10 units drop out, and are reported
+  // separately so the dashboard can explain the gap to the inventory validator.
+  assert.equal(before.stock.productCount, 3);
+  assert.equal(after.stock.productCount, 2);
+  assert.equal(after.stock.totalUnits, before.stock.totalUnits - 10);
+  assert.equal(after.stock.totalValueAtCost, before.stock.totalValueAtCost - 10 * 50);
+  assert.equal(after.stock.archivedProductCount, 1);
+  assert.equal(after.stock.archivedUnits, 10);
+});

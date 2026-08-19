@@ -249,6 +249,23 @@ function buildPages(n) {
       ],
     },
     {
+      route: "/sales/[id] (invoice detail)",
+      note: "P4: product names now come from the shared store instead of a per-view listener",
+      reads: [
+        ["InvoiceDetailView → invoice + items", 0],
+        ["products (shared, first use only)", 0],
+      ],
+    },
+    {
+      route: "/sales/[id] (pre-P4)",
+      baseline: true,
+      note: "BASELINE — every invoice/return detail view opened its own products listener",
+      reads: [
+        ["InvoiceDetailView → invoice + items", 0],
+        ["InvoiceDetailView → products", n.products],
+      ],
+    },
+    {
       route: "/sales/new",
       note: "Shared reference data: products + customers already loaded this session",
       reads: [
@@ -278,8 +295,20 @@ function buildPages(n) {
     },
     {
       route: "/products",
-      note: "traders shared; ProductList + ProductStockInSummary still read products separately",
+      note: "P4: page shell + ProductList + completeness tab all read the shared product store",
       reads: [
+        ["products (shared, first use only)", n.products],
+        ["ProductStockInSummary → products", n.products],
+        ["ProductStockInSummary → stock_lots", n.stockLots],
+        ["traders (shared, first use only)", 0],
+      ],
+    },
+    {
+      route: "/products (pre-P4)",
+      baseline: true,
+      note: "BASELINE — page shell, ProductList and ProductStockInSummary each read products",
+      reads: [
+        ["ProductManagementPageContent → products", n.products],
         ["ProductList → products", n.products],
         ["ProductStockInSummary → products", n.products],
         ["ProductStockInSummary → stock_lots", n.stockLots],
