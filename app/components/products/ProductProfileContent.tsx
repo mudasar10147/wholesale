@@ -19,6 +19,9 @@ import { getSignedProductImageUrl } from "@/lib/upload/productImages";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
 import { ConnectedNewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
+import { ArchivedBadge } from "@/app/components/products/ArchivedBadge";
+import { archiveProduct, restoreProduct } from "@/lib/firestore/products";
+import { archiveConfirmMessage, isProductArchived } from "@/lib/products/archive";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import {
@@ -169,6 +172,8 @@ export function ProductProfileContent() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [showLots, setShowLots] = useState(false);
+  const [archivePending, setArchivePending] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
   const traderLookup = useTraderLookup();
 
   const loadProfile = useCallback(
@@ -234,6 +239,24 @@ export function ProductProfileContent() {
   useEffect(() => {
     void loadProfile();
   }, [loadProfile]);
+
+  const handleArchiveToggle = useCallback(async () => {
+    if (!product) return;
+    const archived = isProductArchived(product);
+    if (!archived && !window.confirm(archiveConfirmMessage(product))) return;
+
+    setArchiveError(null);
+    setArchivePending(true);
+    try {
+      if (archived) await restoreProduct(getDb(), product.id);
+      else await archiveProduct(getDb(), product.id);
+      await loadProfile({ soft: true });
+    } catch (err) {
+      setArchiveError(getFirestoreUserMessage(err));
+    } finally {
+      setArchivePending(false);
+    }
+  }, [product, loadProfile]);
 
   const analytics = useMemo(() => {
     if (!product) {
@@ -391,10 +414,37 @@ export function ProductProfileContent() {
         >
           ← Back to products
         </Link>
-        <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setEditing(true)}>
-          Edit details
-        </Button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button type="button" variant="outline" className="w-full sm:w-auto" onClick={() => setEditing(true)}>
+            Edit details
+          </Button>
+          <Button
+            type="button"
+            variant={isProductArchived(product) ? "outline" : "destructive"}
+            className="w-full sm:w-auto"
+            disabled={archivePending}
+            onClick={() => void handleArchiveToggle()}
+          >
+            {archivePending
+              ? isProductArchived(product)
+                ? "Restoring…"
+                : "Archiving…"
+              : isProductArchived(product)
+                ? "Restore product"
+                : "Archive product"}
+          </Button>
+        </div>
       </div>
+
+      {archiveError ? <InlineAlert variant="error">{archiveError}</InlineAlert> : null}
+
+      {isProductArchived(product) ? (
+        <InlineAlert variant="warning">
+          This product is archived. It is hidden from pickers, catalogs, dashboards and stock
+          valuation, and any stock still on hand is excluded from inventory value. Its history
+          below is unaffected. Use Restore to bring it back.
+        </InlineAlert>
+      ) : null}
 
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
         <div className="shrink-0">
@@ -404,6 +454,7 @@ export function ProductProfileContent() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">{product.name}</h1>
             <ConnectedNewArrivalBadge createdAt={product.created_at} />
+            <ArchivedBadge product={product} />
           </div>
           <p className="text-sm text-muted-foreground">
             <span className="font-medium text-foreground">Category:</span> {product.category?.trim() || "—"}

@@ -9,9 +9,12 @@
  *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json node scripts/diagnostics/read-cost.mjs
  *   GOOGLE_APPLICATION_CREDENTIALS=/path/to/sa.json node scripts/diagnostics/read-cost.mjs --project prod
  *   ... --views 12          # project a daily total over N page views
+ *   ... --baselines         # also print the superseded call paths in full
  *
- * The page models below mirror the code as it exists today; see PAGES for the
- * call path each line came from.
+ * The page models mirror the code as it exists today. Entries marked
+ * `baseline: true` are the call paths that were replaced; they are kept only so
+ * before/after is measured rather than recalled, and are summarised rather than
+ * printed unless --baselines is passed.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -161,6 +164,7 @@ function buildPages(n) {
     },
     {
       route: "/ (dashboard, pre-P1)",
+      baseline: true,
       note: "BASELINE for comparison — the five-loader version this replaced",
       reads: [
         ["loadCashInHandSnapshot → sales", n.sales],
@@ -195,6 +199,7 @@ function buildPages(n) {
     },
     {
       route: "/customers (pre-P2)",
+      baseline: true,
       note: "BASELINE — 4 panels CSS-hidden, so every listener attached",
       reads: [
         ["CustomerKpiCards → customers", n.customers],
@@ -235,13 +240,29 @@ function buildPages(n) {
     },
     {
       route: "/sales",
-      note: "InvoiceDraftList + ReturnList",
+      note: "InvoiceDraftList + ReturnList; customer names come from the shared store",
       reads: [
-        ["InvoiceDraftList → invoice_returns", n.invoiceReturns],
         ["InvoiceDraftList → invoices", n.invoices],
-        ["InvoiceDraftList → customers", n.customers],
-        ["ReturnList → customers", n.customers],
+        ["InvoiceDraftList → invoice_returns", n.invoiceReturns],
         ["ReturnList → invoice_returns", n.invoiceReturns],
+        ["customers (shared, first use only)", 0],
+      ],
+    },
+    {
+      route: "/sales/[id] (invoice detail)",
+      note: "P4: product names now come from the shared store instead of a per-view listener",
+      reads: [
+        ["InvoiceDetailView → invoice + items", 0],
+        ["products (shared, first use only)", 0],
+      ],
+    },
+    {
+      route: "/sales/[id] (pre-P4)",
+      baseline: true,
+      note: "BASELINE — every invoice/return detail view opened its own products listener",
+      reads: [
+        ["InvoiceDetailView → invoice + items", 0],
+        ["InvoiceDetailView → products", n.products],
       ],
     },
     {
@@ -255,6 +276,7 @@ function buildPages(n) {
     },
     {
       route: "/sales/new (pre-shared)",
+      baseline: true,
       note: "BASELINE — every visit re-read both collections",
       reads: [
         ["AddInvoiceForm → customers", n.customers],
@@ -273,11 +295,24 @@ function buildPages(n) {
     },
     {
       route: "/products",
+      note: "P4: page shell + ProductList + completeness tab all read the shared product store",
       reads: [
-        ["ProductList → products", n.products],
-        ["ProductStockInSummary → stock_lots", n.stockLots],
+        ["products (shared, first use only)", n.products],
         ["ProductStockInSummary → products", n.products],
-        ["TraderSelectInput → traders", n.traders],
+        ["ProductStockInSummary → stock_lots", n.stockLots],
+        ["traders (shared, first use only)", 0],
+      ],
+    },
+    {
+      route: "/products (pre-P4)",
+      baseline: true,
+      note: "BASELINE — page shell, ProductList and ProductStockInSummary each read products",
+      reads: [
+        ["ProductManagementPageContent → products", n.products],
+        ["ProductList → products", n.products],
+        ["ProductStockInSummary → products", n.products],
+        ["ProductStockInSummary → stock_lots", n.stockLots],
+        ["traders (shared, first use only)", 0],
       ],
     },
     {
@@ -292,6 +327,7 @@ function buildPages(n) {
     },
     {
       route: "/inventory (pre-P3)",
+      baseline: true,
       note: "BASELINE — every line ever written, to render 100 rows",
       reads: [
         ["InventoryMovementLog → inventory_transactions (limit 100)", Math.min(100, n.inventoryTransactions)],
@@ -402,50 +438,86 @@ async function main() {
     console.log(`  ${name.padEnd(30)} ${fmt(c).padStart(9)}`);
   }
 
-  console.log("\n━━ Cost per page view ━━");
   const pages = buildPages(n);
   const totals = [];
   for (const page of pages) {
-    const total = page.reads.reduce((s, [, c]) => s + c, 0);
-    totals.push([page.route, total]);
-    console.log(`\n  ${page.route}  →  ${fmt(total)} reads`);
+    page.total = page.reads.reduce((s, [, c]) => s + c, 0);
+    totals.push([page.route, page.total]);
+  }
+
+  // Superseded call paths are kept for before/after arithmetic, but printing them
+  // beside current figures makes the loudest numbers on screen the obsolete ones.
+  const showBaselines = process.argv.includes("--baselines");
+  const current = pages.filter((p) => !p.baseline);
+
+  console.log("\n━━ Cost per page view ━━");
+  for (const page of current) {
+    console.log(`\n  ${page.route}  →  ${fmt(page.total)} reads`);
     if (page.note) console.log(`  ${"".padEnd(2)}(${page.note})`);
     for (const [label, c] of page.reads) {
       console.log(`      ${label.padEnd(48)} ${fmt(c).padStart(8)}`);
     }
   }
 
-  console.log("\n━━ Ranked ━━");
-  for (const [route, total] of [...totals].sort((a, b) => b[1] - a[1])) {
-    console.log(`  ${route.padEnd(28)} ${fmt(total).padStart(9)} reads/view`);
+  console.log("\n━━ Ranked (current code) ━━");
+  for (const page of [...current].sort((a, b) => b.total - a.total)) {
+    console.log(`  ${page.route.padEnd(34)} ${fmt(page.total).padStart(9)} reads/view`);
+  }
+
+  const byRoute = new Map(pages.map((p) => [p.route, p.total]));
+  const IMPROVEMENTS = [
+    ["/ (dashboard home)", "/ (dashboard, pre-P1)", "read each collection once"],
+    ["/customers", "/customers (pre-P2)", "mount only the open tab"],
+    ["/inventory", "/inventory (pre-P3)", "scope lines to shown rows"],
+    ["/sales/new", "/sales/new (pre-shared)", "share reference data"],
+  ];
+  console.log("\n━━ Before → after ━━");
+  let savedTotal = 0;
+  for (const [afterKey, beforeKey, why] of IMPROVEMENTS) {
+    const after = byRoute.get(afterKey);
+    const before = byRoute.get(beforeKey);
+    if (after == null || before == null || before === 0) continue;
+    savedTotal += before - after;
+    const pct = Math.round(((before - after) / before) * 100);
+    console.log(
+      `  ${afterKey.padEnd(20)} ${fmt(before).padStart(6)} → ${fmt(after).padStart(6)}  −${String(pct).padStart(2)}%   ${why}`,
+    );
+  }
+  console.log(`  ${"".padEnd(20)} ${fmt(savedTotal).padStart(15)} reads saved per full pass`);
+
+  if (showBaselines) {
+    console.log("\n━━ Superseded call paths (--baselines) ━━");
+    for (const page of pages.filter((p) => p.baseline)) {
+      console.log(`\n  ${page.route}  →  ${fmt(page.total)} reads`);
+      for (const [label, c] of page.reads) {
+        console.log(`      ${label.padEnd(48)} ${fmt(c).padStart(8)}`);
+      }
+    }
+  } else {
+    console.log("\n  (run with --baselines to see the superseded call paths in full)");
   }
 
   const views = Number(arg("--views", "10"));
-  const dash = totals.find(([r]) => r.startsWith("/ ("))?.[1] ?? 0;
+  const dash = totals.find(([r]) => r.startsWith("/ (dashboard home)"))?.[1] ?? 0;
   console.log(`\n━━ Daily projection ━━`);
-  console.log(`  ${views} dashboard views/day  →  ${fmt(dash * views)} reads`);
   console.log(`  Spark free tier is 50,000 reads/day.`);
-  if (dash > 0) {
-    console.log(`  Dashboard views to exhaust the free tier: ${Math.ceil(50000 / dash)}`);
-  }
-
-  const after = totals.find(([r]) => r.startsWith("/ (dashboard home)"))?.[1] ?? 0;
-  const before = totals.find(([r]) => r.startsWith("/ (dashboard, pre-P1)"))?.[1] ?? 0;
-  if (before > 0 && after > 0) {
-    const cut = Math.round(((before - after) / before) * 100);
-    console.log(`\n━━ P1 effect ━━`);
-    console.log(`  before: ${fmt(before)} reads/view    after: ${fmt(after)} reads/view    −${cut}%`);
-    console.log(
-      `  Saved ${fmt(before - after)} reads per view by fetching each collection once.`,
-    );
-  }
+  console.log(
+    `  ${views} dashboard views, all cold  →  ${fmt(dash * views)} reads (${Math.ceil(50000 / Math.max(dash, 1))} views to exhaust)`,
+  );
+  console.log(
+    `  ...but the session cache means repeat visits and KPI-period switches cost 0,`,
+  );
+  console.log(
+    `  so ${views} views is typically 2-3 fetches ≈ ${fmt(dash * 3)} reads. Cold cost is the ceiling,`,
+  );
+  console.log(`  not the expected figure.`);
 
   console.log(`\n━━ Remaining waste ━━`);
   console.log(
     `  The dashboard still reads all ${fmt(n.sales)} sales and ${fmt(n.stockLots)} stock lots per view;`,
   );
   console.log(
-    `  together that is ${fmt(n.sales + n.stockLots)} of the ${fmt(after)} remaining reads. Only rollup/aggregate`,
+    `  together that is ${fmt(n.sales + n.stockLots)} of the ${fmt(dash)} remaining reads. Only rollup/aggregate`,
   );
   console.log(`  documents (P6) reduce those further — and sales grows daily.`);
 

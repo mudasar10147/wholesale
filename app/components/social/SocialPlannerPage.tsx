@@ -224,7 +224,7 @@ export function SocialPlannerPage() {
         <PostEditorModal
           target={postTarget}
           weekKey={weekKey}
-          allProducts={week.products}
+          allProducts={week.activeProducts}
           productsById={week.productsById}
           offers={week.offers}
           settings={week.settings}
@@ -243,7 +243,7 @@ export function SocialPlannerPage() {
       {offerTarget && uid ? (
         <OfferFormModal
           target={offerTarget}
-          allProducts={week.products}
+          allProducts={week.activeProducts}
           productsById={week.productsById}
           currencyPrefix={week.settings.currency_prefix}
           uid={uid}

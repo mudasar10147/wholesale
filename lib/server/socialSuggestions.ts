@@ -1,6 +1,7 @@
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import { getFirebaseAdminFirestore } from "@/lib/firebase/admin";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { isProductActive } from "@/lib/products/archive";
 import { defaultNewArrivalSettings } from "@/lib/products/newArrival";
 import {
   DEFAULT_NEW_ARRIVAL_THRESHOLD_DAYS,
@@ -50,22 +51,30 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
-/** Explicitly whitelists fields. Never spread the product doc — it contains `cost_price`. */
+/**
+ * Explicitly whitelists fields. Never spread the product doc — it contains `cost_price`.
+ * Archived products are dropped: there is no point suggesting a post about something
+ * that is no longer for sale.
+ */
 async function loadProducts(db: Firestore): Promise<SuggestionProduct[]> {
   const snap = await db.collection(COLLECTIONS.products).get();
-  return snap.docs.map((doc) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      name: str(data.name) ?? "Product",
-      category: str(data.category),
-      salePrice: num(data.sale_price),
-      stockQuantity: num(data.stock_quantity),
-      imageUrl: str(data.image_url),
-      imagePath: str(data.image_path),
-      createdAt: toDate(data.created_at),
-    };
-  });
+  return snap.docs
+    .filter((doc) => isProductActive(doc.data() as { is_active?: boolean }))
+    .map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        name: str(data.name) ?? "Product",
+        category: str(data.category),
+        salePrice: num(data.sale_price),
+        stockQuantity: num(data.stock_quantity),
+        imageUrl: str(data.image_url),
+        imagePath: str(data.image_path),
+        createdAt: toDate(data.created_at),
+        // Always true — the filter above already dropped the archived ones.
+        isActive: true,
+      };
+    });
 }
 
 /**

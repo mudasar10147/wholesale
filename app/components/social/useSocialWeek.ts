@@ -17,6 +17,7 @@ import {
 } from "@/lib/firestore/socialSettings";
 import { fetchSocialWeekPlan, type SocialWeekPlanRow } from "@/lib/firestore/socialWeekPlans";
 import { DEFAULT_SOCIAL_MEDIA_SETTINGS } from "@/lib/social/captions";
+import { isProductActive } from "@/lib/products/archive";
 import type { SocialProductRow } from "@/lib/social/types";
 import { shiftWeekKey } from "@/lib/social/weekKeys";
 import type { ProductDoc } from "@/lib/types/firestore";
@@ -25,7 +26,10 @@ import type { ProductDoc } from "@/lib/types/firestore";
 const RECENT_WEEKS = 2;
 
 export type SocialWeekData = {
+  /** Every product, archived included — the lookup source. Pickers want `activeProducts`. */
   products: SocialProductRow[];
+  /** Products still on sale; what a new post or offer may reference. */
+  activeProducts: SocialProductRow[];
   productsById: Map<string, SocialProductRow>;
   settings: SocialMediaSettings;
   offers: SocialOfferRow[];
@@ -60,10 +64,15 @@ export function useSocialWeek(weekKey: string): SocialWeekData {
   const [weekLoading, setWeekLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Spans archived products — see the note above `productsLoading`: a post resolves its
+  // product_ids through this map, so omitting one would blank it out on the next save.
   const productsById = useMemo(
     () => new Map(products.map((product) => [product.id, product])),
     [products],
   );
+
+  /** What the pickers offer. Archived products stay out of new posts and offers. */
+  const activeProducts = useMemo(() => products.filter((product) => product.isActive), [products]);
 
   // Products, offers and settings do not change per week — loaded once.
   useEffect(() => {
@@ -93,6 +102,7 @@ export function useSocialWeek(weekKey: string): SocialWeekData {
               data.created_at && typeof data.created_at.toMillis === "function"
                 ? data.created_at.toMillis()
                 : undefined,
+            isActive: isProductActive(data),
           });
         });
         rows.sort((a, b) => a.name.localeCompare(b.name));
@@ -162,6 +172,7 @@ export function useSocialWeek(weekKey: string): SocialWeekData {
 
   return {
     products,
+    activeProducts,
     productsById,
     settings,
     offers,

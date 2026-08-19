@@ -21,6 +21,7 @@
  */
 import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { isProductActive } from "@/lib/products/archive";
 import type {
   PhysicalCorrectionCostSource,
   PhysicalCorrectionClosedLot,
@@ -173,6 +174,8 @@ export async function searchProductsForCorrection(
   const matches: Array<{ hit: ProductSearchHit; rank: number }> = [];
   for (const d of snap.docs) {
     const p = d.data() as ProductDoc;
+    // A recount counts what is on the shelf; a retired product is not on it.
+    if (!isProductActive(p)) continue;
     const name = typeof p.name === "string" ? p.name : "";
     const lname = name.toLowerCase();
     const lid = d.id.toLowerCase();
@@ -227,6 +230,9 @@ export async function loadWorksheet(db: Firestore): Promise<WorksheetRow[]> {
   const rows: WorksheetRow[] = [];
   for (const d of prodSnap.docs) {
     const p = d.data() as ProductDoc;
+    // Same reasoning as the search above — you cannot count a retired product.
+    // Correcting one is still possible by id via previewCorrection/applyCorrection.
+    if (!isProductActive(p)) continue;
     const lots = lotsByProduct.get(d.id) ?? [];
     const openTotal = lots.reduce((s, l) => {
       const qr = intOr0(l.data.qty_remaining);

@@ -141,7 +141,7 @@ export function WeekPlanBuilder({ weekKey }: WeekPlanBuilderProps) {
         <PostEditorModal
           target={postTarget}
           weekKey={weekKey}
-          allProducts={week.products}
+          allProducts={week.activeProducts}
           productsById={week.productsById}
           offers={week.offers}
           settings={week.settings}
@@ -157,7 +157,7 @@ export function WeekPlanBuilder({ weekKey }: WeekPlanBuilderProps) {
       {offerTarget && uid ? (
         <OfferFormModal
           target={offerTarget}
-          allProducts={week.products}
+          allProducts={week.activeProducts}
           productsById={week.productsById}
           currencyPrefix={week.settings.currency_prefix}
           uid={uid}

@@ -8,6 +8,7 @@ import { collection, doc, getDoc, onSnapshot, query, where, type Timestamp } fro
 import { getDb } from "@/lib/firebase";
 import { logFirestoreError } from "@/lib/firebase/firestoreDebug";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
+import { useProductNames, useProducts } from "@/lib/firestore/referenceData";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { deleteDraftInvoice, postInvoice, recordInvoicePayment, updatePostedInvoiceDiscount, voidInvoice } from "@/lib/firestore/invoices";
 import { formatInvoiceVoidBlockedMessage } from "@/lib/firestore/invoiceReturns";
@@ -25,7 +26,7 @@ import {
 } from "@/lib/invoices/invoiceEffective";
 import { buildPosReceiptInputFromCalc, printPosReceipt } from "@/lib/invoices/posReceiptPdf";
 import { normalizeOrderId } from "@/lib/validation/contracts";
-import type { CustomerDoc, InvoiceDoc, InvoiceItemDoc, InvoiceReturnDoc, InvoiceReturnItemDoc, ProductDoc } from "@/lib/types/firestore";
+import type { CustomerDoc, InvoiceDoc, InvoiceItemDoc, InvoiceReturnDoc, InvoiceReturnItemDoc } from "@/lib/types/firestore";
 import { useAuth } from "@/app/components/auth/AuthProvider";
 import { Button, ButtonLink } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
@@ -85,8 +86,17 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     address: "",
     email: "",
   });
-  const [productMap, setProductMap] = useState<Map<string, string>>(new Map());
-  const [productStockById, setProductStockById] = useState<Map<string, number>>(new Map());
+  // Both span archived products: an invoice is history, so its lines must keep
+  // resolving names (and stock, for the draft post gate) after a product retires.
+  const { rows: productRows } = useProducts();
+  const productMap = useProductNames();
+  const productStockById = useMemo(() => {
+    const stocks = new Map<string, number>();
+    for (const { id, data } of productRows) {
+      stocks.set(id, typeof data.stock_quantity === "number" ? data.stock_quantity : 0);
+    }
+    return stocks;
+  }, [productRows]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -215,22 +225,6 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
     );
     return () => unsub();
   }, [invoice?.status, invoiceId]);
-
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      const names = new Map<string, string>();
-      const stocks = new Map<string, number>();
-      snap.forEach((d) => {
-        const data = d.data() as ProductDoc;
-        names.set(d.id, data.name);
-        stocks.set(d.id, typeof data.stock_quantity === "number" ? data.stock_quantity : 0);
-      });
-      setProductMap(names);
-      setProductStockById(stocks);
-    });
-    return () => unsub();
-  }, []);
 
   const loadItems = useCallback(async (inv: InvoiceRow) => {
     const ids = Array.isArray(inv.item_ids) ? inv.item_ids.filter(Boolean) : [];

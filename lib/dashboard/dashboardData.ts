@@ -158,6 +158,10 @@ export function computeDashboard(
   range: { start: Date; end: Date },
   now = new Date(),
 ): DashboardData {
+  // Spans archived products on purpose: a sale made before a product was retired
+  // still needs its unit cost, or archiving one would silently rewrite past profit.
+  // computeStockSummary below is the opposite case — it reports stock held *now*,
+  // so it drops archived products. Both readings of raw.products are intended.
   const costByProductId = buildCostMap(raw.products);
   const voidInvoiceIds = voidInvoiceIdsFrom(raw.invoices);
 

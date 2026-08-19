@@ -16,6 +16,7 @@ import {
   getProductCompleteness,
   type ProductRow,
 } from "@/lib/products/productCompleteness";
+import { isProductActive } from "@/lib/products/archive";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
@@ -207,6 +208,8 @@ export function ProductCompletenessDashboard({
         const next: ProductRow[] = [];
         snap.forEach((docSnap) => {
           const d = docSnap.data() as ProductDoc;
+          // No point nagging an admin to fill in details for a retired product.
+          if (!isProductActive(d)) return;
           next.push({ id: docSnap.id, ...d });
         });
         setRows(next);

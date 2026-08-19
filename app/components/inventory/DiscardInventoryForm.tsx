@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import { useMemo, useState, type FormEvent } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { COLLECTIONS } from "@/lib/firestore/collections";
 import { postInventoryDiscard } from "@/lib/firestore/inventoryDiscards";
-import type { ProductDoc } from "@/lib/types/firestore";
+import { useActiveProducts } from "@/lib/firestore/referenceData";
 import {
   parsePositiveIntStrict,
   validateQuantityAgainstStock,
@@ -40,8 +38,9 @@ function money(n: number): string {
 }
 
 export function DiscardInventoryForm() {
-  const [products, setProducts] = useState<ProductOption[]>([]);
-  const [loadingProducts, setLoadingProducts] = useState(true);
+  // Archived products are not discardable — retiring one is already the way to
+  // take it off the shelf, and the shared store saves re-reading the collection.
+  const { rows: productRows, loading: loadingProducts } = useActiveProducts();
   const [lines, setLines] = useState<LineInput[]>([nextLine()]);
   const [reason, setReason] = useState("");
   const [notes, setNotes] = useState("");
@@ -49,26 +48,20 @@ export function DiscardInventoryForm() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  useEffect(() => {
-    const db = getDb();
-    const unsub = onSnapshot(collection(db, COLLECTIONS.products), (snap) => {
-      setLoadingProducts(false);
-      const list: ProductOption[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data() as ProductDoc;
-        list.push({
-          id: docSnap.id,
-          name: d.name,
-          stock_quantity: typeof d.stock_quantity === "number" ? d.stock_quantity : 0,
-          cost_price: typeof d.cost_price === "number" ? d.cost_price : 0,
-          searchText: `${d.name} ${d.stock_quantity}`.toLowerCase(),
-        });
+  const products = useMemo<ProductOption[]>(() => {
+    const list: ProductOption[] = [];
+    for (const { id, data: d } of productRows) {
+      list.push({
+        id,
+        name: d.name,
+        stock_quantity: typeof d.stock_quantity === "number" ? d.stock_quantity : 0,
+        cost_price: typeof d.cost_price === "number" ? d.cost_price : 0,
+        searchText: `${d.name} ${d.stock_quantity}`.toLowerCase(),
       });
-      list.sort((a, b) => a.name.localeCompare(b.name));
-      setProducts(list);
-    });
-    return () => unsub();
-  }, []);
+    }
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list;
+  }, [productRows]);
 
   const productById = useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
 

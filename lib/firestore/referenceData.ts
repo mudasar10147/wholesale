@@ -19,6 +19,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { isProductActive } from "@/lib/products/archive";
 import type { CustomerDoc, ProductDoc, TraderDoc } from "@/lib/types/firestore";
 
 export type RefRow<T> = { id: string; data: T };
@@ -91,9 +92,29 @@ function useStore<T>(store: ReferenceStore<T>): RefState<T> {
   return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
 }
 
-/** All products, read once per session and shared. */
+/**
+ * All products including archived ones, read once per session and shared.
+ * Prefer {@link useActiveProducts} for anything the user picks from, and
+ * {@link useProductNames} for resolving names on historical records.
+ */
 export function useProducts(): RefState<ProductDoc> {
   return useStore(productStore);
+}
+
+/**
+ * Products a user can still act on — archived ones are dropped.
+ *
+ * This is what every picker, catalog, dashboard and report should read. The
+ * filter is in memory because the shared listener already holds the whole
+ * collection; a `where` clause here would cost a composite index and save
+ * nothing.
+ */
+export function useActiveProducts(): RefState<ProductDoc> {
+  const state = useProducts();
+  return useMemo(
+    () => ({ ...state, rows: state.rows.filter((row) => isProductActive(row.data)) }),
+    [state],
+  );
 }
 
 /** All customers, read once per session and shared. */
@@ -112,6 +133,23 @@ export function useTraders(): RefState<TraderDoc> {
  */
 export function useCustomerNames(): Map<string, string> {
   const { rows } = useCustomers();
+  return useMemo(() => {
+    const map = new Map<string, string>();
+    for (const { id, data } of rows) map.set(id, data.name?.trim() || id);
+    return map;
+  }, [rows]);
+}
+
+/**
+ * Product id → display name, falling back to the id.
+ *
+ * Deliberately spans **archived products too**: invoices, returns, discards and
+ * ledger rows store only `product_id`, so excluding archived products here is
+ * exactly what would make old records render raw Firestore ids. Every history
+ * view should read this instead of opening its own products listener.
+ */
+export function useProductNames(): Map<string, string> {
+  const { rows } = useProducts();
   return useMemo(() => {
     const map = new Map<string, string>();
     for (const { id, data } of rows) map.set(id, data.name?.trim() || id);

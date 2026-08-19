@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { getDb } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { isProductActive } from "@/lib/products/archive";
 import { Input } from "@/app/components/ui/Input";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +44,9 @@ export function CategorySuggestInput({
         const snap = await getDocs(collection(getDb(), COLLECTIONS.products));
         const set = new Set<string>();
         snap.forEach((docSnap) => {
+          // Categories are harvested from live products only — a retired product
+          // should not keep proposing its category on the add-product form.
+          if (!isProductActive(docSnap.data() as { is_active?: boolean })) return;
           const raw = docSnap.data().category;
           if (typeof raw === "string") {
             const t = raw.trim();

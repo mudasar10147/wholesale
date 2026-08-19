@@ -1,24 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  onSnapshot,
-  orderBy,
-  query,
-  type Timestamp,
-} from "firebase/firestore";
+import { useMemo, useState } from "react";
+import { type Timestamp } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
-import { COLLECTIONS } from "@/lib/firestore/collections";
+import { archiveProduct, restoreProduct } from "@/lib/firestore/products";
+import { useProducts } from "@/lib/firestore/referenceData";
+import { archiveConfirmMessage, isProductArchived, partitionProducts } from "@/lib/products/archive";
 import type { ProductDoc } from "@/lib/types/firestore";
+import { ArchivedBadge } from "@/app/components/products/ArchivedBadge";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { NewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
 import { OfferPriceText } from "@/app/components/pricing/OfferPriceText";
 import { useLiveOffers } from "@/lib/firestore/liveOffers";
 import { useNewArrivalSettings } from "@/lib/firestore/newArrivalSettings";
 import { Button } from "@/app/components/ui/Button";
+import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
 import { Label } from "@/app/components/ui/Label";
 import { cn } from "@/lib/utils";
@@ -37,15 +35,28 @@ function formatDate(ts: Timestamp) {
   }
 }
 
-export function ProductList() {
+export function ProductList({ scope = "active" }: { scope?: "active" | "archived" }) {
   const router = useRouter();
   const { settings: newArrivalSettings } = useNewArrivalSettings();
   const { index: offerIndex } = useLiveOffers();
-  const [rows, setRows] = useState<Row[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { rows: productRows, loading, error: loadError } = useProducts();
   const [editingRow, setEditingRow] = useState<Row | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const showingArchived = scope === "archived";
+
+  const rows = useMemo(() => {
+    const all = productRows.map(({ id, data }) => ({ id, ...data }));
+    const { active, archived } = partitionProducts(all);
+    const scoped = showingArchived ? archived : active;
+    // The old query ordered by created_at desc; the shared store is unordered, so
+    // the sort moves here rather than costing another read of the collection.
+    return scoped.sort(
+      (a, b) => (b.created_at?.toMillis?.() ?? 0) - (a.created_at?.toMillis?.() ?? 0),
+    );
+  }, [productRows, showingArchived]);
 
   const filteredRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -57,30 +68,21 @@ export function ProductList() {
     });
   }, [rows, searchQuery]);
 
-  useEffect(() => {
-    const db = getDb();
-    const q = query(collection(db, COLLECTIONS.products), orderBy("created_at", "desc"));
+  async function handleArchiveToggle(row: Row) {
+    const archived = isProductArchived(row);
+    if (!archived && !window.confirm(archiveConfirmMessage(row))) return;
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        setError(null);
-        setLoading(false);
-        const next: Row[] = [];
-        snap.forEach((docSnap) => {
-          const d = docSnap.data() as ProductDoc;
-          next.push({ id: docSnap.id, ...d });
-        });
-        setRows(next);
-      },
-      (err) => {
-        setLoading(false);
-        setError(getFirestoreUserMessage(err));
-      },
-    );
-
-    return () => unsub();
-  }, []);
+    setActionError(null);
+    setPendingId(row.id);
+    try {
+      if (archived) await restoreProduct(getDb(), row.id);
+      else await archiveProduct(getDb(), row.id);
+    } catch (err) {
+      setActionError(getFirestoreUserMessage(err));
+    } finally {
+      setPendingId(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -90,10 +92,10 @@ export function ProductList() {
     );
   }
 
-  if (error) {
+  if (loadError) {
     return (
       <p className="text-sm text-destructive" role="alert">
-        {error}
+        {loadError}
       </p>
     );
   }
@@ -101,12 +103,14 @@ export function ProductList() {
   if (rows.length === 0) {
     return (
       <p className="text-sm text-muted-foreground">
-        No products yet. Use Add product to create your first one.
+        {showingArchived
+          ? "No archived products. Archiving retires a product from pickers and dashboards while keeping its history."
+          : "No products yet. Use Add product to create your first one."}
       </p>
     );
   }
 
-  const searchId = "product-list-search";
+  const searchId = `product-list-search-${scope}`;
 
   return (
     <>
@@ -114,9 +118,10 @@ export function ProductList() {
         <EditProductModal key={editingRow.id} row={editingRow} onDismiss={() => setEditingRow(null)} />
       ) : null}
       <div className="space-y-3">
+        {actionError ? <InlineAlert variant="error">{actionError}</InlineAlert> : null}
         <div className="max-w-md">
           <Label htmlFor={searchId} className="text-sm text-foreground">
-            Search products
+            {showingArchived ? "Search archived products" : "Search products"}
           </Label>
           <Input
             id={searchId}
@@ -184,6 +189,7 @@ export function ProductList() {
                           createdAt={row.created_at}
                           thresholdDays={newArrivalSettings.thresholdDays}
                         />
+                        <ArchivedBadge product={row} />
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{row.category ?? "—"}</td>
@@ -203,17 +209,37 @@ export function ProductList() {
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{formatDate(row.created_at)}</td>
                     <td className="px-4 py-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-9 px-3 py-1.5 text-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingRow(row);
-                        }}
-                      >
-                        Edit
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-9 px-3 py-1.5 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingRow(row);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={showingArchived ? "outline" : "destructive"}
+                          className="h-9 px-3 py-1.5 text-xs"
+                          disabled={pendingId === row.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleArchiveToggle(row);
+                          }}
+                        >
+                          {pendingId === row.id
+                            ? showingArchived
+                              ? "Restoring…"
+                              : "Archiving…"
+                            : showingArchived
+                              ? "Restore"
+                              : "Archive"}
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
