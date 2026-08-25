@@ -120,7 +120,7 @@ export function deliveryStatusLabel(invoice: DeliveryBalanceInvoiceInput): strin
   if (invoice.status === "draft") return "Draft";
   const paid = getInvoicePaidAmount(invoice);
   const due = getInvoiceAmountDue(invoice);
-  if (paid > 0.01 && due > 0.01) return "Partial paid";
+  if (paid > 0.01 && due > 0.01) return "Partial";
   return "Posted";
 }
 
