@@ -104,7 +104,7 @@ assert.equal(rows[2].customerName, "Beta Co");
 assert.equal(sumDeliveryBalanceDue(rows), 11000);
 
 const partialRow = buildDeliveryBalanceRow(invoices[2], customers.get("c1"));
-assert.equal(partialRow.statusLabel, "Partial paid");
+assert.equal(partialRow.statusLabel, "Partial");
 assert.equal(partialRow.paidAmount, 1000);
 assert.equal(partialRow.customerId, "c1");
 assert.equal(partialRow.customerAddress, "Street 1");
