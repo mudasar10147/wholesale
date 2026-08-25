@@ -17,7 +17,6 @@ import {
   type DeliveryReturnLine,
 } from "@/lib/invoices/deliveryBalanceList";
 import type {
-  CustomerDoc,
   InvoiceDoc,
   InvoiceReturnDoc,
   InvoiceReturnItemDoc,
@@ -51,24 +50,20 @@ type ReturnAccumulator = {
 /**
  * Load every unpaid/part-paid invoice grouped by shop, with the goods that came back on
  * each one (restock vs damaged/discard) resolved to product names.
+ *
+ * `customerById` is supplied by the caller from the shared session cache
+ * (`referenceData.ts`), which `/sales` already holds — re-reading the collection here is
+ * exactly the waste that cache exists to remove. Product names are still resolved on
+ * demand: `/sales` does NOT subscribe to products, so opening a full products listener
+ * for an occasional PDF would cost more than fetching the few returned ids per download.
  */
 export async function loadDeliveryBalanceGroups(
   db: Firestore,
+  customerById: ReadonlyMap<string, DeliveryBalanceCustomerInput>,
 ): Promise<DeliveryBalanceCustomerGroup[]> {
-  const [invoiceSnap, customerSnap] = await Promise.all([
-    getDocs(query(collection(db, COLLECTIONS.invoices), orderBy("created_at", "desc"))),
-    getDocs(collection(db, COLLECTIONS.customers)),
-  ]);
-
-  const customerById = new Map<string, DeliveryBalanceCustomerInput>();
-  customerSnap.forEach((docSnap) => {
-    const customer = docSnap.data() as CustomerDoc;
-    customerById.set(docSnap.id, {
-      name: customer.name,
-      phone: customer.phone,
-      address: customer.address,
-    });
-  });
+  const invoiceSnap = await getDocs(
+    query(collection(db, COLLECTIONS.invoices), orderBy("created_at", "desc")),
+  );
 
   const allInvoices = invoiceSnap.docs.map((docSnap) => ({
     id: docSnap.id,
