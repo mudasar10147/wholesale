@@ -12,8 +12,7 @@ import {
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { getAuthClient } from "@/lib/firebase";
-import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
-import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
+import { fulfillReturnLedger } from "@/lib/inventory/returnLedger";
 import { derivePaymentStatus, getInvoicePaidAmount, getInvoicePostedTotal, getInvoiceReturnedAmount } from "@/lib/invoices/invoiceEffective";
 import {
   calculateReturnSummary,
@@ -35,59 +34,6 @@ import { normalizeOrderId } from "@/lib/validation/contracts";
 import { logFirestoreAuthForDebug, logFirestoreError } from "@/lib/firebase/firestoreDebug";
 
 const FIRESTORE_TXN_DOC_CAP = 500;
-
-async function fulfillReturnLedger(
-  db: Firestore,
-  returnId: string,
-  ret: InvoiceReturnDoc,
-  restoreByProduct?: Map<string, number>,
-  postedByUid?: string,
-): Promise<void> {
-  let qtyByProduct = restoreByProduct;
-  if (!qtyByProduct) {
-    qtyByProduct = new Map();
-    const itemIds = Array.isArray(ret.item_ids) ? ret.item_ids.filter(Boolean) : [];
-    for (const itemId of itemIds) {
-      const snap = await getDoc(doc(db, COLLECTIONS.invoiceReturnItems, itemId));
-      if (!snap.exists()) continue;
-      const item = snap.data() as InvoiceReturnItemDoc;
-      if (item.quantity_restock > 0) {
-        qtyByProduct.set(
-          item.product_id,
-          (qtyByProduct.get(item.product_id) ?? 0) + item.quantity_restock,
-        );
-      }
-    }
-  }
-  const lines = Array.from(qtyByProduct.entries()).map(([product_id, quantity]) => ({
-    product_id,
-    warehouse_id: DEFAULT_WAREHOUSE_ID,
-    direction: "in" as const,
-    quantity,
-    unit_cost: 0,
-  }));
-  if (lines.length === 0) return;
-  const binding: LedgerSourceBinding = {
-    collection: COLLECTIONS.invoiceReturns,
-    docId: returnId,
-    statusField: "ledger_status",
-    transactionIdField: "inventory_transaction_id",
-    errorField: "ledger_error",
-  };
-  await fulfillLedgerOutbox(
-    db,
-    {
-      type: "SALES_RETURN",
-      warehouse_id: DEFAULT_WAREHOUSE_ID,
-      source_document_type: "invoice_return",
-      source_document_id: returnId,
-      posted_by_uid: postedByUid,
-      lines,
-    },
-    binding,
-    { stockCommitted: true },
-  );
-}
 
 function roundMoney2(n: number): number {
   if (!Number.isFinite(n)) return 0;
@@ -608,7 +554,9 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
   if (!preReturnSnap.exists()) throw new Error("Return not found.");
   const preReturn = preReturnSnap.data() as InvoiceReturnDoc;
   if (preReturn.status === "posted") {
-    await fulfillReturnLedger(db, trimmedReturnId, preReturn);
+    await fulfillReturnLedger(db, trimmedReturnId, preReturn, {
+      postedByUid: auth.currentUser?.uid ?? "",
+    });
     return;
   }
   if (preReturn.status !== "draft") throw new Error("Only draft returns can be posted.");
@@ -899,13 +847,10 @@ export async function postReturn(db: Firestore, returnId: string): Promise<void>
         updated_at: serverTimestamp(),
       });
     });
-    await fulfillReturnLedger(
-      db,
-      trimmedReturnId,
-      { ...preReturn, status: "posted" } as InvoiceReturnDoc,
-      restoreByProductForLedger,
-      auth.currentUser?.uid,
-    );
+    await fulfillReturnLedger(db, trimmedReturnId, { ...preReturn, status: "posted" } as InvoiceReturnDoc, {
+      restoreByProduct: restoreByProductForLedger,
+      postedByUid: auth.currentUser?.uid ?? "",
+    });
   } catch (e) {
     logFirestoreError("postReturn: transaction failed", e);
     if (e instanceof FirebaseError) {
