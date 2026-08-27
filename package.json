@@ -54,7 +54,8 @@
     "test:bi": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/bi/finance.test.ts lib/bi/forecast.test.ts lib/bi/reinvestment.test.ts lib/bi/workingCapital.test.ts lib/bi/analyze.test.ts",
     "test:dashboard": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/dashboard/dashboardData.test.ts lib/dashboard/dashboardCache.test.ts",
     "test:rules:return-ledger": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/return-ledger.rules.test.mjs\"",
-    "test:return-ledger-repair": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/returnLedgerRepair.test.mjs\""
+    "test:return-ledger-repair": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/returnLedgerRepair.test.mjs\"",
+    "classify:return-ledger": "node scripts/inventory/classify-return-ledger.mjs"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",
