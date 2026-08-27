@@ -19,7 +19,7 @@
     "test:rules": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/social.rules.test.mjs\"",
     "test:rules:inventory": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/inventory-ledger.rules.test.mjs\"",
     "test:rules:roles": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/roles.rules.test.mjs\"",
-    "test:rules:all": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/social.rules.test.mjs test/rules/inventory-ledger.rules.test.mjs test/rules/roles.rules.test.mjs test/rules/return-ledger.rules.test.mjs\"",
+    "test:rules:all": "npm run test:rules && npm run test:rules:inventory && npm run test:rules:roles && npm run test:rules:return-ledger",
     "test:reconcile-plan": "node --experimental-strip-types --test lib/inventory/reconciliationPlan.test.ts",
     "test:inventory-reconcile": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/reconcileMismatch.emulator.test.mjs\"",
     "test:inventory-run": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/validationRun.emulator.test.mjs\"",
