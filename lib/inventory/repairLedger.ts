@@ -1,8 +1,24 @@
 import { collection, doc, getDoc, getDocs, query, where, type Firestore } from "firebase/firestore";
+import { getAuthClient } from "@/lib/firebase";
+import { fulfillReturnLedger, type ReturnRestockScope } from "@/lib/inventory/returnLedger";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
 import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
-import type { InvoiceDoc, InvoiceItemDoc, InvoiceReturnDoc, InvoiceReturnItemDoc } from "@/lib/types/firestore";
+import type { InvoiceDoc, InvoiceItemDoc, InvoiceReturnDoc } from "@/lib/types/firestore";
+
+/**
+ * Every repair must be attributable. The Inventory Health button used to call
+ * through with no uid, so each repaired ledger header landed without a
+ * `posted_by_uid` and immediately tripped G7 — the repair created a fresh
+ * finding while clearing an old one.
+ */
+function requireOperatorUid(explicit?: string): string {
+  const uid = explicit?.trim() || getAuthClient().currentUser?.uid?.trim();
+  if (!uid) {
+    throw new Error("Sign in before repairing a ledger — every repair must be attributable.");
+  }
+  return uid;
+}
 
 async function buildInvoiceSaleLines(
   db: Firestore,
@@ -21,6 +37,7 @@ async function buildInvoiceSaleLines(
 
 /** Admin repair: backfill SALE ledger for a posted invoice. */
 export async function repairInvoiceSaleLedger(db: Firestore, invoiceId: string, postedByUid?: string): Promise<void> {
+  const operatorUid = requireOperatorUid(postedByUid);
   const trimmedId = invoiceId.trim().toUpperCase();
   const snap = await getDoc(doc(db, COLLECTIONS.invoices, trimmedId));
   if (!snap.exists()) throw new Error("Invoice not found.");
@@ -51,7 +68,7 @@ export async function repairInvoiceSaleLedger(db: Firestore, invoiceId: string, 
       warehouse_id: DEFAULT_WAREHOUSE_ID,
       source_document_type: "invoice",
       source_document_id: trimmedId,
-      posted_by_uid: postedByUid,
+      posted_by_uid: operatorUid,
       lines,
     },
     binding,
@@ -59,57 +76,31 @@ export async function repairInvoiceSaleLedger(db: Firestore, invoiceId: string, 
   );
 }
 
-/** Admin repair: backfill SALES_RETURN ledger for a posted return. */
-export async function repairReturnLedger(db: Firestore, returnId: string, postedByUid?: string): Promise<void> {
+/**
+ * Admin repair for a posted return's inventory ledger.
+ *
+ * Delegates to the shared writer so the three return shapes are handled exactly
+ * as they are at post time: restocked quantities get a SALES_RETURN row, an
+ * all-discard return gets an honest `not_applicable` instead of a fabricated
+ * zero-quantity movement, and re-running changes nothing.
+ *
+ * Writes only ledger documents and the return's own ledger fields. Stock, lots,
+ * consumptions, COGS and cash are already settled by `postReturn`; repair
+ * records what happened, it does not re-do it.
+ */
+export async function repairReturnLedger(
+  db: Firestore,
+  returnId: string,
+  postedByUid?: string,
+): Promise<ReturnRestockScope["kind"]> {
+  const operatorUid = requireOperatorUid(postedByUid);
   const trimmedId = returnId.trim();
   const snap = await getDoc(doc(db, COLLECTIONS.invoiceReturns, trimmedId));
   if (!snap.exists()) throw new Error("Return not found.");
   const ret = snap.data() as InvoiceReturnDoc;
   if (ret.status !== "posted") throw new Error("Only posted returns can be repaired.");
 
-  const qtyByProduct = new Map<string, number>();
-  const itemIds = Array.isArray(ret.item_ids) ? ret.item_ids.filter(Boolean) : [];
-  for (const itemId of itemIds) {
-    const itemSnap = await getDoc(doc(db, COLLECTIONS.invoiceReturnItems, itemId));
-    if (!itemSnap.exists()) continue;
-    const item = itemSnap.data() as InvoiceReturnItemDoc;
-    if (item.quantity_restock > 0) {
-      qtyByProduct.set(
-        item.product_id,
-        (qtyByProduct.get(item.product_id) ?? 0) + item.quantity_restock,
-      );
-    }
-  }
-
-  const lines = Array.from(qtyByProduct.entries()).map(([product_id, quantity]) => ({
-    product_id,
-    warehouse_id: DEFAULT_WAREHOUSE_ID,
-    direction: "in" as const,
-    quantity,
-    unit_cost: 0,
-  }));
-  if (lines.length === 0) return;
-
-  const binding: LedgerSourceBinding = {
-    collection: COLLECTIONS.invoiceReturns,
-    docId: trimmedId,
-    statusField: "ledger_status",
-    transactionIdField: "inventory_transaction_id",
-    errorField: "ledger_error",
-  };
-  await fulfillLedgerOutbox(
-    db,
-    {
-      type: "SALES_RETURN",
-      warehouse_id: DEFAULT_WAREHOUSE_ID,
-      source_document_type: "invoice_return",
-      source_document_id: trimmedId,
-      posted_by_uid: postedByUid,
-      lines,
-    },
-    binding,
-    { stockCommitted: true },
-  );
+  return fulfillReturnLedger(db, trimmedId, ret, { postedByUid: operatorUid });
 }
 
 export type PendingLedgerRow = {

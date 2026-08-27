@@ -493,7 +493,10 @@ service cloud.firestore {
     function invoiceReturnLedgerBookkeepingOnly(res, req) {
       return req.diff(res).affectedKeys().hasOnly(['ledger_status', 'inventory_transaction_id', 'ledger_error', 'updated_at'])
         && req.status == res.status
-        && (!('ledger_status' in req) || req.ledger_status in ['pending', 'posted', 'failed']);
+        // 'not_applicable' is the honest terminal state for a return that restocked
+        // nothing — every line discarded. Writing a zero-quantity ledger row to make
+        // it look 'posted' would put movement in the ledger that never happened.
+        && (!('ledger_status' in req) || req.ledger_status in ['pending', 'posted', 'failed', 'not_applicable']);
     }
     function validInvoiceReturnBase(data) {
       return data.return_number is string
