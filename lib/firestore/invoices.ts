@@ -13,8 +13,9 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
+import { isFirestoreDeadlineError, withDeadline } from "@/lib/firestore/deadline";
 import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
-import { emitPostingMetrics, nowMs } from "@/lib/inventory/postingMetrics";
+import { emitPostingMetrics, nowMs, startPostingPhaseLog } from "@/lib/inventory/postingMetrics";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
 import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
 import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
@@ -51,7 +52,7 @@ import {
   assertValidOrderId,
   normalizeOrderId,
 } from "@/lib/validation/contracts";
-import { getAuthClient } from "@/lib/firebase";
+import { getAuthClient, resetFirestoreConnection } from "@/lib/firebase";
 import { logFirestoreAuthForDebug, logFirestoreError } from "@/lib/firebase/firestoreDebug";
 
 /** Two-decimal money to align with Firestore rules float checks. */
@@ -670,17 +671,72 @@ export function __setPostInvoiceConcurrencyHook(hook: PostInvoiceConcurrencyHook
   postInvoiceConcurrencyHook = hook;
 }
 
+/**
+ * Hard ceiling on one post. Generous on purpose: with reads issued in parallel a
+ * healthy post is a few seconds, so this only ever fires on a wedged connection —
+ * `getDoc` and `getDocs` both resolve off the Listen stream with no deadline of their
+ * own (see `deadline.ts`), and there are several of each in the path below. Without
+ * this, any one of them hanging leaves the button reading "Posting…" indefinitely.
+ */
+const POST_INVOICE_TIMEOUT_MS = 90_000;
+
+/**
+ * Posts a draft invoice, bounded in wall-clock time.
+ *
+ * Re-running this after a timeout is safe, which is what makes the timeout safe: a
+ * commit that lands after we stop waiting cannot be cancelled, but an invoice that
+ * is already `posted` is detected on entry and only its ledger follow-up is
+ * completed. So "timed out" degrades to "try again", never to a double-post.
+ */
 export async function postInvoice(db: Firestore, invoiceId: string): Promise<void> {
+  try {
+    await withDeadline(
+      postInvoiceUnbounded(db, invoiceId),
+      `posting invoice ${invoiceId.trim().toUpperCase()}`,
+      POST_INVOICE_TIMEOUT_MS,
+    );
+  } catch (e) {
+    // Only the ceiling above produces a raw deadline error here — the inner function
+    // converts the ones it recognises into plain, already-explained errors.
+    if (isFirestoreDeadlineError(e)) {
+      await resetFirestoreConnection();
+      throw new Error(
+        `Posting timed out after ${Math.round(POST_INVOICE_TIMEOUT_MS / 1000)}s without an answer from Firestore. ` +
+          "The connection has been reset. Reload the invoice list to see whether it went through, and post it again if it is still a draft — retrying is safe.",
+      );
+    }
+    throw e;
+  }
+}
+
+async function postInvoiceUnbounded(db: Firestore, invoiceId: string): Promise<void> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
     throw new Error("Invoice ID is required.");
   }
 
+  const outerPhase = startPostingPhaseLog(trimmedId);
+
   const auth = getAuthClient();
-  if (auth.currentUser) {
-    await auth.currentUser.getIdToken(false);
+  // Both calls below hit the network when the cached ID token is near expiry, and
+  // neither has a deadline — on a stalled connection they hang before any Firestore
+  // work starts, which looks identical to a stuck post. They are a token pre-warm and
+  // a debug dump: useful, but never worth blocking a post on, so they get a short
+  // deadline and are allowed to fail. A genuinely bad token still fails the writes
+  // later, with a rules error that says so.
+  try {
+    if (auth.currentUser) {
+      await withDeadline(auth.currentUser.getIdToken(false), "the ID token refresh", 10_000);
+    }
+    await withDeadline(
+      logFirestoreAuthForDebug("postInvoice (before transaction)"),
+      "the ID token read",
+      10_000,
+    );
+  } catch (e) {
+    console.warn(`[post] ${trimmedId} auth pre-check skipped (continuing):`, e);
   }
-  await logFirestoreAuthForDebug("postInvoice (before transaction)");
+  outerPhase("auth");
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
   const preCheck = await getDoc(invoiceRef);
@@ -703,6 +759,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   const itemSnapsEarly = await Promise.all(
     itemIdsForEstimate.map((id) => getDoc(doc(db, COLLECTIONS.invoiceItems, id))),
   );
+  outerPhase("preflight.items", itemIdsForEstimate.length);
   const neededByProductEarly = new Map<string, number>();
   for (let i = 0; i < itemSnapsEarly.length; i++) {
     const snap = itemSnapsEarly[i]!;
@@ -735,11 +792,26 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   const productIdsForEstimate = Array.from(neededByProductEarly.keys());
 
   const lotsDataByProduct = new Map<string, StockLotRow[]>();
-  await Promise.all(
-    productIdsForEstimate.map(async (pid) => {
-      lotsDataByProduct.set(pid, await fetchStockLotsForProduct(db, pid));
-    }),
-  );
+  try {
+    await Promise.all(
+      productIdsForEstimate.map(async (pid) => {
+        lotsDataByProduct.set(pid, await fetchStockLotsForProduct(db, pid));
+      }),
+    );
+  } catch (e) {
+    // Same treatment as a stall inside the transaction below: a dead Listen stream
+    // hangs here too, before the transaction has even started.
+    if (isFirestoreDeadlineError(e)) {
+      console.error(`[post] ${trimmedId} stalled during preflight lot query`, e);
+      await resetFirestoreConnection();
+      throw new Error(
+        `Posting stalled before it started: ${e.message} The connection has been reset — try posting again.`,
+      );
+    }
+    throw e;
+  }
+
+  outerPhase("preflight.lotQuery", productIdsForEstimate.length);
 
   const preloadedLotsByProduct = new Map<string, string[]>();
   for (const pid of productIdsForEstimate) {
@@ -754,6 +826,7 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
   const productDocsEarly = await Promise.all(
     productIdsForEstimate.map((pid) => getDoc(doc(db, COLLECTIONS.products, pid))),
   );
+  outerPhase("preflight.products", productIdsForEstimate.length);
   const productByIdEarly = new Map<string, ProductDoc>();
   const stockSnapshotEarly = new Map<string, number>();
   for (let i = 0; i < productIdsForEstimate.length; i++) {
@@ -823,13 +896,19 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     );
   }
 
+  console.info(
+    `[post] ${trimmedId} plan items=${itemIdsForEstimate.length} products=${productIdsForEstimate.length} activeLots=${activeLotsCountForEstimate} opEstimate=${postTxnOpEstimate}/${FIRESTORE_TXN_DOC_CAP}`,
+  );
+
   const postStartMs = nowMs();
   let txnAttempt = 0;
   let activeLotsRead = 0;
   try {
     await runTransaction(db, async (tx) => {
     txnAttempt += 1;
+    const phase = startPostingPhaseLog(trimmedId, txnAttempt);
     const invoiceSnap = await tx.get(invoiceRef);
+    phase("txn.invoice");
     if (!invoiceSnap.exists()) {
       throw new Error("Invoice not found.");
     }
@@ -854,8 +933,20 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
 
     const neededByProduct = new Map<string, number>();
     const invoiceItems: Array<{ id: string; data: InvoiceItemDoc }> = [];
-    for (const itemId of itemIds) {
-      const itemSnap = await tx.get(doc(db, COLLECTIONS.invoiceItems, itemId));
+    // Issued in parallel, deliberately. Every tx.get is its own BatchGetDocuments RPC
+    // (the web SDK batches nothing), so a serial loop costs one network round trip per
+    // item. Read ORDER carries no meaning: the SDK records the version of each doc it
+    // reads and converts them into commit-time preconditions, so the precondition set
+    // is identical either way. What the round trips DO change is the abort window —
+    // these transactions are optimistic and take no locks, so every second spent
+    // reading is another second in which a concurrent write can abort the attempt.
+    const itemSnaps = await Promise.all(
+      itemIds.map((itemId) => tx.get(doc(db, COLLECTIONS.invoiceItems, itemId))),
+    );
+    phase("txn.items", itemIds.length);
+    for (let i = 0; i < itemIds.length; i++) {
+      const itemId = itemIds[i]!;
+      const itemSnap = itemSnaps[i]!;
       if (!itemSnap.exists()) {
         throw new Error("Invoice items are incomplete. Please recreate draft.");
       }
@@ -877,8 +968,14 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     const productById = new Map<string, ProductDoc>();
     const stockSnapshot = new Map<string, number>();
 
-    for (const productId of productIds) {
-      const productSnap = await tx.get(doc(db, COLLECTIONS.products, productId));
+    // Parallel for the same reason as the item reads above.
+    const productSnaps = await Promise.all(
+      productIds.map((productId) => tx.get(doc(db, COLLECTIONS.products, productId))),
+    );
+    phase("txn.products", productIds.length);
+    for (let i = 0; i < productIds.length; i++) {
+      const productId = productIds[i]!;
+      const productSnap = productSnaps[i]!;
       if (!productSnap.exists()) {
         throw new Error("A product in this invoice no longer exists.");
       }
@@ -903,18 +1000,36 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     // re-queries and sees it. The client SDK has no transactional query (§2.2b):
     // getDocs is non-transactional (fresh each attempt) and every active lot we may
     // write is re-read with tx.get to place a precondition on the write set.
+    //
+    // Both steps run in parallel — this was the dominant cost of a post. Serially, a
+    // nested loop paid (products + active lots) round trips, so an 8-product invoice
+    // over 40 active lots spent ~50 round trips here alone, per attempt. Now it is
+    // two: one fan-out of queries, then ONE fan-out of tx.gets flattened across all
+    // products. Same reads, same preconditions, same freshness guarantee.
     const lotsByProductId = new Map<string, StockLotRow[]>();
-    for (const productId of productIds) {
-      const currentLots = await fetchStockLotsForProduct(db, productId);
-      const rows: StockLotRow[] = [];
-      for (const lot of currentLots) {
+    const lotQueryResults = await Promise.all(
+      productIds.map((productId) => fetchStockLotsForProduct(db, productId)),
+    );
+    phase("txn.lotQuery", productIds.length);
+    const activeLotRefs: Array<{ productId: string; lotId: string }> = [];
+    for (let i = 0; i < productIds.length; i++) {
+      const productId = productIds[i]!;
+      lotsByProductId.set(productId, []);
+      for (const lot of lotQueryResults[i]!) {
         const remaining = typeof lot.data.qty_remaining === "number" ? lot.data.qty_remaining : 0;
         if (remaining <= 0) continue; // active working set only
-        const lotSnap = await tx.get(doc(db, COLLECTIONS.stockLots, lot.id));
-        if (!lotSnap.exists()) continue;
-        rows.push({ id: lot.id, data: lotSnap.data() as StockLotDoc });
+        activeLotRefs.push({ productId, lotId: lot.id });
       }
-      lotsByProductId.set(productId, rows);
+    }
+    const lotSnaps = await Promise.all(
+      activeLotRefs.map((ref) => tx.get(doc(db, COLLECTIONS.stockLots, ref.lotId))),
+    );
+    phase("txn.lotGets", activeLotRefs.length);
+    for (let i = 0; i < activeLotRefs.length; i++) {
+      const { productId, lotId } = activeLotRefs[i]!;
+      const lotSnap = lotSnaps[i]!;
+      if (!lotSnap.exists()) continue;
+      lotsByProductId.get(productId)!.push({ id: lotId, data: lotSnap.data() as StockLotDoc });
     }
     activeLotsRead = 0;
     for (const rows of lotsByProductId.values()) activeLotsRead += rows.length;
@@ -1075,9 +1190,12 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       updated_at: serverTimestamp(),
     });
     });
+    outerPhase(`txn.commit (attempts=${txnAttempt})`);
     await fulfillInvoiceSaleLedger(db, trimmedId, neededByProductEarly, auth.currentUser?.uid);
+    outerPhase("ledger");
     if (hasInlineReturns) {
       await finalizeCounterSaleReturns(db, trimmedId);
+      outerPhase("returns");
     }
     emitPostingMetrics({
       invoice_id: trimmedId, uid: auth.currentUser?.uid, outcome: "posted",
@@ -1090,7 +1208,19 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
       total_ms: nowMs() - postStartMs, txn_attempts: txnAttempt, retry_count: Math.max(0, txnAttempt - 1),
       product_count: productIdsForEstimate.length, active_lots_read: activeLotsRead, op_estimate: postTxnOpEstimate,
     });
+    console.error(
+      `[post] ${trimmedId} FAILED after ${txnAttempt} attempt(s), ${Math.round(nowMs() - postStartMs)}ms, activeLotsRead=${activeLotsRead}`,
+      e,
+    );
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
+    if (isFirestoreDeadlineError(e)) {
+      // The stream is dead, not busy. Rebuild it now so the retry starts clean
+      // instead of hitting the same wedged connection and stalling again.
+      await resetFirestoreConnection();
+      throw new Error(
+        `Posting stalled: ${e.message} The connection has been reset, so posting this invoice again should work — it is safe to retry, since a post that already went through is detected and skipped.`,
+      );
+    }
     if (
       e instanceof FirebaseError &&
       (e.code === "failed-precondition" ||

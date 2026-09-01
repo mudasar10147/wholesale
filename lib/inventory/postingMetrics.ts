@@ -44,3 +44,30 @@ export function emitPostingMetrics(m: PostingMetrics): void {
     /* never let instrumentation break a post */
   }
 }
+
+/** Logs one phase of a post, with the ms elapsed since the previous phase. */
+export type PostingPhaseLog = (phase: string, docCount?: number) => void;
+
+/**
+ * Per-phase stopwatch for one post. The single-line summary above reports only a
+ * total, which cannot answer "which phase is slow?" — and the answer matters,
+ * because each `tx.get` is its own network round trip, so a phase's cost is
+ * really its document count times latency.
+ *
+ * Counts and IDs ONLY (§17): a phase name, a doc count, elapsed ms. Never throws.
+ */
+export function startPostingPhaseLog(invoiceId: string, attempt?: number): PostingPhaseLog {
+  let last = nowMs();
+  const label = attempt === undefined ? "" : ` a${attempt}`;
+  return (phase, docCount) => {
+    const now = nowMs();
+    const ms = Math.round(now - last);
+    last = now;
+    try {
+      const count = docCount === undefined ? "" : ` x${docCount}`;
+      console.info(`[post] ${invoiceId}${label} ${phase}${count} ${ms}ms`);
+    } catch {
+      /* never let instrumentation break a post */
+    }
+  };
+}

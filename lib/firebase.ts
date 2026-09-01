@@ -1,6 +1,12 @@
 import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
 import { getAuth, type Auth } from "firebase/auth";
-import { getFirestore, initializeFirestore, type Firestore } from "firebase/firestore";
+import {
+  disableNetwork,
+  enableNetwork,
+  getFirestore,
+  initializeFirestore,
+  type Firestore,
+} from "firebase/firestore";
 
 // Use static process.env.NEXT_PUBLIC_* access only. Next.js inlines these for the
 // client bundle; dynamic access like process.env[name] stays undefined in the browser.
@@ -63,6 +69,29 @@ export function getDb(): Firestore {
     firestoreSingleton = getFirestore(app);
   }
   return firestoreSingleton;
+}
+
+/**
+ * Tears down and re-dials Firestore's network streams — the programmatic version of
+ * the page reload people currently do by hand when an operation wedges.
+ *
+ * `getDocs` and snapshot listeners ride the Listen/WebChannel stream and never time
+ * out on their own, so a stream that has died without noticing leaves them waiting
+ * forever. Rebuilding the stream is what actually clears that state; retrying the
+ * same call against the same dead stream does not.
+ *
+ * Briefly takes the whole client offline, so live listeners flap to cached data for a
+ * moment. Never throws — a failed reset must not mask the error that prompted it.
+ */
+export async function resetFirestoreConnection(): Promise<void> {
+  try {
+    const db = getDb();
+    await disableNetwork(db);
+    await enableNetwork(db);
+    console.info("[firestore] connection reset — streams rebuilt");
+  } catch (e) {
+    console.error("[firestore] connection reset failed", e);
+  }
 }
 
 let authSingleton: Auth | null = null;
