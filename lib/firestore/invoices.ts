@@ -52,7 +52,7 @@ import {
   assertValidOrderId,
   normalizeOrderId,
 } from "@/lib/validation/contracts";
-import { getAuthClient, resetFirestoreConnection } from "@/lib/firebase";
+import { getAuthClient } from "@/lib/firebase";
 import { logFirestoreAuthForDebug, logFirestoreError } from "@/lib/firebase/firestoreDebug";
 
 /** Two-decimal money to align with Firestore rules float checks. */
@@ -699,10 +699,9 @@ export async function postInvoice(db: Firestore, invoiceId: string): Promise<voi
     // Only the ceiling above produces a raw deadline error here — the inner function
     // converts the ones it recognises into plain, already-explained errors.
     if (isFirestoreDeadlineError(e)) {
-      await resetFirestoreConnection();
       throw new Error(
         `Posting timed out after ${Math.round(POST_INVOICE_TIMEOUT_MS / 1000)}s without an answer from Firestore. ` +
-          "The connection has been reset. Reload the invoice list to see whether it went through, and post it again if it is still a draft — retrying is safe.",
+          "Reload the page, check whether this invoice is still a draft, and post it again if it is — retrying is safe.",
       );
     }
     throw e;
@@ -803,10 +802,7 @@ async function postInvoiceUnbounded(db: Firestore, invoiceId: string): Promise<v
     // hangs here too, before the transaction has even started.
     if (isFirestoreDeadlineError(e)) {
       console.error(`[post] ${trimmedId} stalled during preflight lot query`, e);
-      await resetFirestoreConnection();
-      throw new Error(
-        `Posting stalled before it started: ${e.message} The connection has been reset — try posting again.`,
-      );
+      throw new Error(`Posting stalled before it started: ${e.message}`);
     }
     throw e;
   }
@@ -1214,11 +1210,8 @@ async function postInvoiceUnbounded(db: Firestore, invoiceId: string): Promise<v
     );
     logFirestoreError("postInvoice: transaction failed (Firestore rules — see console; admin claim alone is not enough)", e);
     if (isFirestoreDeadlineError(e)) {
-      // The stream is dead, not busy. Rebuild it now so the retry starts clean
-      // instead of hitting the same wedged connection and stalling again.
-      await resetFirestoreConnection();
       throw new Error(
-        `Posting stalled: ${e.message} The connection has been reset, so posting this invoice again should work — it is safe to retry, since a post that already went through is detected and skipped.`,
+        `Posting stalled: ${e.message} Retrying after the reload is safe — a post that already went through is detected and skipped.`,
       );
     }
     if (
