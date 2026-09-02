@@ -1,5 +1,7 @@
 "use client";
 
+import { ProductImage } from "@/app/components/products/ProductImage";
+
 /* eslint-disable @next/next/no-img-element */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/app/components/ui/Button";
@@ -254,8 +256,15 @@ export function PhysicalStockCorrectionCard() {
                         onClick={() => void selectProduct(h.id)}
                         className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-muted/50"
                       >
-                        {h.image_url ? (
-                          <img src={h.image_url} alt="" className="h-9 w-9 rounded object-cover" />
+                        {h.image_path || h.image_url ? (
+                          <ProductImage
+                            imagePath={h.image_path ?? undefined}
+                            imageUrl={h.image_url ?? undefined}
+                            alt=""
+                            width={36}
+                            height={36}
+                            className="h-9 w-9 rounded object-cover"
+                          />
                         ) : (
                           <span className="h-9 w-9 rounded bg-muted" />
                         )}
@@ -284,10 +293,13 @@ export function PhysicalStockCorrectionCard() {
           {preview ? (
             <div className="flex flex-col gap-4">
               <div className="flex items-start gap-4">
-                {preview.product.image_url ? (
-                  <img
-                    src={preview.product.image_url}
+                {preview.product.image_path || preview.product.image_url ? (
+                  <ProductImage
+                    imagePath={preview.product.image_path ?? undefined}
+                    imageUrl={preview.product.image_url ?? undefined}
                     alt=""
+                    width={64}
+                    height={64}
                     className="h-16 w-16 rounded-md border border-border object-cover"
                   />
                 ) : (

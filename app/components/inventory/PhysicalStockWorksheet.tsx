@@ -1,5 +1,7 @@
 "use client";
 
+import { ProductImage } from "@/app/components/products/ProductImage";
+
 /* eslint-disable @next/next/no-img-element */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/app/components/ui/Button";
@@ -247,8 +249,15 @@ function Row({ row, done, sessionId, onApplied, onStale, onEditAgain }: RowProps
       <tr className="border-b border-border bg-success-muted/40 last:border-0">
         <td className="px-3 py-2">
           <div className="flex items-center gap-2">
-            {row.image_url ? (
-              <img src={row.image_url} alt="" className="h-7 w-7 rounded object-cover" />
+            {row.image_path || row.image_url ? (
+              <ProductImage
+                imagePath={row.image_path ?? undefined}
+                imageUrl={row.image_url ?? undefined}
+                alt=""
+                width={28}
+                height={28}
+                className="h-7 w-7 rounded object-cover"
+              />
             ) : (
               <span className="h-7 w-7 rounded bg-muted" />
             )}
@@ -276,8 +285,15 @@ function Row({ row, done, sessionId, onApplied, onStale, onEditAgain }: RowProps
     <tr className="border-b border-border last:border-0">
       <td className="px-3 py-2">
         <div className="flex items-center gap-2">
-          {row.image_url ? (
-            <img src={row.image_url} alt="" className="h-7 w-7 rounded object-cover" />
+          {row.image_path || row.image_url ? (
+            <ProductImage
+              imagePath={row.image_path ?? undefined}
+              imageUrl={row.image_url ?? undefined}
+              alt=""
+              width={28}
+              height={28}
+              className="h-7 w-7 rounded object-cover"
+            />
           ) : (
             <span className="h-7 w-7 rounded bg-muted" />
           )}

@@ -1,7 +1,10 @@
 /**
- * Node ESM resolver hook: maps the `@/` path alias (project root) to real files
- * and appends `.ts`/`.tsx` when needed, so scripts and emulator tests can import
- * app `lib/**` modules that use runtime `@/` imports. Node strips the TS types.
+ * Node ESM resolver hook. Two jobs, both about letting scripts and emulator tests import
+ * app `lib/**` modules written for the bundler rather than for Node:
+ *   - maps the `@/` path alias to real files under the project root
+ *   - appends `.ts`/`.tsx` to extensionless relative imports, which TypeScript allows and
+ *     Node's ESM resolver does not (this is what broke `npm run test:engagement`)
+ * Node strips the TS types.
  *
  * Registered via scripts/support/registerTsAlias.mjs (`node --import ...`).
  */
@@ -24,5 +27,21 @@ export async function resolve(specifier, context, nextResolve) {
     const base = path.join(ROOT, specifier.slice(2));
     return nextResolve(pathToFileURL(resolveCandidate(base)).href, context);
   }
-  return nextResolve(specifier, context);
+
+  try {
+    return await nextResolve(specifier, context);
+  } catch (err) {
+    // TypeScript source omits the extension on relative imports ("./foo"), which Node's
+    // ESM resolver rejects. Only reached after normal resolution has already failed, so
+    // package specifiers and explicit extensions are untouched.
+    const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
+    if (!isRelative || err?.code !== "ERR_MODULE_NOT_FOUND") throw err;
+
+    const parentDir = context.parentURL?.startsWith("file:")
+      ? path.dirname(fileURLToPath(context.parentURL))
+      : ROOT;
+    const candidate = resolveCandidate(path.resolve(parentDir, specifier));
+    if (!existsSync(candidate)) throw err;
+    return nextResolve(pathToFileURL(candidate).href, context);
+  }
 }
