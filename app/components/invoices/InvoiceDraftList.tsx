@@ -38,6 +38,15 @@ import { cn } from "@/lib/utils";
 
 type Row = InvoiceDoc & { id: string };
 
+/** Progress for the "post every draft in view" run, so a batch is one click, not N. */
+type BulkPostState = {
+  total: number;
+  done: number;
+  currentId: string | null;
+  failures: Array<{ id: string; message: string }>;
+  running: boolean;
+};
+
 function formatMoney(n: number) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
@@ -228,6 +237,7 @@ export function InvoiceDraftList() {
   >(() => new Map());
   const [customerSearch, setCustomerSearch] = useState("");
   const [activeTab, setActiveTab] = useState<InvoiceListTab>("all");
+  const [bulkPost, setBulkPost] = useState<BulkPostState | null>(null);
 
   useEffect(() => {
     const db = getDb();
@@ -290,6 +300,13 @@ export function InvoiceDraftList() {
 
   const activeTabLabel = INVOICE_LIST_TABS.find((t) => t.id === activeTab)?.label ?? activeTab;
 
+  // Scoped to what the tab and search have already narrowed to, so the batch is
+  // exactly the set of drafts on screen — no hidden invoices get posted.
+  const draftRowsInView = useMemo(
+    () => filteredRows.filter((row) => row.status === "draft"),
+    [filteredRows],
+  );
+
   async function handlePost(row: Row) {
     setActionError(null);
     setWorkingId(row.id);
@@ -303,6 +320,50 @@ export function InvoiceDraftList() {
       setWorkingId(null);
       setWorkingAction(null);
     }
+  }
+
+  /**
+   * Posts the drafts currently in view, one after another. Sequential on purpose:
+   * two posts that share a product read the same product and lot docs, and these
+   * transactions are optimistic, so running them at once makes each abort the other
+   * and both retry. One at a time is faster than parallel here, and it also keeps
+   * the console log readable — each invoice's phase timings stay in one block.
+   */
+  async function handlePostAll(draftRows: Row[]) {
+    setActionError(null);
+    const failures: Array<{ id: string; message: string }> = [];
+    setBulkPost({ total: draftRows.length, done: 0, currentId: null, failures: [], running: true });
+    const startedAt = Date.now();
+    console.info(`[post] bulk start — ${draftRows.length} draft(s)`);
+
+    for (let i = 0; i < draftRows.length; i++) {
+      const row = draftRows[i]!;
+      setBulkPost((prev) => (prev ? { ...prev, done: i, currentId: row.id } : prev));
+      setWorkingId(row.id);
+      setWorkingAction("post");
+      try {
+        await postInvoice(getDb(), row.id);
+      } catch (err) {
+        failures.push({ id: row.id, message: getFirestoreUserMessage(err) });
+        logFirestoreError(`InvoiceDraftList handlePostAll ${row.id}`, err);
+        setBulkPost((prev) => (prev ? { ...prev, failures: [...failures] } : prev));
+      }
+    }
+
+    setWorkingId(null);
+    setWorkingAction(null);
+    setBulkPost({
+      total: draftRows.length,
+      done: draftRows.length,
+      currentId: null,
+      failures,
+      running: false,
+    });
+    const seconds = Math.round((Date.now() - startedAt) / 1000);
+    console.info(
+      `[post] bulk done — ${draftRows.length - failures.length}/${draftRows.length} posted in ${seconds}s`,
+      failures.length ? failures : "",
+    );
   }
 
   async function handleVoid(row: Row) {
@@ -432,6 +493,43 @@ export function InvoiceDraftList() {
             : `${rows.length} invoice${rows.length === 1 ? "" : "s"}`}
         </p>
       </div>
+      {isAdmin && draftRowsInView.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5">
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void handlePostAll(draftRowsInView)}
+            disabled={workingId !== null}
+          >
+            {bulkPost?.running
+              ? `Posting ${Math.min(bulkPost.done + 1, bulkPost.total)} of ${bulkPost.total}…`
+              : `Post all ${draftRowsInView.length} drafts`}
+          </Button>
+          <p className="text-[11px] leading-relaxed text-muted-foreground">
+            {bulkPost?.running && bulkPost.currentId
+              ? `Working on ${bulkPost.currentId}. Keep this tab open.`
+              : "Posts the drafts shown below, one at a time. Open the browser console for per-invoice timing."}
+          </p>
+        </div>
+      ) : null}
+
+      {bulkPost && !bulkPost.running ? (
+        <InlineAlert variant={bulkPost.failures.length > 0 ? "warning" : "success"}>
+          <p className="font-medium">
+            Posted {bulkPost.total - bulkPost.failures.length} of {bulkPost.total} drafts.
+          </p>
+          {bulkPost.failures.length > 0 ? (
+            <ul className="mt-1.5 space-y-0.5">
+              {bulkPost.failures.map((failure) => (
+                <li key={failure.id}>
+                  <span className="font-medium">{failure.id}</span> — {failure.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </InlineAlert>
+      ) : null}
+
       {filteredRows.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {customerSearch.trim()
