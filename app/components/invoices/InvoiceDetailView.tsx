@@ -501,7 +501,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
             height={200}
             className="h-10 w-auto object-contain sm:h-11"
             style={{ width: "auto" }}
-            priority
+            preload
           />
           <ButtonLink href="/sales" variant="outline" size="sm" className="w-fit">
             ← Sales

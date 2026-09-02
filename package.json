@@ -12,7 +12,7 @@
     "test:purchase-reports": "node --experimental-strip-types lib/inventory/purchaseReports.test.ts",
     "test:product-purchase-stats": "node --experimental-strip-types lib/inventory/productPurchaseStats.test.ts",
     "test:loans": "node --experimental-strip-types lib/finance/loanBalances.test.ts",
-    "test:engagement": "node --experimental-strip-types lib/customers/customerEngagement.test.ts",
+    "test:engagement": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/customers/customerEngagement.test.ts",
     "test:delivery-balance": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/invoices/deliveryBalanceList.test.ts",
     "test:counter-sale": "node --experimental-strip-types lib/invoices/counterSaleCalculations.test.ts",
     "test:social": "node --experimental-strip-types --test lib/social/suggestionRanking.test.ts lib/social/weekKeys.test.ts lib/social/postTypes.test.ts lib/social/captions.test.ts",
@@ -37,7 +37,7 @@
     "test:inventory-parity": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs lib/inventory/inventoryParity.test.ts",
     "test:ledger-ids": "node --experimental-strip-types lib/inventory/ledgerIds.test.ts",
     "check:coverage": "node --experimental-strip-types scripts/check-invariant-coverage.mjs",
-    "test:inventory-pure": "npm run check:coverage && npm run test:reconcile-plan && npm run test:inventory-invariants && npm run test:inventory-validation && npm run test:inventory-detection && npm run test:inventory-discovery && npm run test:inventory-parity && npm run test:ledger-ids && npm run test:pricing && npm run test:products && npm run test:stock-summary && npm run test:social && npm run test:bi && npm run test:dashboard && npm run test:delivery-balance",
+    "test:inventory-pure": "npm run check:coverage && npm run test:reconcile-plan && npm run test:inventory-invariants && npm run test:inventory-validation && npm run test:inventory-detection && npm run test:inventory-discovery && npm run test:inventory-parity && npm run test:ledger-ids && npm run test:pricing && npm run test:products && npm run test:stock-summary && npm run test:social && npm run test:bi && npm run test:dashboard && npm run test:delivery-balance && npm run test:images && npm run test:customer-pdf && npm run test:engagement",
     "test:inventory-emulator": "npm run test:rules:all && npm run test:inventory-reconcile && npm run test:inventory-run && npm run test:inventory-api && npm run test:integration && npm run test:return-ledger-repair && npm run test:concurrency && npm run test:physical-recount",
     "test:integration": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/inventoryOperations.test.mjs\"",
     "test": "npm run typecheck && npm run test:inventory-pure",
@@ -55,7 +55,10 @@
     "test:dashboard": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/dashboard/dashboardData.test.ts lib/dashboard/dashboardCache.test.ts",
     "test:rules:return-ledger": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --test test/rules/return-ledger.rules.test.mjs\"",
     "test:return-ledger-repair": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/integration/returnLedgerRepair.test.mjs\"",
-    "classify:return-ledger": "node scripts/inventory/classify-return-ledger.mjs"
+    "classify:return-ledger": "node scripts/inventory/classify-return-ledger.mjs",
+    "images:backfill": "node --import ./scripts/support/registerTsAlias.mjs scripts/images/backfill-product-images.mjs",
+    "test:images": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/upload/imageProcessing.test.ts",
+    "test:customer-pdf": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/customers/customerListPdf.test.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",
@@ -64,7 +67,8 @@
     "jspdf-autotable": "^3.8.4",
     "next": "^16.2.10",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^5.0.1",

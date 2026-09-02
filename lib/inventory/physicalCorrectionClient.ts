@@ -25,6 +25,7 @@ export type ProductSearchHit = {
   name: string;
   sku: string;
   image_url: string | null;
+  image_path: string | null;
   stock_quantity: number;
 };
 
@@ -44,6 +45,7 @@ export type CorrectionPreview = {
     sku: string;
     barcode: string | null;
     image_url: string | null;
+    image_path: string | null;
     stock_quantity: number;
     cost_price: number;
   };
@@ -106,6 +108,7 @@ export type WorksheetRow = {
   name: string;
   sku: string;
   image_url: string | null;
+  image_path: string | null;
   stock_quantity: number;
   open_lot_total: number;
   resolved_unit_cost: number | null;

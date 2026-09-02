@@ -15,7 +15,7 @@ import type { SaleDocRow } from "@/lib/firestore/salesDrilldown";
 import type { ProductDoc, StockLotDoc } from "@/lib/types/firestore";
 import { computeProductPurchaseStats } from "@/lib/inventory/productPurchaseStats";
 import { useTraderLookup } from "@/app/components/traders/useTraderLookup";
-import { getSignedProductImageUrl } from "@/lib/upload/productImages";
+import { ProductImage } from "@/app/components/products/ProductImage";
 import { EditProductModal } from "@/app/components/products/EditProductModal";
 import { ProductLotsModal } from "@/app/components/products/ProductLotsModal";
 import { ConnectedNewArrivalBadge } from "@/app/components/products/NewArrivalBadge";
@@ -57,102 +57,37 @@ function sortSalesByDateDesc(rows: SaleDocRow[]): SaleDocRow[] {
   });
 }
 
+/**
+ * The product page's LCP element, so it is preloaded rather than lazily discovered.
+ *
+ * This used to fetch a signed GCS URL first and only then start loading the image —
+ * two sequential round trips before a single byte of the photo moved. `image_path`
+ * goes straight through the same-origin proxy, so the browser starts fetching it on
+ * first paint.
+ */
 function ProductHeroImage({ row }: { row: ProductRow }) {
-  const direct = row.image_url?.trim() ?? "";
-  const path = row.image_path?.trim() ?? "";
-  const [signedUrl, setSignedUrl] = useState<string | null>(null);
-  const [directFailed, setDirectFailed] = useState(false);
-  const [signedFailed, setSignedFailed] = useState(false);
-  const [signLoading, setSignLoading] = useState(false);
-  const [signErr, setSignErr] = useState(false);
-
-  useEffect(() => {
-    setDirectFailed(false);
-    setSignedFailed(false);
-    setSignedUrl(null);
-    setSignErr(false);
-    setSignLoading(false);
-  }, [row.id, row.image_path, row.image_url]);
-
-  useEffect(() => {
-    const needSigned = (!direct || directFailed) && Boolean(path) && !signedFailed;
-    if (!needSigned) {
-      setSignedUrl(null);
-      setSignLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setSignLoading(true);
-    setSignErr(false);
-    void getSignedProductImageUrl(path)
-      .then((u) => {
-        if (!cancelled) {
-          setSignedUrl(u);
-          setSignErr(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSignedUrl(null);
-          setSignErr(true);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setSignLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [direct, directFailed, path, signedFailed]);
-
+  const hasImage = Boolean(row.image_path?.trim() || row.image_url?.trim());
   const sharedClass =
     "h-56 w-full max-w-[280px] rounded-xl border border-border bg-surface-muted object-contain p-3 sm:h-64 sm:max-w-xs";
 
-  if (direct && !directFailed) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- external Firebase/GCS URLs; avoid next/image hostname restrictions
-      <img
-        src={direct}
-        alt={row.name || "Product"}
-        width={280}
-        height={280}
-        className={sharedClass}
-        onError={() => setDirectFailed(true)}
-      />
-    );
-  }
-  if (signedUrl && !signedFailed) {
-    return (
-      // eslint-disable-next-line @next/next/no-img-element -- signed read URL
-      <img
-        src={signedUrl}
-        alt={row.name || "Product"}
-        width={280}
-        height={280}
-        className={sharedClass}
-        onError={() => setSignedFailed(true)}
-      />
-    );
-  }
-  if (path && signLoading) {
+  if (!hasImage) {
     return (
       <div className="flex h-56 w-full max-w-[280px] items-center justify-center rounded-xl border border-dashed border-border bg-surface-muted text-sm text-muted-foreground sm:h-64">
-        Loading image…
+        No image
       </div>
     );
   }
-  if (path && signErr && !signLoading) {
-    return (
-      <div className="flex h-56 w-full max-w-[280px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-surface-muted px-4 text-center text-sm text-muted-foreground sm:h-64">
-        <span>Could not load image (signed URL failed).</span>
-        <span className="text-xs">Try re-uploading the photo on the Products page.</span>
-      </div>
-    );
-  }
+
   return (
-    <div className="flex h-56 w-full max-w-[280px] items-center justify-center rounded-xl border border-dashed border-border bg-surface-muted text-sm text-muted-foreground sm:h-64">
-      No image
-    </div>
+    <ProductImage
+      imagePath={row.image_path}
+      imageUrl={row.image_url}
+      alt={row.name || "Product"}
+      width={280}
+      height={280}
+      className={sharedClass}
+      preload
+    />
   );
 }
 

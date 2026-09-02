@@ -88,6 +88,7 @@ export type CorrectionPreview = {
     sku: string;
     barcode: string | null;
     image_url: string | null;
+    image_path: string | null;
     stock_quantity: number;
     cost_price: number;
   };
@@ -127,6 +128,7 @@ export async function previewPhysicalCorrection(
       sku: prodSnap.id,
       barcode: null,
       image_url: typeof product.image_url === "string" ? product.image_url : null,
+      image_path: typeof product.image_path === "string" ? product.image_path : null,
       stock_quantity: intOr0(product.stock_quantity),
       cost_price: typeof product.cost_price === "number" ? product.cost_price : 0,
     },
@@ -148,6 +150,7 @@ export type ProductSearchHit = {
   name: string;
   sku: string;
   image_url: string | null;
+  image_path: string | null;
   stock_quantity: number;
 };
 
@@ -195,6 +198,7 @@ function toHit(id: string, p: ProductDoc): ProductSearchHit {
     name: typeof p.name === "string" ? p.name : "",
     sku: id,
     image_url: typeof p.image_url === "string" ? p.image_url : null,
+    image_path: typeof p.image_path === "string" ? p.image_path : null,
     stock_quantity: intOr0(p.stock_quantity),
   };
 }
@@ -204,6 +208,7 @@ export type WorksheetRow = {
   name: string;
   sku: string;
   image_url: string | null;
+  image_path: string | null;
   stock_quantity: number;
   open_lot_total: number;
   resolved_unit_cost: number | null;
@@ -244,6 +249,7 @@ export async function loadWorksheet(db: Firestore): Promise<WorksheetRow[]> {
       name: typeof p.name === "string" ? p.name : "",
       sku: d.id,
       image_url: typeof p.image_url === "string" ? p.image_url : null,
+      image_path: typeof p.image_path === "string" ? p.image_path : null,
       stock_quantity: intOr0(p.stock_quantity),
       open_lot_total: openTotal,
       resolved_unit_cost: cost?.unit_cost ?? null,
