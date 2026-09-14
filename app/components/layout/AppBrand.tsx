@@ -15,7 +15,7 @@ export function AppBrand() {
         height={200}
         className="h-10 max-h-10 w-auto object-contain"
         style={{ width: "auto" }}
-        priority
+        preload
       />
     </Link>
   );

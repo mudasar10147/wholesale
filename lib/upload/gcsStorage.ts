@@ -99,7 +99,7 @@ export class GCSStorageService {
     await gcsFile.save(buffer, {
       metadata: {
         contentType,
-        cacheControl: 'public, max-age=31536000',
+        cacheControl: 'public, max-age=31536000, immutable',
         metadata: {
           ...(meta?.originalName && { originalName: meta.originalName }),
           ...(meta?.uploadedBy && { uploadedBy: meta.uploadedBy }),
@@ -111,18 +111,12 @@ export class GCSStorageService {
     if (!exists) {
       throw new Error('File upload verification failed: file does not exist after upload');
     }
-    const publicUrl = `https://storage.googleapis.com/${this.bucketName}/${objectPath}`;
-    try {
-      const [signedUrl] = await gcsFile.getSignedUrl({
-        version: 'v4',
-        action: 'read',
-        expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
-      });
-      return { url: signedUrl };
-    } catch {
-      logger.debug('Using public URL (signed URL generation failed)', { publicUrl });
-      return { url: publicUrl };
-    }
+    // Deliberately NOT signed. V4 signatures cap at seven days, so the long-lived URL
+    // this used to request always threw and fell through to the public URL anyway —
+    // one wasted round trip per upload. Reads go through /api/products/image/public,
+    // which streams from the bucket with the caller's own auth; this URL is only a
+    // stored fallback for rows that predate that route.
+    return { url: `https://storage.googleapis.com/${this.bucketName}/${objectPath}` };
   }
 
   /**
@@ -185,23 +179,28 @@ export class GCSStorageService {
     }
   }
 
+  /**
+   * Read an object in a single GCS round trip.
+   *
+   * This used to call exists(), download() and getMetadata() — three sequential
+   * round trips on the critical path of every image render. The content type is
+   * derived from the object's extension instead, which we control at upload time.
+   */
   async downloadByPath(
     gcsObjectPath: string,
   ): Promise<{ buffer: Buffer; contentType: string } | null> {
     if (!this.isAvailable()) return null;
     try {
       const bucket = this.storage!.bucket(this.bucketName!);
-      const gcsFile = bucket.file(gcsObjectPath);
-      const [exists] = await gcsFile.exists();
-      if (!exists) return null;
-      const [buffer] = await gcsFile.download();
-      const [metadata] = await gcsFile.getMetadata();
-      const contentType =
-        typeof metadata.contentType === "string" && metadata.contentType.startsWith("image/")
-          ? metadata.contentType
-          : "image/jpeg";
-      return { buffer, contentType };
+      const [buffer] = await bucket.file(gcsObjectPath).download();
+      const ext = path.extname(gcsObjectPath).toLowerCase();
+      const mapped = EXT_MIME[ext];
+      return {
+        buffer,
+        contentType: mapped?.startsWith("image/") ? mapped : "image/jpeg",
+      };
     } catch (error) {
+      if ((error as { code?: number }).code === 404) return null;
       logger.error("GCS downloadByPath error", { err: error });
       return null;
     }
@@ -272,7 +271,7 @@ export class GCSStorageService {
       await gcsFile.save(buffer, {
         metadata: {
           contentType: file.type,
-          cacheControl: 'public, max-age=31536000',
+          cacheControl: 'public, max-age=31536000, immutable',
           metadata: {
             originalName: file.name,
             uploadedBy: userId,
@@ -490,7 +489,7 @@ export class GCSStorageService {
       await gcsFile.save(buffer, {
         metadata: {
           contentType,
-          cacheControl: 'public, max-age=31536000',
+          cacheControl: 'public, max-age=31536000, immutable',
           metadata: {
             uploadedBy: userId,
             uploadedAt: new Date().toISOString(),
@@ -564,7 +563,7 @@ export class GCSStorageService {
       await gcsFile.save(buffer, {
         metadata: {
           contentType,
-          cacheControl: 'public, max-age=31536000',
+          cacheControl: 'public, max-age=31536000, immutable',
           metadata: {
             organizationId: orgId,
             brandId,

@@ -27,7 +27,7 @@ export function MobileTopBar({ menuOpen, onMenuClick, menuContentId }: MobileTop
           height={200}
           className="h-8 w-auto shrink-0 object-contain"
           style={{ width: "auto" }}
-          priority
+          preload
         />
       </Link>
       <button

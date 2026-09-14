@@ -1,6 +1,6 @@
 "use client";
 
-import { resolveProductImageSrc } from "@/lib/upload/productImageDisplay";
+import { ProductImage } from "@/app/components/products/ProductImage";
 import { cleanName } from "@/lib/social/captions";
 import {
   POST_KIND_LABELS,
@@ -19,16 +19,18 @@ export function ProductThumb({
   product: Pick<SocialProductRow, "name" | "imageUrl" | "imagePath">;
   size?: "sm" | "md";
 }) {
+  const px = size === "sm" ? 32 : 48;
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- proxied/external product image; avoid next/image hostname restrictions
-    <img
-      src={resolveProductImageSrc(product.imagePath, product.imageUrl)}
+    <ProductImage
+      imagePath={product.imagePath}
+      imageUrl={product.imageUrl}
       alt={cleanName(product.name)}
+      width={px}
+      height={px}
       className={cn(
-        "shrink-0 rounded-md border border-border bg-surface-muted object-contain p-0.5",
+        "shrink-0 rounded-md border border-border p-0.5",
         size === "sm" ? "h-8 w-8" : "h-12 w-12",
       )}
-      loading="lazy"
     />
   );
 }

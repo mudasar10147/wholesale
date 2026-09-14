@@ -52,3 +52,6 @@ pubsub-debug.log
 # See docs/inventory/PHASE1_INTEGRITY_ARCHITECTURE_V2.md §14. Already-tracked
 # 2026-07-10 incident reports are left in place as evidence.
 /reports/
+
+# Rollback snapshots written by scripts/images/backfill-product-images.mjs
+image-backfill-*.json

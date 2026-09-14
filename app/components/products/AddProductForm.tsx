@@ -4,7 +4,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { createProduct } from "@/lib/firestore/products";
-import { uploadProductImage } from "@/lib/upload/productImages";
+import { discardUploadedImage, uploadProductImage } from "@/lib/upload/productImages";
 import {
   parseNonNegativeDecimal,
   parseNonNegativeIntStrict,
@@ -74,6 +74,10 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
     }
 
     setSubmitting(true);
+    // The photo is uploaded before the product exists, so a failed create would strand it
+    // in the bucket with nothing referencing it. Track it and clean up if that happens.
+    let uploadedPath: string | undefined;
+    let created = false;
     try {
       const cat = category.trim();
       let image:
@@ -81,6 +85,7 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
         | undefined;
       if (imageFile) {
         const uploaded = await uploadProductImage(imageFile);
+        uploadedPath = uploaded.path;
         image = {
           url: uploaded.url,
           path: uploaded.path,
@@ -98,6 +103,7 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
         trader_id: stock.value > 0 ? traderId : undefined,
         image,
       });
+      created = true;
       setName("");
       setCategory("");
       setImageFile(null);
@@ -108,6 +114,9 @@ export function AddProductForm({ onCreated }: AddProductFormProps = {}) {
       setSuccess(true);
       onCreated?.();
     } catch (err) {
+      if (uploadedPath && !created) {
+        await discardUploadedImage(uploadedPath);
+      }
       setError(getFirestoreUserMessage(err));
     } finally {
       setSubmitting(false);

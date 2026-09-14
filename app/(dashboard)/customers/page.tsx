@@ -1,4 +1,5 @@
 import { AddCustomerButton } from "@/app/components/customers/AddCustomerButton";
+import { CustomerListPdfButton } from "@/app/components/customers/CustomerListPdfButton";
 import { CustomerKpiCards } from "@/app/components/customers/CustomerKpiCards";
 import { CustomerPageTabs } from "@/app/components/customers/CustomerPageTabs";
 import { ReceivePaymentButton } from "@/app/components/customers/ReceivePaymentButton";
@@ -12,6 +13,7 @@ export default function CustomersPage() {
         description="Create, edit, and archive customer records for invoice-based sales tracking."
         action={
           <div className="flex flex-wrap gap-2">
+            <CustomerListPdfButton />
             <ReceivePaymentButton />
             <AddCustomerButton />
           </div>
