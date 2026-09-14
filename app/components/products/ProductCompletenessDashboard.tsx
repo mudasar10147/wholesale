@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Image from "next/image";
+import { ProductImage } from "@/app/components/products/ProductImage";
 import {
   collection,
   onSnapshot,
@@ -87,22 +87,15 @@ function ProductTable({
           {rows.map((row) => (
             <tr key={row.id} className="border-b border-border last:border-b-0">
               <td className="px-3 py-2 align-middle">
-                {row.image_url ? (
-                  <Image
-                    src={row.image_url}
+                {row.image_path || row.image_url ? (
+                  <ProductImage
+                    imagePath={row.image_path}
+                    imageUrl={row.image_url}
                     alt={row.name || "Product"}
                     width={48}
                     height={48}
-                    className="h-12 w-12 rounded-md border border-border bg-surface-muted object-contain p-0.5"
-                    unoptimized
+                    className="h-12 w-12 rounded-md border border-border p-0.5"
                   />
-                ) : row.image_path ? (
-                  <span
-                    className="inline-flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-border bg-surface-muted text-[10px] text-muted-foreground"
-                    title={row.image_path}
-                  >
-                    File
-                  </span>
                 ) : (
                   <span className="inline-flex h-12 w-12 items-center justify-center rounded-md border border-dashed border-border text-[10px] text-muted-foreground">
                     None

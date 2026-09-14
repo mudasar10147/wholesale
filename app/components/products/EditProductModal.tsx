@@ -1,13 +1,13 @@
 "use client";
 
 import { type FormEvent, useEffect, useState } from "react";
-import Image from "next/image";
 import { getDb } from "@/lib/firebase";
 import { getFirestoreUserMessage } from "@/lib/firebase/errors";
 import { updateProductDetails, updateProductSalePrice } from "@/lib/firestore/products";
 import type { ProductDoc } from "@/lib/types/firestore";
 import { parseNonNegativeDecimal } from "@/lib/validation/numbers";
-import { deleteProductImageByPath, getSignedProductImageUrl, uploadProductImage } from "@/lib/upload/productImages";
+import { discardUploadedImage, uploadProductImage } from "@/lib/upload/productImages";
+import { ProductImage } from "@/app/components/products/ProductImage";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
@@ -25,8 +25,6 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
   const [removeImage, setRemoveImage] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pathPreviewUrl, setPathPreviewUrl] = useState<string | null>(null);
-  const [pathPreviewError, setPathPreviewError] = useState(false);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -35,33 +33,6 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onDismiss]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const path = row.image_path?.trim();
-    const url = row.image_url?.trim();
-    if (url || !path) {
-      setPathPreviewUrl(null);
-      setPathPreviewError(false);
-      return;
-    }
-    void getSignedProductImageUrl(path)
-      .then((u) => {
-        if (!cancelled) {
-          setPathPreviewUrl(u);
-          setPathPreviewError(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setPathPreviewUrl(null);
-          setPathPreviewError(true);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [row.image_path, row.image_url]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -77,13 +48,16 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
       return;
     }
     setPending(true);
+    // Deleting the old photo before the record is saved leaves the product pointing at a
+    // file that no longer exists if the save then fails. Nothing is deleted until the
+    // write has committed; if it does not, the new upload is cleaned up instead.
+    const previousPath = row.image_path?.trim();
+    let uploadedPath: string | undefined;
+    let committed = false;
     try {
       if (imageFile) {
         const uploaded = await uploadProductImage(imageFile);
-        const oldPath = row.image_path?.trim();
-        if (oldPath) {
-          void deleteProductImageByPath(oldPath);
-        }
+        uploadedPath = uploaded.path;
         await updateProductDetails(getDb(), row.id, {
           name: trimmed,
           category,
@@ -97,36 +71,44 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
             },
           },
         });
-      } else if (removeImage) {
-        const oldPath = row.image_path?.trim();
-        if (oldPath) {
-          void deleteProductImageByPath(oldPath);
+        committed = true;
+        if (previousPath && previousPath !== uploaded.path) {
+          await discardUploadedImage(previousPath);
         }
+      } else if (removeImage) {
         await updateProductDetails(getDb(), row.id, {
           name: trimmed,
           category,
           image: { action: "remove" },
         });
+        committed = true;
+        if (previousPath) {
+          await discardUploadedImage(previousPath);
+        }
       } else {
         await updateProductDetails(getDb(), row.id, {
           name: trimmed,
           category,
           image: { action: "keep" },
         });
+        committed = true;
       }
       if (sale.value !== row.sale_price) {
         await updateProductSalePrice(getDb(), row.id, sale.value);
       }
       onDismiss();
     } catch (err) {
+      // The photo reached the bucket but the product never pointed at it.
+      if (uploadedPath && !committed) {
+        await discardUploadedImage(uploadedPath);
+      }
       setError(getFirestoreUserMessage(err));
     } finally {
       setPending(false);
     }
   }
 
-  const directImageUrl = row.image_url?.trim();
-  const signedPreview = pathPreviewUrl?.trim();
+  const hasExistingImage = Boolean(row.image_path?.trim() || row.image_url?.trim());
 
   return (
     <div
@@ -206,29 +188,15 @@ export function EditProductModal({ row, onDismiss }: { row: ProductEditRow; onDi
               />
               Remove existing image
             </label>
-            {directImageUrl ? (
-              <Image
-                src={directImageUrl}
+            {hasExistingImage ? (
+              <ProductImage
+                imagePath={row.image_path}
+                imageUrl={row.image_url}
                 alt={row.name}
                 width={56}
                 height={56}
-                className="h-14 w-14 rounded-md border border-border bg-surface-muted object-contain p-1"
-                unoptimized
+                className="h-14 w-14 rounded-md border border-border p-1"
               />
-            ) : signedPreview ? (
-              // Signed GCS URLs are short-lived and arbitrary host; avoid next/image remote config.
-              // eslint-disable-next-line @next/next/no-img-element -- signed read URL from our API
-              <img
-                src={signedPreview}
-                alt={row.name}
-                width={56}
-                height={56}
-                className="h-14 w-14 rounded-md border border-border bg-surface-muted object-contain p-1"
-              />
-            ) : row.image_path?.trim() && pathPreviewError ? (
-              <p className="text-xs text-muted-foreground">Could not load image preview. You can still replace it.</p>
-            ) : row.image_path?.trim() && !pathPreviewError ? (
-              <p className="text-xs text-muted-foreground">Loading image preview…</p>
             ) : null}
           </div>
           {error ? (

@@ -15,7 +15,7 @@ export default function LoginPage() {
             height={200}
             className="h-14 w-auto object-contain"
             style={{ width: "auto" }}
-            priority
+            preload
           />
           <div>
             <h1 className="text-xl font-semibold text-foreground">Sign in</h1>

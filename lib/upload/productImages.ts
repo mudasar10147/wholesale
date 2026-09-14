@@ -112,27 +112,6 @@ export async function uploadProductImage(file: File): Promise<UploadedProductIma
   };
 }
 
-export async function getSignedProductImageUrl(filePath: string): Promise<string> {
-  const token = await getBearerToken();
-  const res = await fetch(apiUrl("/api/products/image/sign"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ path: filePath }),
-  });
-  const data = await readJsonApiResponse<{ url?: string; error?: string }>(res);
-  if (!res.ok || typeof data.url !== "string" || !data.url) {
-    throw new Error(
-      typeof data.error === "string" && data.error.length > 0
-        ? data.error
-        : "Could not load image URL.",
-    );
-  }
-  return data.url;
-}
-
 export async function deleteProductImageByPath(filePath: string): Promise<boolean> {
   const token = await getBearerToken();
   const res = await fetch(apiUrl("/api/products/image/delete"), {
@@ -152,4 +131,24 @@ export async function deleteProductImageByPath(filePath: string): Promise<boolea
     );
   }
   return Boolean(data.deleted);
+}
+
+/**
+ * Best-effort removal of an image nothing points at any more.
+ *
+ * Used on two paths: cleaning up an upload whose product save then failed, and removing
+ * the previous photo *after* a replacement has been committed. Never throws — the record
+ * is already correct by the time this runs, so a failure here is untidy (a file lingers
+ * in the bucket) rather than harmful, and must not surface as a save error. It does warn,
+ * so a bucket quietly filling with strays is at least visible in the console.
+ */
+export async function discardUploadedImage(filePath: string): Promise<void> {
+  try {
+    const deleted = await deleteProductImageByPath(filePath);
+    if (!deleted) {
+      console.warn("[products] image was already gone, nothing deleted:", filePath);
+    }
+  } catch (err) {
+    console.warn("[products] could not delete unreferenced image:", filePath, err);
+  }
 }

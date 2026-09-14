@@ -4,7 +4,7 @@ import {
   copyImageBlobToClipboard,
   fetchImageBlob,
   loadImageBlobViaCanvas,
-  resolveProductImageSrc,
+  resolveShareImageSrc,
 } from "@/lib/upload/productImageDisplay";
 import type { SocialProductRow } from "@/lib/social/types";
 
@@ -43,19 +43,33 @@ export async function copyText(text: string): Promise<boolean> {
 export const IMAGE_COPY_FAILED_MESSAGE =
   "Could not copy image. Use HTTPS, try Chrome or Safari, or long-press the product photo to save it.";
 
+/**
+ * Put a product photo on the clipboard, ready to paste into WhatsApp.
+ *
+ * Copies a share-sized version rather than the full stored image. WhatsApp re-encodes
+ * whatever it receives down to about 1600px anyway, so anything larger is bytes pulled
+ * over shop wifi and then discarded — measurably no difference in what lands in the group.
+ */
 export async function copyProductImage(product: SocialProductRow): Promise<boolean> {
-  const src = resolveProductImageSrc(product.imagePath, product.imageUrl);
+  const { src, fallback } = resolveShareImageSrc(product.imagePath, product.imageUrl);
   try {
     let blob: Blob;
     try {
-      blob = await fetchImageBlob(src);
+      // Ask for WebP explicitly: the optimiser picks its format from Accept, and fetch
+      // would otherwise send */* and get back the larger original encoding.
+      blob = await fetchImageBlob(src, "image/webp,image/*");
     } catch {
-      // A remote image_url with no stored path can still be read through a canvas.
-      const fallbackUrl = product.imageUrl?.trim();
-      if (!product.imagePath?.trim() && fallbackUrl) {
-        blob = await loadImageBlobViaCanvas(fallbackUrl);
+      if (fallback) {
+        // Optimiser could not serve it — fall back to the full stored image.
+        blob = await fetchImageBlob(fallback);
       } else {
-        throw new Error("fetch failed");
+        // A remote image_url with no stored path can still be read through a canvas.
+        const fallbackUrl = product.imageUrl?.trim();
+        if (!product.imagePath?.trim() && fallbackUrl) {
+          blob = await loadImageBlobViaCanvas(fallbackUrl);
+        } else {
+          throw new Error("fetch failed");
+        }
       }
     }
     await copyImageBlobToClipboard(blob);

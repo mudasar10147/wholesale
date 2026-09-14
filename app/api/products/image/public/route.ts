@@ -5,12 +5,39 @@ import { getStorageProvider } from "@/lib/storage";
 import { gcsStorageService } from "@/lib/upload/gcsStorage";
 import { EXT_MIME } from "@/lib/upload/types";
 
+export const runtime = "nodejs";
+
+/**
+ * Stored objects are written once under a unique timestamped name and never rewritten,
+ * so a response for a given `path` is valid forever. `immutable` stops browsers and the
+ * CDN from revalidating, and `s-maxage` keeps the edge copy for the same year — this
+ * route previously advertised `max-age=300`, which meant every product photo was pulled
+ * out of GCS again several times an hour.
+ */
+const IMMUTABLE_CACHE = "public, max-age=31536000, s-maxage=31536000, immutable";
+
 function isSafeImagePath(filePath: string): boolean {
   if (!filePath || filePath.includes("..")) return false;
   return filePath.startsWith("products/") || filePath.startsWith("uploads/products/");
 }
 
-/** Public read proxy for product images: the same-origin fetch the social planner's "Copy image" needs. */
+function imageResponse(buffer: Buffer, contentType: string): NextResponse {
+  return new NextResponse(new Uint8Array(buffer), {
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": IMMUTABLE_CACHE,
+    },
+  });
+}
+
+/**
+ * Public read proxy for product images.
+ *
+ * Two jobs: it gives the social planner's "Copy image" a same-origin fetch (a signed GCS
+ * URL is cross-origin and the clipboard read fails), and it gives `next/image` a stable,
+ * optimisable `src`. The optimiser derives and caches each rendered width from this, so
+ * in steady state this handler runs roughly once per image per size — not once per view.
+ */
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -25,12 +52,7 @@ export async function GET(request: Request) {
       if (!downloaded) {
         return NextResponse.json({ error: "Image not found." }, { status: 404 });
       }
-      return new NextResponse(new Uint8Array(downloaded.buffer), {
-        headers: {
-          "Content-Type": downloaded.contentType,
-          "Cache-Control": "public, max-age=300",
-        },
-      });
+      return imageResponse(downloaded.buffer, downloaded.contentType);
     }
 
     if (!filePath.startsWith("uploads/products/")) {
@@ -39,13 +61,7 @@ export async function GET(request: Request) {
     const diskPath = path.join(process.cwd(), filePath);
     const buffer = await readFile(diskPath);
     const ext = path.extname(filePath).toLowerCase();
-    const contentType = EXT_MIME[ext] ?? "application/octet-stream";
-    return new NextResponse(new Uint8Array(buffer), {
-      headers: {
-        "Content-Type": contentType,
-        "Cache-Control": "public, max-age=300",
-      },
-    });
+    return imageResponse(buffer, EXT_MIME[ext] ?? "application/octet-stream");
   } catch {
     return NextResponse.json({ error: "Image not found." }, { status: 404 });
   }
