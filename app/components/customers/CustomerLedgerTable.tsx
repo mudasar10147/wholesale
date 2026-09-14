@@ -11,6 +11,8 @@ import {
   getInvoiceEffectiveTotal,
   getInvoicePaidAmount,
 } from "@/lib/invoices/invoiceEffective";
+import { useAuth } from "@/app/components/auth/AuthProvider";
+import { ReceivePaymentButton } from "@/app/components/customers/ReceivePaymentButton";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +25,8 @@ type LedgerRow = {
   total_purchased: number;
   paid_amount: number;
   unpaid_amount: number;
+  /** The part of `unpaid_amount` a payment can go against — drafts must be posted first. */
+  posted_due: number;
   total_discount: number;
   delivery_charges: number;
   net_revenue_contribution: number;
@@ -33,6 +37,7 @@ function money(n: number): string {
 }
 
 export function CustomerLedgerTable() {
+  const { isAdmin } = useAuth();
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
@@ -98,6 +103,7 @@ export function CustomerLedgerTable() {
           total_purchased: 0,
           paid_amount: 0,
           unpaid_amount: 0,
+          posted_due: 0,
           total_discount: 0,
           delivery_charges: 0,
           net_revenue_contribution: 0,
@@ -112,6 +118,7 @@ export function CustomerLedgerTable() {
       row.total_purchased += effective;
       row.paid_amount += paid;
       row.unpaid_amount += unpaid;
+      if (inv.status === "posted") row.posted_due += unpaid;
       row.total_discount += discount;
       row.delivery_charges += delivery;
       row.net_revenue_contribution += effective;
@@ -156,6 +163,7 @@ export function CustomerLedgerTable() {
             <th className="px-4 py-3 font-semibold text-foreground">Total discount</th>
             <th className="px-4 py-3 font-semibold text-foreground">Delivery charges</th>
             <th className="px-4 py-3 font-semibold text-foreground">Net revenue contribution</th>
+            {isAdmin ? <th className="px-4 py-3 font-semibold text-foreground">Actions</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -176,6 +184,17 @@ export function CustomerLedgerTable() {
               <td className="px-4 py-3 tabular-nums font-medium text-foreground">
                 {money(row.net_revenue_contribution)}
               </td>
+              {isAdmin ? (
+                <td className="px-4 py-3">
+                  {row.posted_due > 0.01 ? (
+                    <ReceivePaymentButton customerId={row.customer_id} size="sm" />
+                  ) : (
+                    <span className="text-muted-foreground" title="Nothing due on posted invoices">
+                      —
+                    </span>
+                  )}
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>
