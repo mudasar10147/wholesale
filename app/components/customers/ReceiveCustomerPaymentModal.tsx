@@ -166,12 +166,15 @@ export function ReceiveCustomerPaymentModal({ initialCustomerId = "", onClose }:
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      // Above the phone top bar (z-[60]), which would otherwise cover the dialog's title.
+      className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-black/40 p-4"
       role="presentation"
       onClick={pending ? undefined : onClose}
     >
       <div
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-lg"
+        // The overlay scrolls, not the dialog: the customer picker's list hangs below its
+        // input, and any clipping ancestor here would hide it behind the dialog's edge.
+        className="my-8 w-full max-w-2xl rounded-xl border border-border bg-surface shadow-lg"
         role="dialog"
         aria-modal="true"
         aria-labelledby="receive-payment-title"
@@ -190,8 +193,8 @@ export function ReceiveCustomerPaymentModal({ initialCustomerId = "", onClose }:
         {recorded ? (
           <RecordedSummary customerName={recorded.customerName} plan={recorded.plan} onDone={onClose} />
         ) : (
-          <form onSubmit={(e) => void handleSubmit(e)} className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
+          <form onSubmit={(e) => void handleSubmit(e)}>
+            <div className="space-y-4 px-6 py-4">
               <div className="space-y-2">
                 <Label>Customer</Label>
                 <SearchableSelect
