@@ -1,3 +1,4 @@
+import type { jsPDF } from "jspdf";
 import type { CellInput, RowInput } from "jspdf-autotable";
 import type {
   DeliveryBalanceCustomerGroup,
@@ -6,6 +7,7 @@ import type {
 } from "@/lib/invoices/deliveryBalanceList";
 import { countGroupInvoices, sumGroupsBalanceDue } from "@/lib/invoices/deliveryBalanceList";
 import { loadPublicPngAsDataUrl } from "@/lib/pdf/loadPublicImage";
+import { printPdfBlob } from "@/lib/pdf/printPdf";
 
 const BAND_FILL: [number, number, number] = [224, 231, 255];
 const BAND_TEXT: [number, number, number] = [30, 27, 75];
@@ -155,14 +157,12 @@ export function buildDeliveryListTableBody(
   return body;
 }
 
-export async function downloadDeliveryBalanceListPdf(
-  groups: DeliveryBalanceCustomerGroup[],
-): Promise<void> {
+async function buildDeliveryBalanceListPdf(groups: DeliveryBalanceCustomerGroup[]): Promise<jsPDF> {
   if (typeof window === "undefined") {
-    throw new Error("downloadDeliveryBalanceListPdf is only available in the browser.");
+    throw new Error("The delivery list PDF is only available in the browser.");
   }
   if (groups.length === 0) {
-    throw new Error("No invoices with a remaining balance to download.");
+    throw new Error("No invoices with a remaining balance to put on the delivery list.");
   }
 
   const [{ default: jsPDF }, autoTableMod] = await Promise.all([
@@ -246,6 +246,21 @@ export async function downloadDeliveryBalanceListPdf(
     },
   });
 
+  return doc;
+}
+
+export async function downloadDeliveryBalanceListPdf(
+  groups: DeliveryBalanceCustomerGroup[],
+): Promise<void> {
+  const doc = await buildDeliveryBalanceListPdf(groups);
   const safeStamp = new Date().toISOString().slice(0, 10);
   doc.save(`delivery_balance_list_${safeStamp}.pdf`);
+}
+
+/** Same document as the download, sent straight to the print dialog. */
+export async function printDeliveryBalanceListPdf(
+  groups: DeliveryBalanceCustomerGroup[],
+): Promise<void> {
+  const doc = await buildDeliveryBalanceListPdf(groups);
+  await printPdfBlob(doc.output("blob"));
 }
