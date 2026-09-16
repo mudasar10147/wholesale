@@ -1013,11 +1013,11 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
           amountDue={unpaidAmount}
           pending={working === "record-payment"}
           onDismiss={() => setShowPaymentModal(false)}
-          onSubmit={async (amount) => {
+          onSubmit={async (amount, settleRemainder) => {
             setActionError(null);
             setWorking("record-payment");
             try {
-              await recordInvoicePayment(getDb(), invoice.id, amount);
+              await recordInvoicePayment(getDb(), invoice.id, amount, { settleRemainder });
               setShowPaymentModal(false);
             } catch (err) {
               logFirestoreError("invoice record payment", err);

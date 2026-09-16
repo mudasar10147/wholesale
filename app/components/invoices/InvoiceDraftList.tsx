@@ -381,12 +381,12 @@ export function InvoiceDraftList() {
     }
   }
 
-  async function handleRecordPayment(row: Row, amount: number) {
+  async function handleRecordPayment(row: Row, amount: number, settleRemainder: boolean) {
     setActionError(null);
     setWorkingId(row.id);
     setWorkingAction("record-payment");
     try {
-      await recordInvoicePayment(getDb(), row.id, amount);
+      await recordInvoicePayment(getDb(), row.id, amount, { settleRemainder });
       setPaymentModalRow(null);
     } catch (err) {
       logFirestoreError("InvoiceDraftList handleRecordPayment", err);
@@ -738,7 +738,9 @@ export function InvoiceDraftList() {
           amountDue={getInvoiceAmountDue(paymentModalRow)}
           pending={workingId === paymentModalRow.id && workingAction === "record-payment"}
           onDismiss={() => setPaymentModalRow(null)}
-          onSubmit={(amount) => handleRecordPayment(paymentModalRow, amount)}
+          onSubmit={(amount, settleRemainder) =>
+            handleRecordPayment(paymentModalRow, amount, settleRemainder)
+          }
         />
       ) : null}
     </div>

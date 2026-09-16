@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { describeSettlementOffer } from "@/lib/invoices/paymentSettlement";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { Input } from "@/app/components/ui/Input";
@@ -25,7 +26,7 @@ type RecordInvoicePaymentModalProps = {
   amountDue: number;
   pending?: boolean;
   onDismiss: () => void;
-  onSubmit: (amount: number) => Promise<void>;
+  onSubmit: (amount: number, settleRemainder: boolean) => Promise<void>;
 };
 
 export function RecordInvoicePaymentModal({
@@ -39,14 +40,22 @@ export function RecordInvoicePaymentModal({
 }: RecordInvoicePaymentModalProps) {
   const [amountInput, setAmountInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [settleRemainder, setSettleRemainder] = useState(false);
 
   useEffect(() => {
     setAmountInput(amountDue > 0 ? String(amountDue) : "");
     setError(null);
+    setSettleRemainder(false);
   }, [orderId, amountDue]);
 
   const parsedAmount = useMemo(() => parsePaymentAmount(amountInput), [amountInput]);
   const remainingAfter = parsedAmount !== null ? Math.max(0, amountDue - parsedAmount) : null;
+  // The counter rounds a 1,630 bill down to 1,600: offer to close the 30 in the same step.
+  const settlement = useMemo(
+    () => describeSettlementOffer(amountDue, parsedAmount ?? 0),
+    [amountDue, parsedAmount],
+  );
+  const willSettle = settleRemainder && settlement.canSettle;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -61,7 +70,7 @@ export function RecordInvoicePaymentModal({
       return;
     }
     try {
-      await onSubmit(amount);
+      await onSubmit(amount, willSettle);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Payment failed.");
     }
@@ -128,6 +137,11 @@ export function RecordInvoicePaymentModal({
               <p className="text-xs text-muted-foreground">
                 {remainingAfter <= 0.01 ? (
                   <span className="font-medium text-success">Invoice will be fully paid.</span>
+                ) : willSettle ? (
+                  <>
+                    <span className="font-medium text-success">Invoice will be fully paid.</span>{" "}
+                    {formatMoney(settlement.remainder)} settled as a discount.
+                  </>
                 ) : (
                   <>
                     Remaining due after payment:{" "}
@@ -137,6 +151,33 @@ export function RecordInvoicePaymentModal({
               </p>
             ) : null}
           </div>
+
+          {settlement.canSettle ? (
+            <label className="flex items-start gap-2.5 rounded-lg border border-border bg-surface-muted/50 px-3 py-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 rounded border-border"
+                checked={settleRemainder}
+                disabled={pending}
+                onChange={(e) => setSettleRemainder(e.target.checked)}
+              />
+              <span className="text-sm">
+                <span className="font-medium text-foreground">
+                  Settle the remaining {formatMoney(settlement.remainder)}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  Closes the invoice as paid. The {formatMoney(settlement.remainder)} is recorded as a
+                  discount, not as cash received.
+                </span>
+              </span>
+            </label>
+          ) : settlement.overCap ? (
+            <p className="text-xs text-muted-foreground">
+              {formatMoney(settlement.remainder)} would still be due — too much to settle here (limit{" "}
+              {formatMoney(settlement.maxSettlement)}). Use <strong>Apply discount</strong> on the invoice
+              to give more than that.
+            </p>
+          ) : null}
 
           {error ? <InlineAlert variant="error">{error}</InlineAlert> : null}
 
