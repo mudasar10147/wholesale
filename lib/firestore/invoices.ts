@@ -10,13 +10,16 @@ import {
   serverTimestamp,
   where,
   writeBatch,
+  type DocumentReference,
   type Firestore,
+  type Transaction,
 } from "firebase/firestore";
 import { COLLECTIONS } from "@/lib/firestore/collections";
 import { isFirestoreDeadlineError, withDeadline } from "@/lib/firestore/deadline";
 import { fetchStockLotsForProduct, type StockLotRow } from "@/lib/firestore/stockLotsQuery";
 import { emitPostingMetrics, nowMs, startPostingPhaseLog } from "@/lib/inventory/postingMetrics";
 import { calculateInvoiceSummary, type InvoiceCalcLineInput } from "@/lib/invoices/calculations";
+import { MAX_INVOICE_SETTLEMENT } from "@/lib/invoices/paymentSettlement";
 import { DEFAULT_WAREHOUSE_ID } from "@/lib/inventory/constants";
 import { fulfillLedgerOutbox, type LedgerSourceBinding } from "@/lib/inventory/ledgerOutbox";
 import {
@@ -1229,11 +1232,28 @@ async function postInvoiceUnbounded(db: Firestore, invoiceId: string): Promise<v
   }
 }
 
+export type RecordInvoicePaymentOptions = {
+  /**
+   * Wave off whatever is still due after this payment (a bill rounded down at the
+   * counter). Recorded as a discount in a second write, because the rules refuse a
+   * single write that both raises `paid_amount` and changes the discount.
+   */
+  settleRemainder?: boolean;
+  /** Overrides the cap on what may be settled. Only tests should need this. */
+  maxSettlement?: number;
+};
+
+export type RecordInvoicePaymentResult = {
+  /** The remainder waved off, or 0 when none was. */
+  settledAmount: number;
+};
+
 export async function recordInvoicePayment(
   db: Firestore,
   invoiceId: string,
   paymentAmount: number,
-): Promise<void> {
+  options: RecordInvoicePaymentOptions = {},
+): Promise<RecordInvoicePaymentResult> {
   const trimmedId = invoiceId.trim().toUpperCase();
   if (!trimmedId) {
     throw new Error("Invoice ID is required.");
@@ -1245,7 +1265,7 @@ export async function recordInvoicePayment(
   }
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
-  await runTransaction(db, async (tx) => {
+  const dueAfterPayment = await runTransaction(db, async (tx) => {
     const snap = await tx.get(invoiceRef);
     if (!snap.exists()) {
       throw new Error("Invoice not found.");
@@ -1277,7 +1297,99 @@ export async function recordInvoicePayment(
       payment_status: derivePaymentStatus(invoice, nextPaid),
       updated_at: serverTimestamp(),
     });
+    return roundMoney2(Math.max(0, amountDue - amount));
   });
+
+  if (!options.settleRemainder || dueAfterPayment <= 0.01) {
+    return { settledAmount: 0 };
+  }
+
+  // A separate write on purpose (see applyPostedDiscountInTransaction). If it fails the
+  // payment still stands and the remainder simply stays due, so say exactly that rather
+  // than let the caller think the whole thing failed.
+  try {
+    return { settledAmount: await settleInvoiceRemainder(db, trimmedId, options.maxSettlement) };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "unknown error";
+    throw new Error(
+      `The payment of ${amount} was recorded, but settling the remaining ${dueAfterPayment} did not go through: ${reason} ` +
+        "That amount still shows as due — use Apply discount on the invoice to clear it.",
+    );
+  }
+}
+
+/**
+ * Puts a new invoice-level discount on a posted invoice: the totals, the posted
+ * snapshot taken at posting time, and the payment status that follows from them.
+ *
+ * Recorded cash is never raised here, only clamped down when a bigger discount leaves
+ * the customer having overpaid — the rules refuse a discount write that increases
+ * `paid_amount`, which is why settling a remainder is a second write after the payment.
+ */
+function applyPostedDiscountInTransaction(
+  tx: Transaction,
+  invoiceRef: DocumentReference,
+  invoice: InvoiceDoc,
+  discountAmount: number,
+): void {
+  const discount = roundMoney2(discountAmount);
+  const subtotal = roundMoney2(invoice.subtotal_amount);
+  const delivery = roundMoney2(invoice.delivery_charge);
+  if (discount > subtotal + 0.01) {
+    throw new Error("Invoice discount cannot exceed subtotal.");
+  }
+
+  const total = roundMoney2(Math.max(0, subtotal - discount + delivery));
+  const returned = getInvoiceReturnedAmount(invoice);
+  if (returned > total + 0.01) {
+    throw new Error(
+      "Discount is too large — the new total would be less than returns already posted on this invoice.",
+    );
+  }
+
+  const updatedInvoice: InvoiceDoc = {
+    ...invoice,
+    discount_amount: discount,
+    total_amount: total,
+    posted_discount_amount: discount,
+    posted_total_amount: total,
+  };
+  const effectiveTotal = getInvoiceEffectiveTotal(updatedInvoice);
+  let paid = getInvoicePaidAmount(invoice);
+  if (paid > effectiveTotal + 0.01) {
+    paid = effectiveTotal;
+  }
+
+  tx.update(invoiceRef, {
+    discount_amount: discount,
+    total_amount: total,
+    posted_discount_amount: discount,
+    posted_total_amount: total,
+    paid_amount: paid,
+    payment_status: derivePaymentStatus(updatedInvoice, paid),
+    updated_at: serverTimestamp(),
+  });
+}
+
+/** A posted invoice that can still be adjusted, or an error explaining why not. */
+function requireAdjustablePostedInvoice(
+  snap: { exists(): boolean; data(): unknown },
+  action: string,
+): InvoiceDoc {
+  if (!snap.exists()) {
+    throw new Error("Invoice not found.");
+  }
+  const invoice = snap.data() as InvoiceDoc | undefined;
+  if (!invoice) {
+    throw new Error("Invoice not found.");
+  }
+  if (invoice.status !== "posted") {
+    throw new Error(`Only posted invoices can ${action}.`);
+  }
+  if (invoice.stock_reversal_applied) {
+    throw new Error("Cannot adjust a voided invoice.");
+  }
+  return invoice;
 }
 
 export async function updatePostedInvoiceDiscount(
@@ -1297,57 +1409,54 @@ export async function updatePostedInvoiceDiscount(
 
   const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
   await runTransaction(db, async (tx) => {
-    const snap = await tx.get(invoiceRef);
-    if (!snap.exists()) {
-      throw new Error("Invoice not found.");
-    }
-    const invoice = snap.data() as InvoiceDoc | undefined;
-    if (!invoice) {
-      throw new Error("Invoice not found.");
-    }
-    if (invoice.status !== "posted") {
-      throw new Error("Only posted invoices can receive a discount adjustment.");
-    }
-    if (invoice.stock_reversal_applied) {
-      throw new Error("Cannot adjust discount on a voided invoice.");
-    }
+    const invoice = requireAdjustablePostedInvoice(
+      await tx.get(invoiceRef),
+      "receive a discount adjustment",
+    );
+    applyPostedDiscountInTransaction(tx, invoiceRef, invoice, discount);
+  });
+}
 
-    const subtotal = roundMoney2(invoice.subtotal_amount);
-    const delivery = roundMoney2(invoice.delivery_charge);
-    if (discount > subtotal + 0.01) {
-      throw new Error("Invoice discount cannot exceed subtotal.");
-    }
+/**
+ * Waves off whatever is still due on a posted invoice — the few rupees left when the
+ * customer rounds a bill down — by adding it to the invoice's discount. Returns the
+ * amount settled, or 0 when nothing was due any more.
+ *
+ * Booked as a discount because that is what it is: revenue given up, not cash received,
+ * so cash in hand still only counts money that actually arrived.
+ */
+export async function settleInvoiceRemainder(
+  db: Firestore,
+  invoiceId: string,
+  maxSettlement: number = MAX_INVOICE_SETTLEMENT,
+): Promise<number> {
+  const trimmedId = invoiceId.trim().toUpperCase();
+  if (!trimmedId) {
+    throw new Error("Invoice ID is required.");
+  }
 
-    const total = roundMoney2(Math.max(0, subtotal - discount + delivery));
-    const returned = getInvoiceReturnedAmount(invoice);
-    if (returned > total + 0.01) {
+  const invoiceRef = doc(db, COLLECTIONS.invoices, trimmedId);
+  return runTransaction(db, async (tx) => {
+    const invoice = requireAdjustablePostedInvoice(await tx.get(invoiceRef), "be settled");
+
+    const remainder = getInvoiceAmountDue(invoice);
+    if (remainder <= 0.01) {
+      return 0;
+    }
+    if (remainder > maxSettlement + 0.01) {
       throw new Error(
-        "Discount is too large — the new total would be less than returns already posted on this invoice.",
+        `${remainder} is more than the ${maxSettlement} that can be settled on one invoice. ` +
+          "Apply a discount on the invoice instead.",
       );
     }
 
-    const updatedInvoice: InvoiceDoc = {
-      ...invoice,
-      discount_amount: discount,
-      total_amount: total,
-      posted_discount_amount: discount,
-      posted_total_amount: total,
-    };
-    const effectiveTotal = getInvoiceEffectiveTotal(updatedInvoice);
-    let paid = getInvoicePaidAmount(invoice);
-    if (paid > effectiveTotal + 0.01) {
-      paid = effectiveTotal;
-    }
-
-    tx.update(invoiceRef, {
-      discount_amount: discount,
-      total_amount: total,
-      posted_discount_amount: discount,
-      posted_total_amount: total,
-      paid_amount: paid,
-      payment_status: derivePaymentStatus(updatedInvoice, paid),
-      updated_at: serverTimestamp(),
-    });
+    applyPostedDiscountInTransaction(
+      tx,
+      invoiceRef,
+      invoice,
+      roundMoney2(invoice.discount_amount + remainder),
+    );
+    return remainder;
   });
 }
 
