@@ -53,7 +53,7 @@
     "test:physical-recount": "firebase emulators:exec --only firestore --project wholesale-rules-test \"node --import ./scripts/support/registerTsAlias.mjs --test test/inventory/physicalRecount.emulator.test.mjs\"",
     "prove:validator-readonly": "node --import ./scripts/support/registerTsAlias.mjs scripts/inventory/prove-validator-readonly.mjs",
     "test:pricing": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/pricing/offerPricing.test.ts lib/invoices/lineSeed.test.ts",
-    "test:products": "node --experimental-strip-types --test lib/products/archive.test.ts",
+    "test:products": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/products/archive.test.ts lib/products/salePriceEdit.test.ts",
     "test:stock-summary": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/inventory/stockSummary.test.ts",
     "test:bi": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/bi/finance.test.ts lib/bi/forecast.test.ts lib/bi/reinvestment.test.ts lib/bi/workingCapital.test.ts lib/bi/analyze.test.ts",
     "test:dashboard": "node --experimental-strip-types --import ./scripts/support/registerTsAlias.mjs --test lib/dashboard/dashboardData.test.ts lib/dashboard/dashboardCache.test.ts",

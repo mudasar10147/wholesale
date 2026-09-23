@@ -209,6 +209,14 @@ export async function updateProductDetails(
 /**
  * Set a product's sale price manually. Cost price is not editable here — it is derived from
  * stock receipts (FIFO lots).
+ *
+ * Touches nothing but the price: no stock, no lot, no cash. That is the whole point of the
+ * Sale prices tab — a supplier's cost can move without anything being bought, and the shop
+ * still has to re-price. Invoices already written keep the price they were written with;
+ * only lines added from here on pick the new one up.
+ *
+ * `pricing_updated_at` is stamped so the tab can show when a price was last touched — that
+ * is what tells an admin which rows they have already worked through.
  */
 export async function updateProductSalePrice(
   db: Firestore,
@@ -218,7 +226,10 @@ export async function updateProductSalePrice(
   if (typeof salePrice !== "number" || !Number.isFinite(salePrice) || salePrice < 0) {
     throw new Error("Sale price must be zero or greater.");
   }
-  await updateDoc(doc(db, COLLECTIONS.products, productId), { sale_price: salePrice });
+  await updateDoc(doc(db, COLLECTIONS.products, productId), {
+    sale_price: salePrice,
+    pricing_updated_at: serverTimestamp(),
+  });
 }
 
 /**
