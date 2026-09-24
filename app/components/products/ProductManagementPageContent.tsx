@@ -8,13 +8,14 @@ import { getProductCompleteness, type ProductRow } from "@/lib/products/productC
 import { AddProductModal } from "@/app/components/products/AddProductModal";
 import { ProductCompletenessDashboard } from "@/app/components/products/ProductCompletenessDashboard";
 import { ProductList } from "@/app/components/products/ProductList";
+import { SalePriceUpdatePanel } from "@/app/components/products/SalePriceUpdatePanel";
 import { Button } from "@/app/components/ui/Button";
 import { InlineAlert } from "@/app/components/ui/InlineAlert";
 import { StatCard } from "@/app/components/ui/StatCard";
 import { Card, CardContent } from "@/app/components/ui/Card";
 import { cn } from "@/lib/utils";
 
-type Tab = "all" | "archived" | "completeness";
+type Tab = "all" | "prices" | "archived" | "completeness";
 
 function formatMoney(n: number) {
   return n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -23,6 +24,7 @@ function formatMoney(n: number) {
 function parseTab(value: string | null): Tab {
   if (value === "completeness") return "completeness";
   if (value === "archived") return "archived";
+  if (value === "prices") return "prices";
   return "all";
 }
 
@@ -68,6 +70,7 @@ export function ProductManagementPageContent() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "all", label: "All products" },
+    { id: "prices", label: "Sale prices" },
     {
       id: "completeness",
       label: kpis.incomplete > 0 ? `Catalog completeness (${kpis.incomplete})` : "Catalog completeness",
@@ -130,7 +133,9 @@ export function ProductManagementPageContent() {
       ) : (
         <Card>
           <CardContent>
-            {activeTab === "archived" ? (
+            {activeTab === "prices" ? (
+              <SalePriceUpdatePanel />
+            ) : activeTab === "archived" ? (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Archived products are hidden from pickers, catalogs, dashboards and stock
