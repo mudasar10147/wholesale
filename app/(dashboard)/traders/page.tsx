@@ -1,4 +1,4 @@
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
+import { StaffOnly } from "@/app/components/auth/StaffOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import { AddTraderButton } from "@/app/components/traders/AddTraderButton";
 import { TraderCrudPanel } from "@/app/components/traders/TraderCrudPanel";
@@ -12,7 +12,7 @@ import {
 
 export default function TradersPage() {
   return (
-    <AdminOnly>
+    <StaffOnly>
       <div className="space-y-6">
         <PageHeader
           title="Traders"
@@ -33,6 +33,6 @@ export default function TradersPage() {
           </CardContent>
         </Card>
       </div>
-    </AdminOnly>
+    </StaffOnly>
   );
 }

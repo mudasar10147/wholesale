@@ -51,7 +51,7 @@ function itemDiscardQty(data: InvoiceReturnItemDoc): number {
 type Props = { returnId: string };
 
 export function ReturnDetailView({ returnId }: Props) {
-  const { isAdmin } = useAuth();
+  const { isStaff } = useAuth();
   const [ret, setRet] = useState<ReturnRow | null>(null);
   const [missing, setMissing] = useState(false);
   const [items, setItems] = useState<Array<{ id: string; data: InvoiceReturnItemDoc }>>([]);
@@ -223,7 +223,7 @@ export function ReturnDetailView({ returnId }: Props) {
         >
           Sales
         </Link>
-        {isDraft && isAdmin ? (
+        {isDraft && isStaff ? (
           <>
             <Button
               type="button"

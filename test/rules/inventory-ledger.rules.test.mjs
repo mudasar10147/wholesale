@@ -178,20 +178,31 @@ describe("inventory ledger rules — append-only guardrail (G3)", () => {
 });
 
 describe("inventory ledger rules — authorization", () => {
-  it("DENIES a clerk creating a ledger header", async () => {
+  // These two used to deny the clerk. A clerk now posts invoices, and posting writes
+  // the ledger header and lines in the same breath as the stock move — denying them
+  // here would mean denying the post. The ledger's real protection is that it is
+  // append-only for everyone, which the block above asserts.
+  it("allows a clerk to create a ledger header — posting an invoice writes one", async () => {
     const db = clerkDb();
-    await assertFails(
+    await assertSucceeds(
       setDoc(doc(db, "inventory_transactions", nextId("itx")), ledgerHeader()),
     );
   });
 
-  it("DENIES a clerk creating a ledger line", async () => {
+  it("allows a clerk to create a ledger line", async () => {
     const db = clerkDb();
-    await assertFails(
+    await assertSucceeds(
       setDoc(
         doc(db, "inventory_transaction_lines", nextId("line")),
         ledgerLine("itx-x"),
       ),
+    );
+  });
+
+  it("DENIES a social user creating a ledger header", async () => {
+    const db = testEnv.authenticatedContext("social-user", { role: "social" }).firestore();
+    await assertFails(
+      setDoc(doc(db, "inventory_transactions", nextId("itx")), ledgerHeader()),
     );
   });
 });
@@ -215,8 +226,13 @@ describe("inventory_repairs rules — append-only audit (M0.5)", () => {
     };
   }
 
-  it("DENIES a clerk creating a repair record", async () => {
+  it("allows a clerk to create a repair record — they reconcile stock now", async () => {
     const db = clerkDb();
+    await assertSucceeds(setDoc(doc(db, "inventory_repairs", nextId("rep")), repairRecord()));
+  });
+
+  it("DENIES a social user creating a repair record", async () => {
+    const db = testEnv.authenticatedContext("social-user", { role: "social" }).firestore();
     await assertFails(setDoc(doc(db, "inventory_repairs", nextId("rep")), repairRecord()));
   });
 

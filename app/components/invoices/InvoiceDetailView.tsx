@@ -67,7 +67,7 @@ function formatDate(ts?: Timestamp) {
 type Props = { invoiceId: string };
 
 export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
-  const { isAdmin } = useAuth();
+  const { isStaff } = useAuth();
   const router = useRouter();
   const invoiceId = useMemo(() => {
     try {
@@ -554,7 +554,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               </Button>
             </>
           ) : null}
-          {isPosted && isAdmin && hasReturnableLines ? (
+          {isPosted && isStaff && hasReturnableLines ? (
             <>
               <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
               <ButtonLink href={`/sales/${invoice.id}/return/new`} variant="outline" size="sm">
@@ -562,7 +562,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               </ButtonLink>
             </>
           ) : null}
-          {isDraft && isAdmin ? (
+          {isDraft && isStaff ? (
             <Button
               type="button"
               size="sm"
@@ -579,7 +579,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               {working === "post" ? "Posting…" : "Post invoice"}
             </Button>
           ) : null}
-          {isPosted && isAdmin ? (
+          {isPosted && isStaff ? (
             <>
               <span className="mx-1 hidden h-5 w-px bg-border sm:block" aria-hidden />
               <Button
@@ -602,7 +602,7 @@ export function InvoiceDetailView({ invoiceId: rawInvoiceId }: Props) {
               </Button>
             </>
           ) : null}
-          {(isDraft || isPosted) && isAdmin ? (
+          {(isDraft || isPosted) && isStaff ? (
             <Button
               type="button"
               variant="destructive"

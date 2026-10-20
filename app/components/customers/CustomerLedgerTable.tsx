@@ -37,7 +37,7 @@ function money(n: number): string {
 }
 
 export function CustomerLedgerTable() {
-  const { isAdmin } = useAuth();
+  const { isStaff } = useAuth();
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRow[]>([]);
   const [loadingCustomers, setLoadingCustomers] = useState(true);
@@ -163,7 +163,7 @@ export function CustomerLedgerTable() {
             <th className="px-4 py-3 font-semibold text-foreground">Total discount</th>
             <th className="px-4 py-3 font-semibold text-foreground">Delivery charges</th>
             <th className="px-4 py-3 font-semibold text-foreground">Net revenue contribution</th>
-            {isAdmin ? <th className="px-4 py-3 font-semibold text-foreground">Actions</th> : null}
+            {isStaff ? <th className="px-4 py-3 font-semibold text-foreground">Actions</th> : null}
           </tr>
         </thead>
         <tbody>
@@ -184,7 +184,7 @@ export function CustomerLedgerTable() {
               <td className="px-4 py-3 tabular-nums font-medium text-foreground">
                 {money(row.net_revenue_contribution)}
               </td>
-              {isAdmin ? (
+              {isStaff ? (
                 <td className="px-4 py-3">
                   {row.posted_due > 0.01 ? (
                     <ReceivePaymentButton customerId={row.customer_id} size="sm" />

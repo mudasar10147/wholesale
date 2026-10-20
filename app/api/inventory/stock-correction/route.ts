@@ -29,7 +29,7 @@ type Body =
 
 export async function POST(request: Request) {
   try {
-    const { uid } = await verifyRequestRoles(request, ["admin"]);
+    const { uid } = await verifyRequestRoles(request, ["admin", "clerk"]);
     const body = (await request.json().catch(() => ({}))) as Body;
     const db = getFirebaseAdminFirestore();
 

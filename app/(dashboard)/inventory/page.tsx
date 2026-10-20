@@ -1,11 +1,11 @@
 import { Suspense } from "react";
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
+import { StaffOnly } from "@/app/components/auth/StaffOnly";
 import { InventoryManagementPageContent } from "@/app/components/inventory/InventoryManagementPageContent";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 
 export default function InventoryPage() {
   return (
-    <AdminOnly>
+    <StaffOnly>
       <div className="space-y-6">
         <PageHeader
           title="Inventory"
@@ -21,6 +21,6 @@ export default function InventoryPage() {
           <InventoryManagementPageContent />
         </Suspense>
       </div>
-    </AdminOnly>
+    </StaffOnly>
   );
 }

@@ -20,17 +20,17 @@ export type UserRoleFlags = {
 export const SALES_CATALOG_ROUTE = "/share/sales-men";
 
 export const navItems: readonly NavItem[] = [
-  { href: "/", label: "Dashboard", roles: ["admin"] },
+  { href: "/", label: "Dashboard", roles: ["admin", "clerk"] },
   { href: "/business-intelligence", label: "Business Intelligence", roles: ["admin"] },
-  { href: "/products", label: "Products", roles: ["admin"] },
-  { href: "/inventory", label: "Inventory", roles: ["admin"] },
-  { href: "/inventory/stock-correction", label: "Stock correction", roles: ["admin"] },
+  { href: "/products", label: "Products", roles: ["admin", "clerk"] },
+  { href: "/inventory", label: "Inventory", roles: ["admin", "clerk"] },
+  { href: "/inventory/stock-correction", label: "Stock correction", roles: ["admin", "clerk"] },
   { href: "/sales", label: "Sales", roles: ["admin", "clerk"] },
   { href: "/expenses", label: "Expenses", roles: ["admin", "clerk"] },
   { href: "/cash", label: "Cash ledger", roles: ["admin"] },
   { href: "/loans", label: "Loans", roles: ["admin"] },
   { href: "/customers", label: "Customers", roles: ["admin", "clerk"] },
-  { href: "/traders", label: "Traders", roles: ["admin"] },
+  { href: "/traders", label: "Traders", roles: ["admin", "clerk"] },
   { href: "/reports/fifo", label: "FIFO Reports", roles: ["admin"] },
   { href: "/reports/purchases", label: "Purchase report", roles: ["admin"] },
   { href: "/social", label: "Social Media", roles: ["social"] },

@@ -11,11 +11,11 @@ type Props = {
   size?: "sm" | "md";
 };
 
-/** Admin only — clerks cannot record payments (Firestore rules refuse it too). */
+/** Staff only — social and salesman users never see it (Firestore rules refuse it too). */
 export function ReceivePaymentButton({ customerId, size = "md" }: Props) {
-  const { isAdmin } = useAuth();
+  const { isStaff } = useAuth();
   const [open, setOpen] = useState(false);
-  if (!isAdmin) return null;
+  if (!isStaff) return null;
   return (
     <>
       <Button type="button" variant="outline" size={size} onClick={() => setOpen(true)}>

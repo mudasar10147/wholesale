@@ -81,11 +81,25 @@ async function fetchDocs<T>(db: Firestore, name: string): Promise<T[]> {
   return out;
 }
 
+export type DashboardFetchOptions = {
+  /**
+   * Whether to read the cash ledger. False for a clerk: `cash_entries` and
+   * `settings/cash` are admin-only in firestore.rules, so asking for them would
+   * reject the whole `Promise.all` and leave the page with nothing — not just
+   * without its cash card. The dashboard hides that one card instead.
+   */
+  includeCash?: boolean;
+};
+
 /**
  * Nine collection reads plus one settings document — the dashboard's entire
- * Firestore cost, regardless of how many panels render.
+ * Firestore cost, regardless of how many panels render. Two of those reads are
+ * the cash ledger, and they are skipped for anyone who may not see it.
  */
-export async function fetchDashboardRaw(db: Firestore): Promise<DashboardRaw> {
+export async function fetchDashboardRaw(
+  db: Firestore,
+  { includeCash = true }: DashboardFetchOptions = {},
+): Promise<DashboardRaw> {
   const [
     products,
     invoices,
@@ -103,11 +117,11 @@ export async function fetchDashboardRaw(db: Firestore): Promise<DashboardRaw> {
     fetchDocs<SaleDoc>(db, COLLECTIONS.sales),
     fetchDocs<ExpenseDoc>(db, COLLECTIONS.expenses),
     fetchDocs<StockLotDoc>(db, COLLECTIONS.stockLots),
-    fetchDocs<CashEntryDoc>(db, COLLECTIONS.cashEntries),
+    includeCash ? fetchDocs<CashEntryDoc>(db, COLLECTIONS.cashEntries) : Promise.resolve([]),
     fetchDocs<CustomerDoc>(db, COLLECTIONS.customers),
     fetchDocs<InvoiceReturnDoc>(db, COLLECTIONS.invoiceReturns),
     fetchDocs<InventoryDiscardDoc>(db, COLLECTIONS.inventoryDiscards),
-    fetchCashSettings(db),
+    includeCash ? fetchCashSettings(db) : Promise.resolve(null),
   ]);
 
   return {

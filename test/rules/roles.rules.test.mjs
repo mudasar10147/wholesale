@@ -5,9 +5,14 @@
  *
  * The salesman exists so the sales catalog can stop being a world-readable page. They
  * get `products` plus `social_offers` — the two the catalog price is a function of — and
- * nothing else in the business. The clerk
- * half of this file is a regression guard: every collection the clerk-facing pages
- * (Sales, Expenses, Customers) actually read must stay readable for `role: clerk`.
+ * nothing else in the business.
+ *
+ * The clerk half is the shape of the shop floor. A clerk runs the day: invoices from
+ * draft to posted to paid, returns, the catalog, stock and suppliers. The line they do
+ * not cross is the money the shop holds and who may use the app — cash entries, the cash
+ * setting, loan parties, deleting a customer or trader, merges, and the role audit. Both
+ * halves of that boundary are asserted here, because a rule that silently widens is
+ * indistinguishable from one that was meant to.
  */
 
 import { after, before, describe, it } from "node:test";
@@ -17,7 +22,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { deleteDoc, doc, getDoc, setDoc } from "firebase/firestore";
 
 let testEnv;
 
@@ -56,6 +61,14 @@ before(async () => {
     await setDoc(doc(db, "stock_lots", "l1"), { product_id: "p1", unit_cost: 40 });
     await setDoc(doc(db, "traders", "t1"), { name: "Acme Supplies" });
     await setDoc(doc(db, "invoice_item_cogs", "ic1"), { cogs_amount: 40 });
+    await setDoc(doc(db, "lot_consumptions", "lc1"), { lot_id: "l1", quantity: 1 });
+    await setDoc(doc(db, "inventory_discards", "d1"), { discard_number: "DSC-1" });
+    await setDoc(doc(db, "inventory_transactions", "it1"), { type: "SALE" });
+    await setDoc(doc(db, "inventory_validation_runs", "vr1"), { run_id: "vr1" });
+    await setDoc(doc(db, "physical_stock_corrections", "pc1"), { product_id: "p1" });
+    await setDoc(doc(db, "parties", "pa1"), { name: "Lender" });
+    await setDoc(doc(db, "customer_merges", "cm1"), { keep_customer_id: "c1" });
+    await setDoc(doc(db, "user_admin_audit", "ua1"), { action: "set_role" });
     await setDoc(doc(db, "settings", "cash"), { opening_balance: 5000 });
     await setDoc(doc(db, "settings", "customer_engagement"), { rolling_window_days: 90 });
     await setDoc(doc(db, "settings", "new_arrival"), { threshold_days: 30 });
@@ -131,6 +144,8 @@ describe("the catalog is no longer public", () => {
 describe("clerk keeps every read its pages depend on", () => {
   // Sales page: invoices + returns + customers. Sales detail: invoice items.
   // Customers page: customers + invoices + the engagement tier thresholds.
+  // Products, Inventory and Traders came later, when the clerk stopped needing an
+  // admin to run the shop.
   for (const [collectionName, docId] of [
     ["products", "p1"],
     ["customers", "c1"],
@@ -141,6 +156,18 @@ describe("clerk keeps every read its pages depend on", () => {
     ["expenses", "e1"],
     // The invoice form prices its lines from live offers.
     ["social_offers", "so1"],
+    // Posting an invoice, and seeing what it cost.
+    ["sales", "s1"],
+    ["stock_lots", "l1"],
+    ["lot_consumptions", "lc1"],
+    ["invoice_item_cogs", "ic1"],
+    // Inventory page: movements, discards, and the health card's latest run.
+    ["inventory_transactions", "it1"],
+    ["inventory_discards", "d1"],
+    ["inventory_validation_runs", "vr1"],
+    ["physical_stock_corrections", "pc1"],
+    // Suppliers.
+    ["traders", "t1"],
   ]) {
     it(`can read ${collectionName}`, async () => {
       await assertSucceeds(getDoc(doc(clerkDb(), collectionName, docId)));
@@ -153,17 +180,74 @@ describe("clerk keeps every read its pages depend on", () => {
     });
   }
 
-  it("still cannot read settings/cash", async () => {
-    await assertFails(getDoc(doc(clerkDb(), "settings", "cash")));
+  it("cannot author an offer — consuming a price must not imply setting one", async () => {
+    await assertFails(setDoc(doc(clerkDb(), "social_offers", "so3"), { title: "Clerk sale" }));
+  });
+});
+
+describe("clerk runs the shop", () => {
+  it("can set a product's sale price", async () => {
+    await assertSucceeds(
+      setDoc(doc(clerkDb(), "products", "p1"), { name: "Widget", sale_price: 120, cost_price: 40 }),
+    );
   });
 
-  it("still cannot read stock_lots or cash_entries", async () => {
-    await assertFails(getDoc(doc(clerkDb(), "stock_lots", "l1")));
+  it("can add a supplier", async () => {
+    await assertSucceeds(
+      setDoc(doc(clerkDb(), "traders", "t2"), {
+        name: "New Supplier",
+        is_active: true,
+        created_at: new Date(),
+        updated_at: new Date(),
+      }),
+    );
+  });
+});
+
+/**
+ * The other half of the boundary. Everything above says a clerk may run the shop;
+ * this says what "runs the shop" stops short of. A rule change that widened one of
+ * these would otherwise pass unnoticed — the app would simply start working.
+ */
+describe("the clerk still cannot touch the money, or who may use the app", () => {
+  it("cannot read the cash ledger", async () => {
     await assertFails(getDoc(doc(clerkDb(), "cash_entries", "ce1")));
   });
 
-  it("cannot author an offer — consuming a price must not imply setting one", async () => {
-    await assertFails(setDoc(doc(clerkDb(), "social_offers", "so3"), { title: "Clerk sale" }));
+  it("cannot write a cash entry", async () => {
+    await assertFails(
+      setDoc(doc(clerkDb(), "cash_entries", "ce2"), { amount: 100, entry_type: "add" }),
+    );
+  });
+
+  it("cannot read settings/cash — the opening balance is the owner's number", async () => {
+    await assertFails(getDoc(doc(clerkDb(), "settings", "cash")));
+  });
+
+  it("cannot change a setting", async () => {
+    await assertFails(setDoc(doc(clerkDb(), "settings", "cash"), { opening_balance: 0 }));
+  });
+
+  it("cannot read loan parties", async () => {
+    await assertFails(getDoc(doc(clerkDb(), "parties", "pa1")));
+  });
+
+  it("cannot delete a customer — archiving is the reversible way", async () => {
+    await assertFails(deleteDoc(doc(clerkDb(), "customers", "c1")));
+  });
+
+  it("cannot delete a trader", async () => {
+    await assertFails(deleteDoc(doc(clerkDb(), "traders", "t1")));
+  });
+
+  it("cannot merge customers", async () => {
+    await assertFails(
+      setDoc(doc(clerkDb(), "customer_merges", "cm2"), { keep_customer_id: "c1" }),
+    );
+  });
+
+  it("cannot read the role audit", async () => {
+    await assertFails(getDoc(doc(clerkDb(), "user_admin_audit", "ua1")));
   });
 });
 

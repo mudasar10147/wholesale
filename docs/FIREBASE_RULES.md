@@ -7,7 +7,8 @@
 Firestore and the app distinguish:
 
 - **Admin:** ID token includes **`admin: true`** (boolean or string `"true"`). Full access.
-- **Clerk:** ID token includes **`role: "clerk"`** (string) and **no** `admin` claim. Limited access: customers, expenses, invoice **drafts** (create/edit/delete drafts), and read products for line items. Clerks **cannot** post or void invoices, edit products, use FIFO reports, or the main dashboard KPIs (those reads are admin-only in rules).
+- **Clerk:** ID token includes **`role: "clerk"`** (string) and **no** `admin` claim. Runs the shop day to day: invoices end to end (create, post, take payment, discount, settle, void), returns, customers, expenses, the product catalog and sale prices, inventory (stock in/out, FIFO lots, discards, stock correction, validation), suppliers, and the Dashboard.
+  Clerks **cannot** reach the money the shop holds or who may use the app: cash ledger and `cash_entries`, loans and `parties`, `settings` (including `settings/cash`), deleting a customer or trader, customer merges, the role audit, Business Intelligence, the FIFO and purchase reports, and the Dashboard's cash-in-hand card.
 
 Uses Firebase Auth [custom claims](https://firebase.google.com/docs/auth/admin/custom-claims).
 
@@ -94,7 +95,9 @@ Use this when existing products have `stock_quantity` but missing lots (`sum(qty
 | `invoice_item_cogs` | Create only; COGS snapshot per line |
 | `/{document=**}` | Denied |
 
-Rules use **`isAdmin()`** for full access and **`isStaff()`** (`isAdmin() || isClerk()`) where clerks are allowed—e.g. read `products`, read/write `expenses`, read/write `customers` and draft `invoices` / `invoice_items`. Posting invoices and inventory collections remain **`isAdmin()`** only. See `isClerk()` and `isStaff()` in [`firestore.rules`](../firestore.rules).
+Rules use **`isStaff()`** (`isAdmin() || isClerk()`) for the shop floor and **`isAdmin()`** for the owner's own business: `cash_entries`, `parties`, `settings`, `customer_merges`, `user_admin_audit`, deleting a customer or trader. Everything the day-to-day job touches — `products`, `sales`, `invoices`, `invoice_items`, `invoice_returns`, `stock_lots`, `lot_consumptions`, `invoice_item_cogs`, the discard and inventory-ledger collections, `traders` — is `isStaff()`. See `isClerk()` and `isStaff()` in [`firestore.rules`](../firestore.rules).
+
+The boundary is asserted from both sides in [`test/rules/roles.rules.test.mjs`](../test/rules/roles.rules.test.mjs), and a clerk posting an invoice end to end is driven through the real rules in [`test/integration/clerkShopFloor.test.mjs`](../test/integration/clerkShopFloor.test.mjs).
 
 ## Tightening later
 

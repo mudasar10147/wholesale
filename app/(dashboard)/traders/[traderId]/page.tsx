@@ -1,10 +1,10 @@
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
+import { StaffOnly } from "@/app/components/auth/StaffOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import { TraderProfileContent } from "@/app/components/traders/TraderProfileContent";
 
 export default function TraderProfilePage() {
   return (
-    <AdminOnly>
+    <StaffOnly>
       <div className="space-y-6">
         <PageHeader
           title="Trader profile"
@@ -12,6 +12,6 @@ export default function TraderProfilePage() {
         />
         <TraderProfileContent />
       </div>
-    </AdminOnly>
+    </StaffOnly>
   );
 }

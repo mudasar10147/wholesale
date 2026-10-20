@@ -5,7 +5,7 @@
  *
  * The allocation maths is covered by lib/invoices/customerPaymentAllocation.test.ts. This
  * proves the parts that only exist in Firestore: every write passes the posted-invoice
- * payment rule, the whole payment is one all-or-nothing transaction, and a clerk cannot
+ * payment rule, the whole payment is one all-or-nothing transaction, and a clerk may
  * record one.
  */
 
@@ -151,8 +151,10 @@ describe("recordCustomerPayment against the real rules", () => {
     assert.deepEqual(await paidAmounts(ALL), UNTOUCHED);
   });
 
-  it("a clerk cannot record a payment", async () => {
-    await assertFails(recordCustomerPayment(clerkDb(), { customerId: "c1", amount: 1000 }));
-    assert.deepEqual(await paidAmounts(ALL), UNTOUCHED);
+  it("a clerk can record one — taking money in is the clerk's job", async () => {
+    // This used to assert the opposite. Clerks now run the shop floor; what they
+    // still cannot touch is the cash ledger itself (test/rules/roles.rules.test.mjs).
+    await recordCustomerPayment(clerkDb(), { customerId: "c1", amount: 1000 });
+    assert.notDeepEqual(await paidAmounts(ALL), UNTOUCHED);
   });
 });
