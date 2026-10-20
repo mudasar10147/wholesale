@@ -50,7 +50,7 @@ const DEFAULT_TAB_ORDER: CustomerPageTab[] = [
 const PANEL_ID = "customer-section-panel";
 
 export function CustomerPageTabs() {
-  const { isAdmin, loading: authLoading } = useAuth();
+  const { isStaff, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<CustomerPageTab>("engagement");
   /**
    * Tabs that have been opened at least once.
@@ -67,15 +67,15 @@ export function CustomerPageTabs() {
 
   const visibleTabs = useMemo(() => {
     if (authLoading) return DEFAULT_TAB_ORDER.filter((t) => t !== "returns");
-    if (isAdmin) return DEFAULT_TAB_ORDER;
+    if (isStaff) return DEFAULT_TAB_ORDER;
     return DEFAULT_TAB_ORDER.filter((t) => t !== "returns");
-  }, [authLoading, isAdmin]);
+  }, [authLoading, isStaff]);
 
   useEffect(() => {
-    if (!authLoading && activeTab === "returns" && !isAdmin) {
+    if (!authLoading && activeTab === "returns" && !isStaff) {
       setActiveTab("engagement");
     }
-  }, [authLoading, isAdmin, activeTab]);
+  }, [authLoading, isStaff, activeTab]);
 
   const selectTab = useCallback((tab: CustomerPageTab) => {
     const scrollY = window.scrollY;
@@ -136,7 +136,7 @@ export function CustomerPageTabs() {
               <CustomerEngagementPanel />
             </div>
           ) : null}
-          {isAdmin && isOpened("returns") ? (
+          {isStaff && isOpened("returns") ? (
             <div className={activeTab === "returns" ? undefined : "hidden"}>
               <CustomerPurchaseReturnPanel />
             </div>

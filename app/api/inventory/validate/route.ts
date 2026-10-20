@@ -9,9 +9,10 @@ export const runtime = "nodejs";
 /** Auth/permission failures are 403; rate limits 429; everything else 500. */
 export async function POST(request: Request) {
   try {
-    // On-demand validation is admin-only and enforced server-side; the UI check
-    // is cosmetic (§9.6).
-    const { uid } = await verifyRequestRoles(request, ["admin"]);
+    // Who may run a validation is enforced server-side; the UI check is cosmetic
+    // (§9.6). Staff — admin or clerk — may run one, since the inventory page they
+    // both work from is where a mismatch shows up.
+    const { uid } = await verifyRequestRoles(request, ["admin", "clerk"]);
 
     const body = (await request.json().catch(() => ({}))) as { mode?: string };
     // Default to incremental; full requires an explicit, separately-labelled action.

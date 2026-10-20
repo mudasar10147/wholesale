@@ -9,12 +9,20 @@ type AuthContextValue = {
   user: User | null;
   loading: boolean;
   isAdmin: boolean;
-  /** Clerk: draft invoices, expenses, customers only (custom claim `role: "clerk"`). */
+  /** Clerk: runs the shop day to day (custom claim `role: "clerk"`). See {@link isStaff}. */
   isClerk: boolean;
   /** Social: the WhatsApp content planner only (custom claim `role: "social"`). */
   isSocial: boolean;
   /** Salesman: the sales catalog page only (custom claim `role: "salesman"`). */
   isSalesman: boolean;
+  /**
+   * Admin or clerk — the people who run the shop. Mirrors `isStaff()` in
+   * firestore.rules, and gates every surface a clerk now shares with an admin:
+   * invoices end to end, returns, products, inventory and suppliers. What it does
+   * NOT cover is the money the shop holds and who may use the app — cash ledger,
+   * loans, profit reporting and user roles stay behind `isAdmin`.
+   */
+  isStaff: boolean;
   /** Signed-in user may use the app (admin, clerk, social, or salesman). */
   hasAppAccess: boolean;
 };
@@ -94,11 +102,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, []);
 
+  const isStaff = isAdmin || isClerk;
   const hasAppAccess = isAdmin || isClerk || isSocial || isSalesman;
 
   const value = useMemo(
-    () => ({ user, loading, isAdmin, isClerk, isSocial, isSalesman, hasAppAccess }),
-    [user, loading, isAdmin, isClerk, isSocial, isSalesman, hasAppAccess],
+    () => ({ user, loading, isAdmin, isClerk, isSocial, isSalesman, isStaff, hasAppAccess }),
+    [user, loading, isAdmin, isClerk, isSocial, isSalesman, isStaff, hasAppAccess],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

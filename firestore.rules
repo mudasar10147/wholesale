@@ -25,6 +25,12 @@ service cloud.firestore {
     function isSalesman() {
       return isSignedIn() && request.auth.token.role == 'salesman';
     }
+    // Staff = the people who run the shop day to day. A clerk may do almost
+    // everything an admin can: write invoices end to end (post, pay, discount,
+    // void), handle returns, keep the catalog, move stock and work with suppliers.
+    // What stays admin-only is the money the shop holds and who may use the app:
+    // cash_entries, settings (incl. settings/cash), parties and loans, deleting a
+    // customer or trader, customer merges, and the user/role audit.
     function isStaff() {
       return isAdmin() || isClerk();
     }
@@ -963,17 +969,17 @@ service cloud.firestore {
     match /phase1_smoke/{docId} {
       allow read, write: if isAdmin();
     }
-    // MVP collections — clerks read products for invoice lines; the social planner
-    // reads them to pick what to share; the salesman reads them for the sales
-    // catalog; writes admin-only. Read was `if true` (public); closed to
-    // authenticated app roles so product stock/cost is not world-readable.
-    // Admin SDK bypasses rules.
+    // MVP collections — staff (admin + clerk) run the catalog: clerks read products
+    // for invoice lines and now also maintain them, the social planner reads them to
+    // pick what to share, and the salesman reads them for the sales catalog. Read was
+    // `if true` (public); closed to authenticated app roles so product stock/cost is
+    // not world-readable. Admin SDK bypasses rules.
     match /products/{docId} {
       allow read: if isStaff() || isSocial() || isSalesman();
-      allow write: if isAdmin();
+      allow write: if isStaff();
     }
     match /sales/{docId} {
-      allow read, write: if isAdmin();
+      allow read, write: if isStaff();
     }
     match /expenses/{docId} {
       allow read, write: if isStaff();
@@ -1018,9 +1024,9 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
     match /traders/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validTraderBase(request.resource.data) && request.resource.data.is_active == true;
-      allow update: if isAdmin() && validTraderBase(request.resource.data)
+      allow read: if isStaff();
+      allow create: if isStaff() && validTraderBase(request.resource.data) && request.resource.data.is_active == true;
+      allow update: if isStaff() && validTraderBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at;
       allow delete: if isAdmin();
     }
@@ -1045,40 +1051,41 @@ service cloud.firestore {
     }
     match /warehouses/{docId} {
       allow read: if isStaff();
-      allow create, update: if isAdmin();
+      allow create, update: if isStaff();
       allow delete: if false;
     }
     match /inventory_transactions/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
+      allow read: if isStaff();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
     match /inventory_transaction_lines/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
+      allow read: if isStaff();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
     // Immutable repair audit (M0.5 baseline remediation + M6 workflow). Written by
-    // the repair identity (Admin SDK, bypasses rules); admins may read the history.
+    // the repair identity (Admin SDK, bypasses rules); staff may read the history.
     // Append-only: a repair record can never be altered or erased from a client.
     match /inventory_repairs/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
+      allow read: if isStaff();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
-    // Immutable physical-recount stock-correction audit (admin re-baseline tool).
+    // Immutable physical-recount stock-correction audit (the re-baseline tool).
     // Written server-side by the correction endpoint (Admin SDK, bypasses rules);
-    // admins may read the history. Append-only — an undo is a new correction, never
+    // staff may read the history. Append-only — an undo is a new correction, never
     // an edit or delete.
     match /physical_stock_corrections/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
+      allow read: if isStaff();
+      allow create: if isStaff();
       allow update, delete: if false;
     }
     // Validation run records + watermark, written server-side by the validator
-    // (Admin SDK, bypasses rules). Admins may read history; never mutable from a client.
+    // (Admin SDK, bypasses rules). Staff may read history — the inventory health card
+    // shows the latest run. Never mutable from a client.
     match /inventory_validation_runs/{docId} {
-      allow read: if isAdmin();
+      allow read: if isStaff();
       allow create: if isAdmin();
       allow update, delete: if false;
     }
@@ -1115,7 +1122,7 @@ service cloud.firestore {
         )
         && (
           (isClerk() && invoiceDraftToDraftOnly(resource.data, request.resource.data))
-          || (isAdmin() && (
+          || (isStaff() && (
             adminCustomerIdReassignOnly(resource.data, request.resource.data)
             || (
               resource.data.status == 'draft'
@@ -1136,7 +1143,7 @@ service cloud.firestore {
     match /invoice_items/{docId} {
       allow read: if isStaff();
       allow create: if isStaff() && validInvoiceItemBase(request.resource.data);
-      allow update: if isAdmin() && validInvoiceItemBase(request.resource.data)
+      allow update: if isStaff() && validInvoiceItemBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at
         && adminCustomerIdReassignOnly(resource.data, request.resource.data);
       allow delete: if isStaff() && resource.data.invoice_id is string
@@ -1145,13 +1152,13 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/invoices/$(resource.data.invoice_id)).data.status == 'draft';
     }
     match /stock_lots/{docId} {
-      allow read: if isAdmin();
-      // Omit exists(product): admin-only create; avoids one exists() per opening_balance lot during invoice post
+      allow read: if isStaff();
+      // Omit exists(product): staff-only create; avoids one exists() per opening_balance lot during invoice post
       // (transactions are limited to 20 cross-document rule reads total).
-      allow create: if isAdmin() && validStockLotBase(request.resource.data)
+      allow create: if isStaff() && validStockLotBase(request.resource.data)
         && validStockLotTraderFieldOnCreate(request.resource.data)
         && stockLotPurchaseSourceOk('', request.resource.data);
-      allow update: if isAdmin() && validStockLotBase(request.resource.data)
+      allow update: if isStaff() && validStockLotBase(request.resource.data)
         && validStockLotTraderFieldOnUpdate(resource.data, request.resource.data)
         && request.resource.data.product_id == resource.data.product_id
         && request.resource.data.qty_in == resource.data.qty_in
@@ -1159,16 +1166,16 @@ service cloud.firestore {
         && stockLotPurchaseSourceOk(resource.data.source, request.resource.data)
         && request.resource.data.received_at == resource.data.received_at
         && request.resource.data.created_at == resource.data.created_at;
-      // Temporary: allow admin to remove mistaken lots; prefer editing qty/cost when possible.
-      allow delete: if isAdmin();
+      // Temporary: allow staff to remove mistaken lots; prefer editing qty/cost when possible.
+      allow delete: if isStaff();
     }
-    // Posting creates consumptions + COGS in the same transaction; shape-only admin create
+    // Posting creates consumptions + COGS in the same transaction; a shape-only create
     // avoids exceeding the 20 cross-document rule read limit (see invoice_items create).
     match /lot_consumptions/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validLotConsumptionBase(request.resource.data)
+      allow read: if isStaff();
+      allow create: if isStaff() && validLotConsumptionBase(request.resource.data)
         && !('reversed_at' in request.resource.data);
-      allow update: if isAdmin() && validLotConsumptionBase(request.resource.data)
+      allow update: if isStaff() && validLotConsumptionBase(request.resource.data)
         && request.resource.data.invoice_id == resource.data.invoice_id
         && request.resource.data.order_id == resource.data.order_id
         && request.resource.data.invoice_item_id == resource.data.invoice_item_id
@@ -1182,23 +1189,23 @@ service cloud.firestore {
         && request.resource.data.reversed_at is timestamp;
       allow delete: if false;
     }
-    // Shape-only admin create — membership preflighted in app code during postInvoice.
+    // Shape-only create — membership preflighted in app code during postInvoice.
     match /invoice_item_cogs/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
+      allow read: if isStaff();
+      allow create: if isStaff() && validInvoiceItemCogsBase(request.resource.data)
         && request.resource.data.invoice_item_id == docId;
-      allow update: if isAdmin() && validInvoiceItemCogsBase(request.resource.data)
+      allow update: if isStaff() && validInvoiceItemCogsBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at
         && adminCustomerIdReassignOnlyNoTimestamp(resource.data, request.resource.data);
       allow delete: if false;
     }
     match /invoice_returns/{docId} {
       allow read: if isStaff();
-      allow create: if isAdmin() && validInvoiceReturnBase(request.resource.data)
+      allow create: if isStaff() && validInvoiceReturnBase(request.resource.data)
         && request.resource.data.status == 'draft'
         && request.resource.data.refund_amount == 0
         && exists(/databases/$(database)/documents/invoices/$(request.resource.data.original_invoice_id));
-      allow update: if isAdmin() && validInvoiceReturnBase(request.resource.data)
+      allow update: if isStaff() && validInvoiceReturnBase(request.resource.data)
         && request.resource.data.created_at == resource.data.created_at
         && request.resource.data.return_number == resource.data.return_number
         && request.resource.data.original_invoice_id == resource.data.original_invoice_id
@@ -1225,12 +1232,12 @@ service cloud.firestore {
             )
           )
         );
-      allow delete: if isAdmin() && resource.data.status == 'draft';
+      allow delete: if isStaff() && resource.data.status == 'draft';
     }
     match /invoice_return_items/{docId} {
       allow read: if isStaff();
-      allow create: if isAdmin() && validInvoiceReturnItemBase(request.resource.data);
-      allow update: if isAdmin() && validInvoiceReturnItemBase(request.resource.data)
+      allow create: if isStaff() && validInvoiceReturnItemBase(request.resource.data);
+      allow update: if isStaff() && validInvoiceReturnItemBase(request.resource.data)
         && request.resource.data.return_id == resource.data.return_id
         && request.resource.data.original_invoice_id == resource.data.original_invoice_id
         && request.resource.data.original_invoice_item_id == resource.data.original_invoice_item_id
@@ -1242,33 +1249,33 @@ service cloud.firestore {
             && get(/databases/$(database)/documents/invoice_returns/$(request.resource.data.return_id)).data.status == 'draft'
           )
         );
-      allow delete: if isAdmin() && resource.data.return_id is string
+      allow delete: if isStaff() && resource.data.return_id is string
         && exists(/databases/$(database)/documents/invoice_returns/$(resource.data.return_id))
         && get(/databases/$(database)/documents/invoice_returns/$(resource.data.return_id)).data.status == 'draft';
     }
     match /return_lot_restorations/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validReturnLotRestorationBase(request.resource.data);
+      allow read: if isStaff();
+      allow create: if isStaff() && validReturnLotRestorationBase(request.resource.data);
       allow update, delete: if false;
     }
     match /return_lot_write_offs/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validReturnLotWriteOffBase(request.resource.data);
+      allow read: if isStaff();
+      allow create: if isStaff() && validReturnLotWriteOffBase(request.resource.data);
       allow update, delete: if false;
     }
     match /inventory_discards/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validInventoryDiscardBase(request.resource.data);
+      allow read: if isStaff();
+      allow create: if isStaff() && validInventoryDiscardBase(request.resource.data);
       allow update, delete: if false;
     }
     match /inventory_discard_items/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validInventoryDiscardItemBase(request.resource.data);
+      allow read: if isStaff();
+      allow create: if isStaff() && validInventoryDiscardItemBase(request.resource.data);
       allow update, delete: if false;
     }
     match /inventory_discard_lots/{docId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() && validInventoryDiscardLotBase(request.resource.data);
+      allow read: if isStaff();
+      allow create: if isStaff() && validInventoryDiscardLotBase(request.resource.data);
       allow update, delete: if false;
     }
     function validWalkInSessionCreate(data) {

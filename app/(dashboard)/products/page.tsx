@@ -1,11 +1,11 @@
 import { Suspense } from "react";
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
+import { StaffOnly } from "@/app/components/auth/StaffOnly";
 import { ProductManagementPageContent } from "@/app/components/products/ProductManagementPageContent";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 
 export default function ProductsPage() {
   return (
-    <AdminOnly>
+    <StaffOnly>
       <div className="space-y-6">
         <PageHeader
           title="Products"
@@ -21,6 +21,6 @@ export default function ProductsPage() {
           <ProductManagementPageContent />
         </Suspense>
       </div>
-    </AdminOnly>
+    </StaffOnly>
   );
 }

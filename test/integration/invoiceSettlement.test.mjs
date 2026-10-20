@@ -21,6 +21,7 @@ let testEnv;
 const t = (iso) => Timestamp.fromDate(new Date(iso));
 const adminDb = () => testEnv.authenticatedContext("admin-user", { admin: true }).firestore();
 const clerkDb = () => testEnv.authenticatedContext("clerk-user", { role: "clerk" }).firestore();
+const socialDb = () => testEnv.authenticatedContext("social-user", { role: "social" }).firestore();
 
 /** A posted invoice shaped the way postInvoice leaves it. */
 function postedInvoice({ orderId, subtotal, delivery = 0, discount = 0, paid = 0 }) {
@@ -153,11 +154,22 @@ describe("settling a rounded-down payment, against the real rules", () => {
     });
   });
 
-  it("a clerk cannot settle a remainder", async () => {
+  it("a clerk can settle a remainder — they take the payment that leaves it", async () => {
+    // This asserted the opposite until clerks were given the shop floor. The cap is
+    // what limits the write-off now, not the role; a social user is still refused.
     await seed("INV-CLERK", postedInvoice({ orderId: "INV-CLERK", subtotal: 1630, paid: 1600 }));
 
-    await assertFails(settleInvoiceRemainder(clerkDb(), "INV-CLERK"));
+    assert.equal(await settleInvoiceRemainder(clerkDb(), "INV-CLERK"), 30);
     assert.deepEqual(money(await read("INV-CLERK")), {
+      paid: 1600, status: "paid", discount: 30, total: 1600, postedTotal: 1600, postedDiscount: 30,
+    });
+  });
+
+  it("a social user cannot", async () => {
+    await seed("INV-SOCIAL", postedInvoice({ orderId: "INV-SOCIAL", subtotal: 1630, paid: 1600 }));
+
+    await assertFails(settleInvoiceRemainder(socialDb(), "INV-SOCIAL"));
+    assert.deepEqual(money(await read("INV-SOCIAL")), {
       paid: 1600, status: "partial", discount: 0, total: 1630, postedTotal: 1630, postedDiscount: 0,
     });
   });

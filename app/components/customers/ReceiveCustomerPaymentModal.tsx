@@ -70,7 +70,7 @@ type Props = {
 };
 
 /**
- * Admin: record one lump-sum payment from a customer. It settles their posted invoices
+ * Record one lump-sum payment from a customer. It settles their posted invoices
  * oldest first and carries the rest forward; the split is previewed before anything is
  * written, and an amount larger than what they owe is refused outright.
  */

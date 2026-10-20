@@ -23,6 +23,7 @@ import { SalesDrilldownModal } from "@/app/components/dashboard/SalesDrilldownMo
 import { CashInHandStatCard } from "@/app/components/dashboard/CashInHandStatCard";
 import { DashboardExtendedKpiGrid } from "@/app/components/dashboard/DashboardExtendedKpiGrid";
 import { Input } from "@/app/components/ui/Input";
+import { useAuth } from "@/app/components/auth/AuthProvider";
 
 type KpiPreset = "today" | "day" | "month" | "year" | "custom";
 
@@ -52,6 +53,7 @@ function toDateInputValue(date: Date): string {
 }
 
 export function DashboardOverview() {
+  const { isAdmin, loading: authLoading } = useAuth();
   const initialNow = useMemo(() => new Date(), []);
   const [preset, setPreset] = useState<KpiPreset>("today");
   const [singleDayDate, setSingleDayDate] = useState(() => toDateInputValue(initialNow));
@@ -118,32 +120,44 @@ export function DashboardOverview() {
   }, [customEndDate, customStartDate, preset, singleDayDate]);
 
   /**
-   * Fetches only when the session cache has nothing fresh. Note the empty
-   * dependency list: changing the KPI period recomputes from documents already
-   * held rather than refetching, so preset clicks cost no reads.
+   * Fetches only when the session cache has nothing fresh. The KPI period is not a
+   * dependency: changing it recomputes from documents already held rather than
+   * refetching, so preset clicks cost no reads. The role IS one — it decides whether
+   * the cash ledger is read at all.
    */
-  const load = useCallback(async (force = false) => {
-    setLoading(true);
-    setFetchError(null);
-    try {
-      const result = await getDashboardRaw(getDb(), { force });
-      setRaw(result.raw);
-      setFetchedAt(result.fetchedAt);
-    } catch (e) {
-      setFetchError(getFirestoreUserMessage(e));
-      setRaw(null);
-      setFetchedAt(null);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (force = false) => {
+      setLoading(true);
+      setFetchError(null);
+      try {
+        const result = await getDashboardRaw(getDb(), { force, includeCash: isAdmin });
+        setRaw(result.raw);
+        setFetchedAt(result.fetchedAt);
+      } catch (e) {
+        setFetchError(getFirestoreUserMessage(e));
+        setRaw(null);
+        setFetchedAt(null);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [isAdmin],
+  );
 
   useEffect(() => {
+    // Waiting for the claims is what keeps this to ONE fetch. Firing while they load
+    // would read the dashboard as a non-admin, then read all ~3,000 documents again
+    // the moment `isAdmin` resolved to true.
+    if (authLoading) return;
     void load();
-  }, [load]);
+  }, [authLoading, load]);
 
-  // Cash is period-independent, so it survives an invalid date range.
-  const cashSnapshot = useMemo(() => (raw ? computeCashSnapshot(raw) : null), [raw]);
+  // Cash is period-independent, so it survives an invalid date range. A clerk never
+  // fetched it, so there is nothing to compute — and nothing is rendered either.
+  const cashSnapshot = useMemo(
+    () => (raw && isAdmin ? computeCashSnapshot(raw) : null),
+    [raw, isAdmin],
+  );
 
   const dashboard = useMemo(
     () => (raw && selectedRange.bounds ? computeDashboard(raw, selectedRange.bounds) : null),
@@ -257,9 +271,12 @@ export function DashboardOverview() {
           </div>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-4" aria-label="Period KPIs and cash in hand">
+      <div
+        className="grid gap-4 lg:grid-cols-4"
+        aria-label={isAdmin ? "Period KPIs and cash in hand" : "Period KPIs"}
+      >
         {!error ? (
-          <div className="lg:col-span-3">
+          <div className={isAdmin ? "lg:col-span-3" : "lg:col-span-4"}>
             <PeriodKpiRow
               breakdown={selected}
               loading={loading}
@@ -270,13 +287,17 @@ export function DashboardOverview() {
             />
           </div>
         ) : null}
-        <div className={error ? "lg:col-span-4" : "lg:col-span-1"}>
-          <CashInHandStatCard
-            snapshot={cashSnapshot}
-            loading={loading}
-            className="h-full lg:min-h-full"
-          />
-        </div>
+        {/* Cash in hand belongs to the cash ledger, which is admin-only — and the
+            clerk's fetch skipped the documents behind it. */}
+        {isAdmin ? (
+          <div className={error ? "lg:col-span-4" : "lg:col-span-1"}>
+            <CashInHandStatCard
+              snapshot={cashSnapshot}
+              loading={loading}
+              className="h-full lg:min-h-full"
+            />
+          </div>
+        ) : null}
       </div>
 
       {!error && selectedRange.bounds ? (

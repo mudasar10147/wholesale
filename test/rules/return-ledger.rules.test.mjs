@@ -111,11 +111,25 @@ describe("invoice_returns ledger bookkeeping statuses", () => {
     );
   });
 
-  it("DENIES a clerk writing ledger bookkeeping", async () => {
+  it("allows a clerk the same bookkeeping write — they post returns now", async () => {
+    // Posting a return writes its ledger status; a clerk who may post one must be
+    // able to finish it. The write is still pinned to the bookkeeping fields: the
+    // money-changing version of it is refused for everyone, asserted above.
+    await seedPostedReturn();
+    await assertSucceeds(
+      updateDoc(doc(clerkDb(), "invoice_returns", RETURN_ID), {
+        ledger_status: "not_applicable",
+        updated_at: serverTimestamp(),
+      }),
+    );
+  });
+
+  it("DENIES a clerk changing the money while it is at it", async () => {
     await seedPostedReturn();
     await assertFails(
       updateDoc(doc(clerkDb(), "invoice_returns", RETURN_ID), {
         ledger_status: "not_applicable",
+        total_amount: 1,
         updated_at: serverTimestamp(),
       }),
     );

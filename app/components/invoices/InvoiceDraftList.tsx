@@ -223,7 +223,7 @@ function RowActionsMenu({ items }: { items: ActionItem[] }) {
 }
 
 export function InvoiceDraftList() {
-  const { isAdmin } = useAuth();
+  const { isStaff } = useAuth();
   const [rows, setRows] = useState<Row[]>([]);
   const customerNameById = useCustomerNames();
   const [loading, setLoading] = useState(true);
@@ -493,7 +493,7 @@ export function InvoiceDraftList() {
             : `${rows.length} invoice${rows.length === 1 ? "" : "s"}`}
         </p>
       </div>
-      {isAdmin && draftRowsInView.length > 1 ? (
+      {isStaff && draftRowsInView.length > 1 ? (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-surface-muted px-3 py-2.5">
           <Button
             type="button"
@@ -587,7 +587,7 @@ export function InvoiceDraftList() {
               const menuItems: ActionItem[] = [];
 
               if (row.status === "draft") {
-                if (isAdmin) {
+                if (isStaff) {
                   primaryAction = (
                     <Button type="button" size="sm" onClick={() => void handlePost(row)} disabled={busy}>
                       {workingId === row.id && workingAction === "post" ? "Posting…" : "Post invoice"}
@@ -614,7 +614,7 @@ export function InvoiceDraftList() {
                     </Button>
                   );
                 }
-              } else if (row.status === "posted" && isAdmin) {
+              } else if (row.status === "posted" && isStaff) {
                 if (!isFullyPaid) {
                   primaryAction = (
                     <Button

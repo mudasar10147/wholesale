@@ -1,10 +1,10 @@
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
+import { StaffOnly } from "@/app/components/auth/StaffOnly";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 import { ProductProfileContent } from "@/app/components/products/ProductProfileContent";
 
 export default function ProductProfilePage() {
   return (
-    <AdminOnly>
+    <StaffOnly>
       <div className="space-y-6">
         <PageHeader
           title="Product profile"
@@ -12,6 +12,6 @@ export default function ProductProfilePage() {
         />
         <ProductProfileContent />
       </div>
-    </AdminOnly>
+    </StaffOnly>
   );
 }

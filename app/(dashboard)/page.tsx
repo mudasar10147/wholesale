@@ -1,10 +1,10 @@
-import { AdminOnly } from "@/app/components/auth/AdminOnly";
+import { StaffOnly } from "@/app/components/auth/StaffOnly";
 import { DashboardOverview } from "@/app/components/dashboard/DashboardOverview";
 import { PageHeader } from "@/app/components/layout/PageHeader";
 
 export default function DashboardPage() {
   return (
-    <AdminOnly>
+    <StaffOnly>
       <div className="space-y-6">
         <PageHeader
           title="Dashboard"
@@ -12,6 +12,6 @@ export default function DashboardPage() {
 
         <DashboardOverview />
       </div>
-    </AdminOnly>
+    </StaffOnly>
   );
 }
